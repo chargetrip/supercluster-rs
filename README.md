@@ -11,7 +11,6 @@ This crate is inspired by Mapbox's supercluster [blog post](https://blog.mapbox.
 [![crate](https://img.shields.io/crates/v/supercluster.svg)](https://crates.io/crates/supercluster)
 ![downloads](https://img.shields.io/crates/d/supercluster)
 ![GitHub](https://img.shields.io/github/license/chargetrip/supercluster-rs)
-[![codecov](https://codecov.io/gh/chargetrip/supercluster-rs/graph/badge.svg?token=9EL0F6725A)](https://codecov.io/gh/chargetrip/supercluster-rs)
 
 ![Features](https://cloud.githubusercontent.com/assets/25395/11857351/43407b46-a40c-11e5-8662-e99ab1cd2cb7.gif)
 
