@@ -2,15 +2,16 @@
 
 A very fast Rust crate for geospatial point clustering.
 
-This crate is inspired by Mapbox's supercluster [JS package](https://www.npmjs.com/package/supercluster) and [blog post](https://www.mapbox.com/blog/supercluster/).
+This crate is inspired by Mapbox's supercluster [blog post](https://blog.mapbox.com/clustering-millions-of-points-on-a-map-with-supercluster-272046ec5c97).
 
 ## Reference implementation
 
-[![test](https://github.com/chargetrip/supercluster-rust/actions/workflows/test.yml/badge.svg)](https://github.com/chargetrip/supercluster-rust/actions/workflows/test.yml)
+[![test](https://github.com/chargetrip/supercluster-rs/actions/workflows/test.yml/badge.svg)](https://github.com/chargetrip/supercluster-rs/actions/workflows/test.yml)
 [![docs](https://docs.rs/supercluster/badge.svg)](https://docs.rs/supercluster)
 [![crate](https://img.shields.io/crates/v/supercluster.svg)](https://crates.io/crates/supercluster)
 ![downloads](https://img.shields.io/crates/d/supercluster)
-![GitHub](https://img.shields.io/github/license/chargetrip/supercluster-rust)
+![GitHub](https://img.shields.io/github/license/chargetrip/supercluster-rs)
+[![codecov](https://codecov.io/gh/chargetrip/supercluster-rs/graph/badge.svg?token=9EL0F6725A)](https://codecov.io/gh/chargetrip/supercluster-rs)
 
 ![Features](https://cloud.githubusercontent.com/assets/25395/11857351/43407b46-a40c-11e5-8662-e99ab1cd2cb7.gif)
 
@@ -47,7 +48,7 @@ This crate uses `#![forbid(unsafe_code)]` to ensure everything is implemented in
 
 For more in-depth details, please refer to the full [documentation](https://docs.rs/supercluster).
 
-If you encounter any issues or have questions that are not addressed in the documentation, feel free to [submit an issue](https://github.com/chargetrip/supercluster-rust/issues).
+If you encounter any issues or have questions that are not addressed in the documentation, feel free to [submit an issue](https://github.com/chargetrip/supercluster-rs/issues).
 
 ## Usage
 
@@ -109,7 +110,7 @@ cargo test
 Run [clippy](https://github.com/rust-lang/rust-clippy):
 
 ```bash
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets --all-features --no-deps -- -D warnings
 ```
 
 Run [rustfmt](https://github.com/rust-lang/rustfmt):
