@@ -1,6 +1,8 @@
 mod common;
 
-use common::{get_options, load_places, load_tile_places, load_tile_places_with_min_5};
+use common::{
+    get_options, load_non_geospatial, load_places, load_tile_places, load_tile_places_with_min_5,
+};
 use geojson::{Feature, Geometry, JsonObject, Value::Point};
 use serde_json::json;
 use supercluster::Supercluster;
@@ -191,4 +193,18 @@ fn test_does_not_crash_on_weird_bbox_values() {
         index.get_clusters([-180.0, -90.0, 180.0, 90.0], 1).len(),
         61
     );
+}
+
+#[test]
+fn test_non_geospatial() {
+    let mut cluster = Supercluster::new_non_geospatial(get_options(500.0, 32.0, 2, 16));
+    let index = cluster.load(load_non_geospatial());
+
+    let clusters = index.get_clusters([0.0, 0.0, 1000.0, 1000.0], 0);
+
+    assert_eq!(clusters.len(), 4);
+    assert_eq!(clusters[0].property("point_count").unwrap(), 3);
+    assert_eq!(clusters[1].property("point_count"), None);
+    assert_eq!(clusters[2].property("point_count"), None);
+    assert_eq!(clusters[3].property("point_count").unwrap(), 3);
 }

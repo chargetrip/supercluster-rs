@@ -61,6 +61,9 @@ pub struct Supercluster {
 
     /// Clusters metadata.
     cluster_props: Vec<JsonObject>,
+
+    /// Use non-geospatial coordinates?
+    use_non_geospatial_coords: bool,
 }
 
 impl Supercluster {
@@ -85,6 +88,35 @@ impl Supercluster {
             stride: 6,
             points: vec![],
             cluster_props: vec![],
+            use_non_geospatial_coords: false,
+        }
+    }
+
+    /// Create a new instance of `Supercluster` with the specified configuration settings.
+    ///
+    /// This should work with non-geospatial points and will not perform any mercator transform on
+    /// the data.
+    ///
+    /// # Arguments
+    ///
+    /// - `options`: The configuration options for Supercluster.
+    ///
+    /// # Returns
+    ///
+    /// A new `Supercluster` instance with the given configuration.
+    pub fn new_non_geospatial(options: Options) -> Self {
+        let capacity = options.max_zoom + 1;
+        let trees: Vec<KDBush> = (0..capacity + 1)
+            .map(|_| KDBush::new(0, options.node_size))
+            .collect();
+
+        Supercluster {
+            trees,
+            options,
+            stride: 6,
+            points: vec![],
+            cluster_props: vec![],
+            use_non_geospatial_coords: true,
         }
     }
 
@@ -116,11 +148,19 @@ impl Supercluster {
                 None => continue,
             };
 
-            // Longitude
-            data.push(lng_x(coordinates[0]));
+            if self.use_non_geospatial_coords {
+                // X Coordinate
+                data.push(coordinates[0]);
 
-            // Latitude
-            data.push(lat_y(coordinates[1]));
+                // Y Coordinate
+                data.push(coordinates[1]);
+            } else {
+                // Longitude
+                data.push(lng_x(coordinates[0]));
+
+                // Latitude
+                data.push(lat_y(coordinates[1]));
+            }
 
             // The last zoom the point was processed at
             data.push(f64::INFINITY);
@@ -161,39 +201,50 @@ impl Supercluster {
     ///
     /// A vector of GeoJSON features representing the clusters within the specified bounding box and zoom level.
     pub fn get_clusters(&self, bbox: [f64; 4], zoom: u8) -> Vec<Feature> {
-        let mut min_lng = ((((bbox[0] + 180.0) % 360.0) + 360.0) % 360.0) - 180.0;
-        let min_lat = bbox[1].clamp(-90.0, 90.0);
-        let mut max_lng = if bbox[2] == 180.0 {
-            180.0
-        } else {
-            ((((bbox[2] + 180.0) % 360.0) + 360.0) % 360.0) - 180.0
-        };
-        let max_lat = bbox[3].clamp(-90.0, 90.0);
-
-        if bbox[2] - bbox[0] >= 360.0 {
-            min_lng = -180.0;
-            max_lng = 180.0;
-        } else if min_lng > max_lng {
-            let eastern_hem = self.get_clusters([min_lng, min_lat, 180.0, max_lat], zoom);
-            let western_hem = self.get_clusters([-180.0, min_lat, max_lng, max_lat], zoom);
-
-            return eastern_hem.into_iter().chain(western_hem).collect();
-        }
-
         let tree = &self.trees[self.limit_zoom(zoom)];
-        let ids = tree.range(
-            lng_x(min_lng),
-            lat_y(max_lat),
-            lng_x(max_lng),
-            lat_y(min_lat),
-        );
+        let ids = match self.use_non_geospatial_coords {
+            true => tree.range(bbox[0], bbox[1], bbox[2], bbox[3]),
+            false => {
+                let mut min_lng = ((((bbox[0] + 180.0) % 360.0) + 360.0) % 360.0) - 180.0;
+                let min_lat = bbox[1].clamp(-90.0, 90.0);
+                let mut max_lng = if bbox[2] == 180.0 {
+                    180.0
+                } else {
+                    ((((bbox[2] + 180.0) % 360.0) + 360.0) % 360.0) - 180.0
+                };
+                let max_lat = bbox[3].clamp(-90.0, 90.0);
+
+                if bbox[2] - bbox[0] >= 360.0 {
+                    min_lng = -180.0;
+                    max_lng = 180.0;
+                } else if min_lng > max_lng {
+                    let eastern_hem = self.get_clusters([min_lng, min_lat, 180.0, max_lat], zoom);
+                    let western_hem = self.get_clusters([-180.0, min_lat, max_lng, max_lat], zoom);
+
+                    return eastern_hem.into_iter().chain(western_hem).collect();
+                }
+
+                tree.range(
+                    lng_x(min_lng),
+                    lat_y(max_lat),
+                    lng_x(max_lng),
+                    lat_y(min_lat),
+                )
+            }
+        };
+
         let mut clusters = Vec::new();
 
         for id in ids {
             let k = self.stride * id;
 
             clusters.push(if tree.data[k + OFFSET_NUM] > 1.0 {
-                get_cluster_json(&tree.data, k, &self.cluster_props)
+                get_cluster_json(
+                    &tree.data,
+                    k,
+                    &self.cluster_props,
+                    self.use_non_geospatial_coords,
+                )
             } else {
                 self.points[tree.data[k + OFFSET_ID] as usize].clone()
             });
@@ -244,7 +295,12 @@ impl Supercluster {
 
             if data[k + OFFSET_PARENT] == (cluster_id as f64) {
                 if data[k + OFFSET_NUM] > 1.0 {
-                    children.push(get_cluster_json(data, k, &self.cluster_props));
+                    children.push(get_cluster_json(
+                        data,
+                        k,
+                        &self.cluster_props,
+                        self.use_non_geospatial_coords,
+                    ));
                 } else {
                     let point_id = data[k + OFFSET_ID] as usize;
 
@@ -490,8 +546,13 @@ impl Supercluster {
                 match p.geometry.as_ref() {
                     Some(geometry) => {
                         if let Point(coordinates) = &geometry.value {
-                            px = lng_x(coordinates[0]);
-                            py = lat_y(coordinates[1]);
+                            if self.use_non_geospatial_coords {
+                                px = coordinates[0];
+                                py = coordinates[1];
+                            } else {
+                                px = lng_x(coordinates[0]);
+                                py = lat_y(coordinates[1]);
+                            }
                         } else {
                             continue;
                         }
@@ -679,8 +740,16 @@ impl Supercluster {
 /// # Returns
 ///
 /// A GeoJSON feature representing a cluster.
-fn get_cluster_json(data: &[f64], i: usize, cluster_props: &[JsonObject]) -> Feature {
-    let geometry = Geometry::new(Point(vec![x_lng(data[i]), y_lat(data[i + 1])]));
+fn get_cluster_json(
+    data: &[f64],
+    i: usize,
+    cluster_props: &[JsonObject],
+    use_non_geospatial_coords: bool,
+) -> Feature {
+    let geometry = match use_non_geospatial_coords {
+        true => Geometry::new(Point(vec![data[i], data[i + 1]])),
+        false => Geometry::new(Point(vec![x_lng(data[i]), y_lat(data[i + 1])])),
+    };
 
     Feature {
         id: Some(Id::String(data[i + OFFSET_ID].to_string())),
@@ -836,7 +905,7 @@ mod tests {
             json!("0".to_string()),
         );
 
-        let result = get_cluster_json(&data, i, &[cluster_props]);
+        let result = get_cluster_json(&data, i, &[cluster_props], false);
 
         assert_eq!(result.id, Some(Id::String("0".to_string())));
 
@@ -873,7 +942,7 @@ mod tests {
         let i = 0;
         let cluster_props = vec![];
 
-        let result = get_cluster_json(&data, i, &cluster_props);
+        let result = get_cluster_json(&data, i, &cluster_props, false);
 
         assert_eq!(result.id, Some(Id::String("0".to_string())));
 

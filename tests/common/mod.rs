@@ -34,3 +34,10 @@ pub fn load_tile_places_with_min_5() -> FeatureCollection {
 
     serde_json::from_str(&json_string).expect("places-z0-0-0-min5.json was not parsed")
 }
+
+pub fn load_non_geospatial() -> Vec<Feature> {
+    let file_path = Path::new("./tests/common/non-geospatial.json");
+    let json_string = fs::read_to_string(file_path).expect("non-geospatial.json was not found");
+
+    serde_json::from_str(&json_string).expect("non-geospatial.json was not parsed")
+}
