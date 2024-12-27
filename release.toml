@@ -6,3 +6,5 @@ pre-release-hook = [
   "--tag",
   "{{version}}",
 ]
+allow-branch = ["main"]
+tag-message = "chore: release v{{version}}"
