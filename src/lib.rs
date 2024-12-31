@@ -22,6 +22,40 @@ const OFFSET_NUM: usize = 5;
 /// An offset index used to access the properties associated with a cluster in the data arrays.
 const OFFSET_PROP: usize = 6;
 
+/// The range of the incoming data if choosing the cartesian coordinate system
+#[derive(Clone, Debug)]
+pub struct DataRange {
+    pub min_x: f64,
+    pub min_y: f64,
+    pub max_x: f64,
+    pub max_y: f64,
+}
+
+impl DataRange {
+    fn normalize_x(&self, x: f64) -> f64 {
+        (x - self.min_x) / (self.max_x - self.min_x)
+    }
+
+    fn normalize_y(&self, y: f64) -> f64 {
+        (y - self.min_y) / (self.max_y - self.min_y)
+    }
+
+    fn denormalize_x(&self, x_scaled: f64) -> f64 {
+        x_scaled * (self.max_x - self.min_x) + self.min_x
+    }
+
+    fn denormalize_y(&self, y_scaled: f64) -> f64 {
+        y_scaled * (self.max_y - self.min_y) + self.min_y
+    }
+}
+
+/// Coordinate system for clustering.
+#[derive(Clone, Debug)]
+pub enum CoordinateSystem {
+    LatLng,                              // Choose this for geo-spatial data
+    Cartesian { data_range: DataRange }, // Chose this for non-geospatial (i.e. microscopy, etc.) data
+}
+
 /// Supercluster configuration options.
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -42,6 +76,9 @@ pub struct Options {
 
     /// Size of the KD-tree leaf node, affects performance.
     pub node_size: usize,
+
+    /// The type of coordinate system for clustering: lat/lng or cartesian.
+    pub coordinate_system: CoordinateSystem,
 }
 
 #[derive(Clone, Debug)]
@@ -61,9 +98,6 @@ pub struct Supercluster {
 
     /// Clusters metadata.
     cluster_props: Vec<JsonObject>,
-
-    /// Use non-geospatial coordinates?
-    use_non_geospatial_coords: bool,
 }
 
 impl Supercluster {
@@ -88,35 +122,6 @@ impl Supercluster {
             stride: 6,
             points: vec![],
             cluster_props: vec![],
-            use_non_geospatial_coords: false,
-        }
-    }
-
-    /// Create a new instance of `Supercluster` with the specified configuration settings.
-    ///
-    /// This should work with non-geospatial points and will not perform any mercator transform on
-    /// the data.
-    ///
-    /// # Arguments
-    ///
-    /// - `options`: The configuration options for Supercluster.
-    ///
-    /// # Returns
-    ///
-    /// A new `Supercluster` instance with the given configuration.
-    pub fn new_non_geospatial(options: Options) -> Self {
-        let capacity = options.max_zoom + 1;
-        let trees: Vec<KDBush> = (0..capacity + 1)
-            .map(|_| KDBush::new(0, options.node_size))
-            .collect();
-
-        Supercluster {
-            trees,
-            options,
-            stride: 6,
-            points: vec![],
-            cluster_props: vec![],
-            use_non_geospatial_coords: true,
         }
     }
 
@@ -148,19 +153,22 @@ impl Supercluster {
                 None => continue,
             };
 
-            if self.use_non_geospatial_coords {
-                // X Coordinate
-                data.push(coordinates[0]);
+            match &self.options.coordinate_system {
+                CoordinateSystem::Cartesian { data_range } => {
+                    // X Coordinate
+                    data.push(data_range.normalize_x(coordinates[0]));
 
-                // Y Coordinate
-                data.push(coordinates[1]);
-            } else {
-                // Longitude
-                data.push(lng_x(coordinates[0]));
+                    // Y Coordinate
+                    data.push(data_range.normalize_y(coordinates[1]));
+                }
+                CoordinateSystem::LatLng => {
+                    // Longitude
+                    data.push(lng_x(coordinates[0]));
 
-                // Latitude
-                data.push(lat_y(coordinates[1]));
-            }
+                    // Latitude
+                    data.push(lat_y(coordinates[1]));
+                }
+            };
 
             // The last zoom the point was processed at
             data.push(f64::INFINITY);
@@ -202,9 +210,14 @@ impl Supercluster {
     /// A vector of GeoJSON features representing the clusters within the specified bounding box and zoom level.
     pub fn get_clusters(&self, bbox: [f64; 4], zoom: u8) -> Vec<Feature> {
         let tree = &self.trees[self.limit_zoom(zoom)];
-        let ids = match self.use_non_geospatial_coords {
-            true => tree.range(bbox[0], bbox[1], bbox[2], bbox[3]),
-            false => {
+        let ids = match &self.options.coordinate_system {
+            CoordinateSystem::Cartesian { data_range } => tree.range(
+                data_range.normalize_x(bbox[0]),
+                data_range.normalize_y(bbox[1]),
+                data_range.normalize_x(bbox[2]),
+                data_range.normalize_y(bbox[3]),
+            ),
+            CoordinateSystem::LatLng => {
                 let mut min_lng = ((((bbox[0] + 180.0) % 360.0) + 360.0) % 360.0) - 180.0;
                 let min_lat = bbox[1].clamp(-90.0, 90.0);
                 let mut max_lng = if bbox[2] == 180.0 {
@@ -243,7 +256,7 @@ impl Supercluster {
                     &tree.data,
                     k,
                     &self.cluster_props,
-                    self.use_non_geospatial_coords,
+                    &self.options.coordinate_system,
                 )
             } else {
                 self.points[tree.data[k + OFFSET_ID] as usize].clone()
@@ -299,7 +312,7 @@ impl Supercluster {
                         data,
                         k,
                         &self.cluster_props,
-                        self.use_non_geospatial_coords,
+                        &self.options.coordinate_system,
                     ));
                 } else {
                     let point_id = data[k + OFFSET_ID] as usize;
@@ -546,12 +559,15 @@ impl Supercluster {
                 match p.geometry.as_ref() {
                     Some(geometry) => {
                         if let Point(coordinates) = &geometry.value {
-                            if self.use_non_geospatial_coords {
-                                px = coordinates[0];
-                                py = coordinates[1];
-                            } else {
-                                px = lng_x(coordinates[0]);
-                                py = lat_y(coordinates[1]);
+                            match &self.options.coordinate_system {
+                                CoordinateSystem::Cartesian { data_range } => {
+                                    px = data_range.normalize_x(coordinates[0]);
+                                    py = data_range.normalize_y(coordinates[1]);
+                                }
+                                CoordinateSystem::LatLng => {
+                                    px = lng_x(coordinates[0]);
+                                    py = lat_y(coordinates[1]);
+                                }
                             }
                         } else {
                             continue;
@@ -744,11 +760,14 @@ fn get_cluster_json(
     data: &[f64],
     i: usize,
     cluster_props: &[JsonObject],
-    use_non_geospatial_coords: bool,
+    coordinate_system: &CoordinateSystem,
 ) -> Feature {
-    let geometry = match use_non_geospatial_coords {
-        true => Geometry::new(Point(vec![data[i], data[i + 1]])),
-        false => Geometry::new(Point(vec![x_lng(data[i]), y_lat(data[i + 1])])),
+    let geometry = match coordinate_system {
+        CoordinateSystem::Cartesian { data_range } => Geometry::new(Point(vec![
+            data_range.denormalize_x(data[i]),
+            data_range.denormalize_y(data[i + 1]),
+        ])),
+        CoordinateSystem::LatLng => Geometry::new(Point(vec![x_lng(data[i]), y_lat(data[i + 1])])),
     };
 
     Feature {
@@ -866,6 +885,7 @@ mod tests {
             min_zoom: 0,
             min_points: 2,
             node_size: 64,
+            coordinate_system: CoordinateSystem::LatLng,
         })
     }
 
@@ -905,7 +925,7 @@ mod tests {
             json!("0".to_string()),
         );
 
-        let result = get_cluster_json(&data, i, &[cluster_props], false);
+        let result = get_cluster_json(&data, i, &[cluster_props], &CoordinateSystem::LatLng);
 
         assert_eq!(result.id, Some(Id::String("0".to_string())));
 
@@ -942,7 +962,7 @@ mod tests {
         let i = 0;
         let cluster_props = vec![];
 
-        let result = get_cluster_json(&data, i, &cluster_props, false);
+        let result = get_cluster_json(&data, i, &cluster_props, &CoordinateSystem::LatLng);
 
         assert_eq!(result.id, Some(Id::String("0".to_string())));
 

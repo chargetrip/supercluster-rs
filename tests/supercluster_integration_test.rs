@@ -1,17 +1,19 @@
 mod common;
+mod util;
 
 use common::{
-    get_options, load_non_geospatial, load_places, load_tile_places, load_tile_places_with_min_5,
+    get_options, load_cartesian, load_places, load_tile_places, load_tile_places_with_min_5,
 };
 use geojson::{Feature, Geometry, JsonObject, Value::Point};
 use serde_json::json;
-use supercluster::Supercluster;
+use supercluster::{CoordinateSystem, Supercluster};
+use util::get_data_range;
 
 #[test]
 fn test_generate_clusters() {
     let places_tile = load_tile_places();
 
-    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16));
+    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16, CoordinateSystem::LatLng));
     let index = cluster.load(load_places());
 
     let tile = index.get_tile(0, 0.0, 0.0).expect("cannot get a tile");
@@ -24,7 +26,7 @@ fn test_generate_clusters() {
 fn test_generate_clusters_with_min_points() {
     let places_tile = load_tile_places_with_min_5();
 
-    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 5, 16));
+    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 5, 16, CoordinateSystem::LatLng));
     let index = cluster.load(load_places());
 
     let tile = index.get_tile(0, 0.0, 0.0).expect("cannot get a tile");
@@ -35,7 +37,7 @@ fn test_generate_clusters_with_min_points() {
 
 #[test]
 fn test_get_cluster() {
-    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16));
+    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16, CoordinateSystem::LatLng));
     let index = cluster.load(load_places());
 
     let cluster_counts: Vec<usize> = index
@@ -60,7 +62,7 @@ fn test_get_cluster() {
 
 #[test]
 fn test_cluster_expansion_zoom() {
-    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16));
+    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16, CoordinateSystem::LatLng));
     let index = cluster.load(load_places());
 
     assert_eq!(index.get_cluster_expansion_zoom(164), 1);
@@ -72,7 +74,7 @@ fn test_cluster_expansion_zoom() {
 
 #[test]
 fn test_cluster_expansion_zoom_for_max_zoom() {
-    let mut cluster = Supercluster::new(get_options(60.0, 256.0, 2, 4));
+    let mut cluster = Supercluster::new(get_options(60.0, 256.0, 2, 4, CoordinateSystem::LatLng));
     let index = cluster.load(load_places());
 
     assert_eq!(index.get_cluster_expansion_zoom(2504), 5);
@@ -93,7 +95,7 @@ fn test_get_cluster_leaves() {
         "Cape Bauld",
     ];
 
-    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16));
+    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16, CoordinateSystem::LatLng));
     let index = cluster.load(load_places());
 
     let leaf_names: Vec<String> = index
@@ -108,7 +110,7 @@ fn test_get_cluster_leaves() {
 
 #[test]
 fn test_clusters_when_query_crosses_international_dateline() {
-    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16));
+    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16, CoordinateSystem::LatLng));
     let index = cluster.load(vec![
         Feature {
             id: None,
@@ -150,7 +152,7 @@ fn test_clusters_when_query_crosses_international_dateline() {
 
 #[test]
 fn test_does_not_crash_on_weird_bbox_values() {
-    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16));
+    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16, CoordinateSystem::LatLng));
     let index = cluster.load(load_places());
 
     assert_eq!(
@@ -196,9 +198,18 @@ fn test_does_not_crash_on_weird_bbox_values() {
 }
 
 #[test]
-fn test_non_geospatial() {
-    let mut cluster = Supercluster::new_non_geospatial(get_options(500.0, 32.0, 2, 16));
-    let index = cluster.load(load_non_geospatial());
+fn test_cartesian_coordinates() {
+    let data = load_cartesian();
+    let data_range = get_data_range(&data).unwrap();
+
+    let mut cluster = Supercluster::new(get_options(
+        20.0,
+        512.0,
+        2,
+        16,
+        CoordinateSystem::Cartesian { data_range },
+    ));
+    let index = cluster.load(data);
 
     let clusters = index.get_clusters([0.0, 0.0, 1000.0, 1000.0], 0);
 
