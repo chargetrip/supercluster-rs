@@ -199,14 +199,14 @@ fn test_does_not_crash_on_weird_bbox_values() {
 #[test]
 fn test_cartesian_coordinates() {
     let data = load_cartesian();
-    let data_range = get_data_range(&data).unwrap();
+    let range = get_data_range(&data).unwrap();
 
     let mut cluster = Supercluster::new(get_options(
         20.0,
         512.0,
         2,
         16,
-        CoordinateSystem::Cartesian { data_range },
+        CoordinateSystem::Cartesian { range },
     ));
     let index = cluster.load(data);
 

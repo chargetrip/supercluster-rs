@@ -23,6 +23,7 @@ const OFFSET_NUM: usize = 5;
 const OFFSET_PROP: usize = 6;
 
 /// The range of the incoming data if choosing the cartesian coordinate system.
+/// Applicable for non-geospatial data (i.e. microscopy, etc.).
 #[derive(Clone, Debug)]
 pub struct DataRange {
     /// The minimum x-coordinate value.
@@ -98,8 +99,8 @@ pub enum CoordinateSystem {
     /// Latitude and longitude coordinates. Used for geo-spatial data.
     LatLng,
 
-    /// Cartesian coordinates. Used for non-geo-spatial (i.e. microscopy, etc.) data.
-    Cartesian { data_range: DataRange },
+    /// Cartesian coordinates. Used for non-geospatial (i.e. microscopy, etc.) data.
+    Cartesian { range: DataRange },
 }
 
 /// Supercluster configuration options.
@@ -123,7 +124,7 @@ pub struct Options {
     /// Size of the KD-tree leaf node, affects performance.
     pub node_size: usize,
 
-    /// The type of coordinate system for clustering: lat/lng or cartesian.
+    /// Type of coordinate system for clustering.
     pub coordinate_system: CoordinateSystem,
 }
 
@@ -200,12 +201,12 @@ impl Supercluster {
             };
 
             match &self.options.coordinate_system {
-                CoordinateSystem::Cartesian { data_range } => {
+                CoordinateSystem::Cartesian { range } => {
                     // X Coordinate
-                    data.push(data_range.normalize_x(coordinates[0]));
+                    data.push(range.normalize_x(coordinates[0]));
 
                     // Y Coordinate
-                    data.push(data_range.normalize_y(coordinates[1]));
+                    data.push(range.normalize_y(coordinates[1]));
                 }
                 CoordinateSystem::LatLng => {
                     // Longitude
@@ -257,11 +258,11 @@ impl Supercluster {
     pub fn get_clusters(&self, bbox: [f64; 4], zoom: u8) -> Vec<Feature> {
         let tree = &self.trees[self.limit_zoom(zoom)];
         let ids = match &self.options.coordinate_system {
-            CoordinateSystem::Cartesian { data_range } => tree.range(
-                data_range.normalize_x(bbox[0]),
-                data_range.normalize_y(bbox[1]),
-                data_range.normalize_x(bbox[2]),
-                data_range.normalize_y(bbox[3]),
+            CoordinateSystem::Cartesian { range } => tree.range(
+                range.normalize_x(bbox[0]),
+                range.normalize_y(bbox[1]),
+                range.normalize_x(bbox[2]),
+                range.normalize_y(bbox[3]),
             ),
             CoordinateSystem::LatLng => {
                 let mut min_lng = ((((bbox[0] + 180.0) % 360.0) + 360.0) % 360.0) - 180.0;
@@ -606,9 +607,9 @@ impl Supercluster {
                     Some(geometry) => {
                         if let Point(coordinates) = &geometry.value {
                             match &self.options.coordinate_system {
-                                CoordinateSystem::Cartesian { data_range } => {
-                                    px = data_range.normalize_x(coordinates[0]);
-                                    py = data_range.normalize_y(coordinates[1]);
+                                CoordinateSystem::Cartesian { range } => {
+                                    px = range.normalize_x(coordinates[0]);
+                                    py = range.normalize_y(coordinates[1]);
                                 }
                                 CoordinateSystem::LatLng => {
                                     px = lng_x(coordinates[0]);
@@ -810,9 +811,9 @@ fn get_cluster_json(
     coordinate_system: &CoordinateSystem,
 ) -> Feature {
     let geometry = match coordinate_system {
-        CoordinateSystem::Cartesian { data_range } => Geometry::new(Point(vec![
-            data_range.denormalize_x(data[i]),
-            data_range.denormalize_y(data[i + 1]),
+        CoordinateSystem::Cartesian { range } => Geometry::new(Point(vec![
+            range.denormalize_x(data[i]),
+            range.denormalize_y(data[i + 1]),
         ])),
         CoordinateSystem::LatLng => Geometry::new(Point(vec![x_lng(data[i]), y_lat(data[i + 1])])),
     };

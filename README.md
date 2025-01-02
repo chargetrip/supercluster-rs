@@ -1,6 +1,6 @@
 # Supercluster
 
-A very fast Rust crate for geospatial point clustering.
+A high-performance Rust crate for geospatial and non-geospatial point clustering.
 
 This crate is inspired by Mapbox's supercluster [blog post](https://blog.mapbox.com/clustering-millions-of-points-on-a-map-with-supercluster-272046ec5c97).
 
@@ -30,14 +30,15 @@ This crate is inspired by Mapbox's supercluster [blog post](https://blog.mapbox.
 
 ## Options
 
-| Option       | Description                                                       |
-|--------------|-------------------------------------------------------------------|
-| `min_zoom`   | Minimum zoom level at which clusters are generated.               |
-| `max_zoom`   | Maximum zoom level at which clusters are generated.               |
-| `min_points` | Minimum number of points to form a cluster.                       |
-| `radius`     | Cluster radius, in pixels.                                        |
-| `extent`     | (Tiles) Tile extent. Radius is calculated relative to this value. |
-| `node_size`  | Size of the KD-tree leaf node. Affects performance.               |
+| Option              | Description                                                       |
+|---------------------|-------------------------------------------------------------------|
+| `min_zoom`          | Minimum zoom level at which clusters are generated.               |
+| `max_zoom`          | Maximum zoom level at which clusters are generated.               |
+| `min_points`        | Minimum number of points to form a cluster.                       |
+| `radius`            | Cluster radius, in pixels.                                        |
+| `extent`            | (Tiles) Tile extent. Radius is calculated relative to this value. |
+| `node_size`         | Size of the KD-tree leaf node. Affects performance.               |
+| `coordinate_system` | Type of coordinate system for clustering.                         |
 
 ## Safety
 
@@ -69,6 +70,7 @@ fn main() {
       radius: 40.0,
       node_size: 64,
       extent: 512.0,
+      coordinate_system: CoordinateSystem::LatLng,
   };
 
   // Create a new instance with the specified configuration settings

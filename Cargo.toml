@@ -1,6 +1,6 @@
 [package]
 name = "supercluster"
-description = "A very fast Rust crate for geospatial point clustering."
+description = "Geospatial and non-geospatial point clustering."
 version = "1.1.1"
 edition = "2021"
 license = "MIT"
