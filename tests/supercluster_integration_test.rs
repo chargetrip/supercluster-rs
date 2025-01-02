@@ -1,13 +1,12 @@
 mod common;
-mod util;
 
 use common::{
-    get_options, load_cartesian, load_places, load_tile_places, load_tile_places_with_min_5,
+    get_data_range, get_options, load_cartesian, load_places, load_tile_places,
+    load_tile_places_with_min_5,
 };
 use geojson::{Feature, Geometry, JsonObject, Value::Point};
 use serde_json::json;
 use supercluster::{CoordinateSystem, Supercluster};
-use util::get_data_range;
 
 #[test]
 fn test_generate_clusters() {

@@ -22,28 +22,71 @@ const OFFSET_NUM: usize = 5;
 /// An offset index used to access the properties associated with a cluster in the data arrays.
 const OFFSET_PROP: usize = 6;
 
-/// The range of the incoming data if choosing the cartesian coordinate system
+/// The range of the incoming data if choosing the cartesian coordinate system.
 #[derive(Clone, Debug)]
 pub struct DataRange {
+    /// The minimum x-coordinate value.
     pub min_x: f64,
+
+    /// The minimum y-coordinate value.
     pub min_y: f64,
+
+    /// The maximum x-coordinate value.
     pub max_x: f64,
+
+    /// The maximum y-coordinate value.
     pub max_y: f64,
 }
 
 impl DataRange {
+    /// Normalize the x-coordinate value to the range [0, 1].
+    ///
+    /// # Arguments
+    ///
+    /// - `x`: The x-coordinate value to be normalized.
+    ///
+    /// # Returns
+    ///
+    /// The normalized x-coordinate value.
     fn normalize_x(&self, x: f64) -> f64 {
         (x - self.min_x) / (self.max_x - self.min_x)
     }
 
+    /// Normalize the y-coordinate value to the range [0, 1].
+    ///
+    /// # Arguments
+    ///
+    /// - `y`: The y-coordinate value to be normalized.
+    ///
+    /// # Returns
+    ///
+    /// The normalized y-coordinate value.
     fn normalize_y(&self, y: f64) -> f64 {
         (y - self.min_y) / (self.max_y - self.min_y)
     }
 
+    /// Denormalize the x-coordinate value from the range [0, 1] to the original range.
+    ///
+    /// # Arguments
+    ///
+    /// - `x_scaled`: The scaled x-coordinate value to be denormalized.
+    ///
+    /// # Returns
+    ///
+    /// The denormalized x-coordinate value.
     fn denormalize_x(&self, x_scaled: f64) -> f64 {
         x_scaled * (self.max_x - self.min_x) + self.min_x
     }
 
+    /// Denormalize the y-coordinate value from the range [0, 1] to the original range.
+    ///
+    /// # Arguments
+    ///
+    /// - `y_scaled`: The scaled y-coordinate value to be denormalized.
+    ///
+    /// # Returns
+    ///
+    /// The denormalized y-coordinate value.
     fn denormalize_y(&self, y_scaled: f64) -> f64 {
         y_scaled * (self.max_y - self.min_y) + self.min_y
     }
@@ -52,8 +95,11 @@ impl DataRange {
 /// Coordinate system for clustering.
 #[derive(Clone, Debug)]
 pub enum CoordinateSystem {
-    LatLng,                              // Choose this for geo-spatial data
-    Cartesian { data_range: DataRange }, // Chose this for non-geospatial (i.e. microscopy, etc.) data
+    /// Latitude and longitude coordinates. Used for geo-spatial data.
+    LatLng,
+
+    /// Cartesian coordinates. Used for non-geo-spatial (i.e. microscopy, etc.) data.
+    Cartesian { data_range: DataRange },
 }
 
 /// Supercluster configuration options.
@@ -752,6 +798,7 @@ impl Supercluster {
 /// - `data`: A reference to the flat numeric arrays representing point data.
 /// - `i`: The index in the data array for the cluster.
 /// - `cluster_props`: A reference to a vector of cluster properties.
+/// - `coordinate_system`: The coordinate system used for clustering.
 ///
 /// # Returns
 ///
