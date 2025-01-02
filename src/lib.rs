@@ -1132,4 +1132,28 @@ mod tests {
         assert_eq!(y_lat(0.875), -79.17133464081944);
         assert_eq!(y_lat(0.125), 79.17133464081945);
     }
+
+    #[test]
+    fn test_data_range() {
+        let data_range = DataRange {
+            min_x: -10.0,
+            max_x: 100.0,
+            min_y: -20.0,
+            max_y: 50.0,
+        };
+
+        assert_eq!(data_range.normalize_x(-10.0), 0.0);
+        assert_eq!(data_range.normalize_x(45.0), 0.5);
+        assert_eq!(data_range.normalize_x(100.0), 1.0);
+        assert_eq!(data_range.normalize_y(-20.0), 0.0);
+        assert_eq!(data_range.normalize_y(15.0), 0.5);
+        assert_eq!(data_range.normalize_y(50.0), 1.0);
+
+        assert_eq!(data_range.denormalize_x(0.0), -10.0);
+        assert_eq!(data_range.denormalize_x(0.5), 45.0);
+        assert_eq!(data_range.denormalize_x(1.0), 100.0);
+        assert_eq!(data_range.denormalize_y(0.0), -20.0);
+        assert_eq!(data_range.denormalize_y(0.5), 15.0);
+        assert_eq!(data_range.denormalize_y(1.0), 50.0);
+    }
 }
