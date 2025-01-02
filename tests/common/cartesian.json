@@ -1,0 +1,83 @@
+[
+  {
+    "type": "Feature",
+    "properties": {
+      "name": "Feature A"
+    },
+    "geometry": {
+      "type": "Point",
+      "coordinates": [10.0, 10.0]
+    }
+  },
+  {
+    "type": "Feature",
+    "properties": {
+      "name": "Feature B"
+    },
+    "geometry": {
+      "type": "Point",
+      "coordinates": [15.0, 15.0]
+    }
+  },
+  {
+    "type": "Feature",
+    "properties": {
+      "name": "Feature C"
+    },
+    "geometry": {
+      "type": "Point",
+      "coordinates": [20.0, 20.0]
+    }
+  },
+  {
+    "type": "Feature",
+    "properties": {
+      "name": "Feature D"
+    },
+    "geometry": {
+      "type": "Point",
+      "coordinates": [50.0, 50.0]
+    }
+  },
+  {
+    "type": "Feature",
+    "properties": {
+      "name": "Feature E"
+    },
+    "geometry": {
+      "type": "Point",
+      "coordinates": [181.0, 541.0]
+    }
+  },
+  {
+    "type": "Feature",
+    "properties": {
+      "name": "Feature F"
+    },
+    "geometry": {
+      "type": "Point",
+      "coordinates": [997.0, 800.0]
+    }
+  },
+  {
+    "type": "Feature",
+    "properties": {
+      "name": "Feature G"
+    },
+    "geometry": {
+      "type": "Point",
+      "coordinates": [998.0, 800.0]
+    }
+  },
+  {
+    "type": "Feature",
+    "properties": {
+      "name": "Feature H"
+    },
+    "geometry": {
+      "type": "Point",
+      "coordinates": [999.0, 800.0]
+    }
+  }
+]
+
