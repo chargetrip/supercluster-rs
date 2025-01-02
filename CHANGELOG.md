@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [1.1.0] - 2025-01-02
 
+### 💥 Breaking Changes
+
+- Add non-geospatial option (#2)
+
 ### 🚀 Features
 
 - Update Rust version (#5)
