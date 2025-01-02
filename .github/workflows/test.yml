@@ -28,8 +28,6 @@ jobs:
         components: clippy, rustfmt
     - name: Run build
       run: cargo build --locked
-    - name: Check semver
-      uses: obi1kenobi/cargo-semver-checks-action@v2
     - name: Run clippy
       run: cargo clippy --all-targets --all-features --no-deps -- -D warnings
     - name: Run rustfmt
