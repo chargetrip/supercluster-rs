@@ -2,11 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.1] - 2025-01-02
+
+### ⚙️ Miscellaneous Tasks
+
+- Update changelog
+
 ## [1.1.0] - 2025-01-02
-
-### 💥 Breaking Changes
-
-- Add non-geospatial option (#2)
 
 ### 🚀 Features
 
@@ -20,6 +22,7 @@ All notable changes to this project will be documented in this file.
 
 - Update release.toml
 - Init CHANGELOG.md
+- Release supercluster version 1.1.0
 
 ## [1.0.19] - 2024-10-21
 
