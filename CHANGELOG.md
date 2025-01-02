@@ -2,15 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.19] - 2024-12-27
+## [1.1.0] - 2025-01-02
 
 ### 🚀 Features
 
 - Update Rust version (#5)
 
+### 📚 Documentation
+
+- Add description
+
 ### ⚙️ Miscellaneous Tasks
 
 - Update release.toml
+- Init CHANGELOG.md
 
 ## [1.0.19] - 2024-10-21
 
