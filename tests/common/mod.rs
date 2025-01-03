@@ -1,6 +1,6 @@
 use geojson::{Feature, FeatureCollection, Value};
 use std::{fs, path::Path};
-use supercluster::{CoordinateSystem, DataRange, Options};
+use supercluster::{range::DataRange, CoordinateSystem, Options};
 
 pub fn get_options(
     radius: f64,

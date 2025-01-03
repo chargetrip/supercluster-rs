@@ -60,7 +60,7 @@ cargo add supercluster
 
 ```rust
 use geojson::FeatureCollection;
-use supercluster::{ Supercluster, Options };
+use supercluster::{ CoordinateSystem, Supercluster, Options };
 
 fn main() {
   let options = Options {
