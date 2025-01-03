@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1] - 2025-01-03
+
+### 🚀 Features
+
+- Unit tests for data range (#7)
+- Publish range and kdbush
+
 ## [1.2.0] - 2025-01-02
 
 ### 🚀 Features
@@ -19,6 +26,7 @@ All notable changes to this project will be documented in this file.
 - Release supercluster version 1.1.0
 - Update changelog
 - Release supercluster version 1.1.1
+- Release supercluster version 1.2.0
 
 ## [1.0.19] - 2024-10-21
 
