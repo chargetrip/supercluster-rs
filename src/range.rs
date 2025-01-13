@@ -1,3 +1,5 @@
+use std::cell::OnceCell;
+
 /// The range of the incoming data if choosing the cartesian coordinate system.
 /// Applicable for non-geospatial data (i.e. microscopy, etc.).
 #[derive(Clone, Debug)]
@@ -13,6 +15,10 @@ pub struct DataRange {
 
     /// The maximum y-coordinate value.
     pub max_y: f64,
+
+    // Cached values for offset and scale
+    pub offset: OnceCell<f64>,
+    pub scale: OnceCell<f64>,
 }
 
 impl DataRange {
@@ -26,9 +32,7 @@ impl DataRange {
     ///
     /// The normalized coordinate value.
     pub fn normalize(&self, v: f64) -> f64 {
-        let range_min = f64::min(self.min_x, self.min_y);
-        let range_max = f64::max(self.max_x, self.max_y);
-        (v - range_min) / (range_max - range_min)
+        (v - self.offset()) / self.scale()
     }
 
     /// Denormalize the coordinate value from the range [0, 1] to the original range.
@@ -41,9 +45,32 @@ impl DataRange {
     ///
     /// The denormalized coordinate value.
     pub fn denormalize(&self, v_scaled: f64) -> f64 {
-        let range_min = f64::min(self.min_x, self.min_y);
-        let range_max = f64::max(self.max_x, self.max_y);
-        v_scaled * (range_max - range_min) + range_min
+        v_scaled * self.scale() + self.offset()
+    }
+
+    /// Compute and cache the minimum range value.
+    fn offset(&self) -> f64 {
+        *self.offset.get_or_init(|| f64::min(self.min_x, self.min_y))
+    }
+
+    /// Compute and cache the maximum range value.
+    fn scale(&self) -> f64 {
+        *self
+            .scale
+            .get_or_init(|| f64::max(self.max_x, self.max_y) - self.offset())
+    }
+}
+
+impl Default for DataRange {
+    fn default() -> Self {
+        Self {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 1.0,
+            max_y: 1.0,
+            offset: OnceCell::new(),
+            scale: OnceCell::new(),
+        }
     }
 }
 
@@ -58,6 +85,7 @@ mod tests {
             max_x: 100.0,
             min_y: -20.0,
             max_y: 50.0,
+            ..Default::default()
         };
 
         assert_eq!(data_range.normalize(-20.0), 0.0);

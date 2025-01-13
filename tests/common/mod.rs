@@ -45,6 +45,7 @@ pub fn get_data_range(data: &Vec<Feature>) -> Option<DataRange> {
             max_x,
             min_y,
             max_y,
+            ..Default::default()
         })
     } else {
         None
