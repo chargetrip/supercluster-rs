@@ -1,3 +1,5 @@
+use std::cell::OnceCell;
+
 /// The range of the incoming data if choosing the cartesian coordinate system.
 /// Applicable for non-geospatial data (i.e. microscopy, etc.).
 #[derive(Clone, Debug)]
@@ -13,59 +15,62 @@ pub struct DataRange {
 
     /// The maximum y-coordinate value.
     pub max_y: f64,
+
+    // Cached values for offset and scale
+    pub offset: OnceCell<f64>,
+    pub scale: OnceCell<f64>,
 }
 
 impl DataRange {
-    /// Normalize the x-coordinate value to the range [0, 1].
+    /// Normalize the coordinate value to the range [0, 1].
     ///
     /// # Arguments
     ///
-    /// - `x`: The x-coordinate value to be normalized.
+    /// - `v`: The coordinate value to be normalized.
     ///
     /// # Returns
     ///
-    /// The normalized x-coordinate value.
-    pub fn normalize_x(&self, x: f64) -> f64 {
-        (x - self.min_x) / (self.max_x - self.min_x)
+    /// The normalized coordinate value.
+    pub fn normalize(&self, v: f64) -> f64 {
+        (v - self.offset()) / self.scale()
     }
 
-    /// Normalize the y-coordinate value to the range [0, 1].
+    /// Denormalize the coordinate value from the range [0, 1] to the original range.
     ///
     /// # Arguments
     ///
-    /// - `y`: The y-coordinate value to be normalized.
+    /// - `v_scaled`: The scaled coordinate value to be denormalized.
     ///
     /// # Returns
     ///
-    /// The normalized y-coordinate value.
-    pub fn normalize_y(&self, y: f64) -> f64 {
-        (y - self.min_y) / (self.max_y - self.min_y)
+    /// The denormalized coordinate value.
+    pub fn denormalize(&self, v_scaled: f64) -> f64 {
+        v_scaled * self.scale() + self.offset()
     }
 
-    /// Denormalize the x-coordinate value from the range [0, 1] to the original range.
-    ///
-    /// # Arguments
-    ///
-    /// - `x_scaled`: The scaled x-coordinate value to be denormalized.
-    ///
-    /// # Returns
-    ///
-    /// The denormalized x-coordinate value.
-    pub fn denormalize_x(&self, x_scaled: f64) -> f64 {
-        x_scaled * (self.max_x - self.min_x) + self.min_x
+    /// Compute and cache the minimum range value.
+    fn offset(&self) -> f64 {
+        *self.offset.get_or_init(|| f64::min(self.min_x, self.min_y))
     }
 
-    /// Denormalize the y-coordinate value from the range [0, 1] to the original range.
-    ///
-    /// # Arguments
-    ///
-    /// - `y_scaled`: The scaled y-coordinate value to be denormalized.
-    ///
-    /// # Returns
-    ///
-    /// The denormalized y-coordinate value.
-    pub fn denormalize_y(&self, y_scaled: f64) -> f64 {
-        y_scaled * (self.max_y - self.min_y) + self.min_y
+    /// Compute and cache the maximum range value.
+    fn scale(&self) -> f64 {
+        *self
+            .scale
+            .get_or_init(|| f64::max(self.max_x, self.max_y) - self.offset())
+    }
+}
+
+impl Default for DataRange {
+    fn default() -> Self {
+        Self {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 1.0,
+            max_y: 1.0,
+            offset: OnceCell::new(),
+            scale: OnceCell::new(),
+        }
     }
 }
 
@@ -80,20 +85,15 @@ mod tests {
             max_x: 100.0,
             min_y: -20.0,
             max_y: 50.0,
+            ..Default::default()
         };
 
-        assert_eq!(data_range.normalize_x(-10.0), 0.0);
-        assert_eq!(data_range.normalize_x(45.0), 0.5);
-        assert_eq!(data_range.normalize_x(100.0), 1.0);
-        assert_eq!(data_range.normalize_y(-20.0), 0.0);
-        assert_eq!(data_range.normalize_y(15.0), 0.5);
-        assert_eq!(data_range.normalize_y(50.0), 1.0);
+        assert_eq!(data_range.normalize(-20.0), 0.0);
+        assert_eq!(data_range.normalize(40.0), 0.5);
+        assert_eq!(data_range.normalize(100.0), 1.0);
 
-        assert_eq!(data_range.denormalize_x(0.0), -10.0);
-        assert_eq!(data_range.denormalize_x(0.5), 45.0);
-        assert_eq!(data_range.denormalize_x(1.0), 100.0);
-        assert_eq!(data_range.denormalize_y(0.0), -20.0);
-        assert_eq!(data_range.denormalize_y(0.5), 15.0);
-        assert_eq!(data_range.denormalize_y(1.0), 50.0);
+        assert_eq!(data_range.denormalize(0.0), -20.0);
+        assert_eq!(data_range.denormalize(0.5), 40.0);
+        assert_eq!(data_range.denormalize(1.0), 100.0);
     }
 }

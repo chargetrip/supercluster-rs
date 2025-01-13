@@ -134,10 +134,10 @@ impl Supercluster {
             match &self.options.coordinate_system {
                 CoordinateSystem::Cartesian { range } => {
                     // X Coordinate
-                    data.push(range.normalize_x(coordinates[0]));
+                    data.push(range.normalize(coordinates[0]));
 
                     // Y Coordinate
-                    data.push(range.normalize_y(coordinates[1]));
+                    data.push(range.normalize(coordinates[1]));
                 }
                 CoordinateSystem::LatLng => {
                     // Longitude
@@ -190,10 +190,10 @@ impl Supercluster {
         let tree = &self.trees[self.limit_zoom(zoom)];
         let ids = match &self.options.coordinate_system {
             CoordinateSystem::Cartesian { range } => tree.range(
-                range.normalize_x(bbox[0]),
-                range.normalize_y(bbox[1]),
-                range.normalize_x(bbox[2]),
-                range.normalize_y(bbox[3]),
+                range.normalize(bbox[0]),
+                range.normalize(bbox[1]),
+                range.normalize(bbox[2]),
+                range.normalize(bbox[3]),
             ),
             CoordinateSystem::LatLng => {
                 let mut min_lng = ((((bbox[0] + 180.0) % 360.0) + 360.0) % 360.0) - 180.0;
@@ -539,8 +539,8 @@ impl Supercluster {
                         if let Point(coordinates) = &geometry.value {
                             match &self.options.coordinate_system {
                                 CoordinateSystem::Cartesian { range } => {
-                                    px = range.normalize_x(coordinates[0]);
-                                    py = range.normalize_y(coordinates[1]);
+                                    px = range.normalize(coordinates[0]);
+                                    py = range.normalize(coordinates[1]);
                                 }
                                 CoordinateSystem::LatLng => {
                                     px = lng_x(coordinates[0]);
@@ -743,8 +743,8 @@ fn get_cluster_json(
 ) -> Feature {
     let geometry = match coordinate_system {
         CoordinateSystem::Cartesian { range } => Geometry::new(Point(vec![
-            range.denormalize_x(data[i]),
-            range.denormalize_y(data[i + 1]),
+            range.denormalize(data[i]),
+            range.denormalize(data[i + 1]),
         ])),
         CoordinateSystem::LatLng => Geometry::new(Point(vec![x_lng(data[i]), y_lat(data[i + 1])])),
     };
