@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+use std::f64::consts::PI;
+
 pub mod kdbush;
 pub mod range;
 
@@ -7,7 +9,6 @@ use geojson::{feature::Id, Feature, FeatureCollection, Geometry, JsonObject, Val
 use kdbush::KDBush;
 use range::DataRange;
 use serde_json::json;
-use std::f64::consts::PI;
 
 /// An offset index used to access the zoom level value associated with a cluster in the data arrays.
 const OFFSET_ZOOM: usize = 2;

@@ -16,8 +16,10 @@ pub struct DataRange {
     /// The maximum y-coordinate value.
     pub max_y: f64,
 
-    // Cached values for offset and scale
+    /// The cached value for offset.
     pub offset: OnceCell<f64>,
+
+    // The cached value for scale.
     pub scale: OnceCell<f64>,
 }
 
@@ -49,11 +51,19 @@ impl DataRange {
     }
 
     /// Compute and cache the minimum range value.
+    ///
+    /// # Returns
+    ///
+    /// The minimum range value.
     fn offset(&self) -> f64 {
         *self.offset.get_or_init(|| f64::min(self.min_x, self.min_y))
     }
 
     /// Compute and cache the maximum range value.
+    ///
+    /// # Returns
+    ///
+    /// The maximum range value.
     fn scale(&self) -> f64 {
         *self
             .scale
@@ -62,6 +72,11 @@ impl DataRange {
 }
 
 impl Default for DataRange {
+    /// Create a new `DataRange` with default values.
+    ///
+    /// # Returns
+    ///
+    /// A new `DataRange` with default values.
     fn default() -> Self {
         Self {
             min_x: 0.0,
@@ -77,6 +92,16 @@ impl Default for DataRange {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_data_range_default() {
+        let data_range = DataRange::default();
+
+        assert_eq!(data_range.min_x, 0.0);
+        assert_eq!(data_range.min_y, 0.0);
+        assert_eq!(data_range.max_x, 1.0);
+        assert_eq!(data_range.max_y, 1.0);
+    }
 
     #[test]
     fn test_data_range() {

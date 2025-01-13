@@ -1,7 +1,7 @@
 /// Array of coordinates with longitude as first value and latitude as second one.
 type Point = [f64; 2];
 
-/// A very fast static spatial index for 2D points based on a flat KD-tree.
+/// Static spatial index for 2D points based on a flat KD-tree.
 #[derive(Clone, Debug)]
 pub struct KDBush {
     /// Node size for the KD-tree. Determines the number of points in a leaf node.

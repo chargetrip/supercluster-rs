@@ -2,7 +2,7 @@
 
 A high-performance Rust crate for geospatial and non-geospatial point clustering.
 
-This crate is inspired by Mapbox's supercluster [blog post](https://blog.mapbox.com/clustering-millions-of-points-on-a-map-with-supercluster-272046ec5c97).
+This crate was initially inspired by Mapbox's supercluster [blog post](https://blog.mapbox.com/clustering-millions-of-points-on-a-map-with-supercluster-272046ec5c97).
 
 ## Reference implementation
 
