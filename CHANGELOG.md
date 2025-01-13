@@ -2,12 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.2] - 2025-01-13
+
+### 🐛 Bug Fixes
+
+- Normalize and denormalize data range in proportion (#9)
+
 ## [1.2.1] - 2025-01-03
 
 ### 🚀 Features
 
 - Unit tests for data range (#7)
 - Publish range and kdbush
+
+### ⚙️ Miscellaneous Tasks
+
+- Release supercluster version 1.2.1
 
 ## [1.2.0] - 2025-01-02
 
