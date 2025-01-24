@@ -26,11 +26,19 @@ jobs:
       with:
         toolchain: 1.84.0
         components: clippy, rustfmt
+    - name: Install tarpaulin
+      run: cargo install --locked cargo-tarpaulin
     - name: Run build
       run: cargo build --locked
     - name: Run clippy
       run: cargo clippy --all-targets --all-features --no-deps -- -D warnings
-    - name: Run rustfmt
+    - name: Run lint
       run: cargo fmt -- --check
     - name: Run tests
-      run: cargo test
+      run: cargo tarpaulin --out xml
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v3
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      with:
+        file: ./cobertura.xml

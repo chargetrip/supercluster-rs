@@ -11,6 +11,7 @@ This crate was initially inspired by Mapbox's supercluster [blog post](https://b
 [![crate](https://img.shields.io/crates/v/supercluster.svg)](https://crates.io/crates/supercluster)
 ![downloads](https://img.shields.io/crates/d/supercluster)
 ![GitHub](https://img.shields.io/github/license/chargetrip/supercluster-rs)
+[![codecov](https://codecov.io/gh/chargetrip/supercluster-rs/graph/badge.svg?token=9EL0F6725A)](https://codecov.io/gh/chargetrip/supercluster-rs)
 
 ![Features](https://cloud.githubusercontent.com/assets/25395/11857351/43407b46-a40c-11e5-8662-e99ab1cd2cb7.gif)
 
@@ -96,29 +97,49 @@ fn main() {
 
 ## Contributing
 
-Build:
+Contributions from the community are always welcome! Here are some ways you can contribute:
+
+### Reporting Bugs
+
+If you encounter any bugs, please [submit an issue](https://github.com/chargetrip/supercluster-rs/issues) with detailed information about the problem and steps to reproduce it.
+
+### Feature Requests
+
+If you have ideas for new features, feel free to [submit an issue](https://github.com/chargetrip/supercluster-rs/issues) with a detailed description of the feature and its potential use cases.
+
+### Build
+
+To build the project, run:
 
 ```bash
 cargo build
 ```
 
-Test:
+### Test
+
+To run the tests, use:
 
 ```bash
 cargo test
 ```
 
-Run [clippy](https://github.com/rust-lang/rust-clippy):
+### Lint
+
+Run [clippy](https://github.com/rust-lang/rust-clippy) to lint the code:
 
 ```bash
 cargo clippy --all-targets --all-features --no-deps -- -D warnings
 ```
 
-Run [rustfmt](https://github.com/rust-lang/rustfmt):
+### Format
+
+Run [rustfmt](https://github.com/rust-lang/rustfmt) to format the code:
 
 ```bash
 cargo fmt
 ```
+
+### Documentation
 
 Generate documentation in HTML format:
 
