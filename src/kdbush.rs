@@ -596,4 +596,44 @@ mod tests {
 
         assert_eq!(result, 5);
     }
+
+    #[test]
+    fn test_select_basic() {
+        let mut kdbush = KDBush::new(10, 1);
+        kdbush.coords = vec![2.0, 3.0, 1.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+        kdbush.ids = vec![0, 1, 2, 3, 4];
+        kdbush.select(2, 0, 4, 0);
+
+        assert_eq!(kdbush.coords[4], 5.0);
+    }
+
+    #[test]
+    fn test_select_large_range() {
+        let mut kdbush = KDBush::new(10, 1);
+        kdbush.coords = (0..4000).map(|x| x as f64).collect();
+        kdbush.ids = (0..4000).collect();
+        kdbush.select(1000, 0, 1999, 0);
+
+        assert_eq!(kdbush.coords[2000], 2000.0);
+    }
+
+    #[test]
+    fn test_select_axis_y() {
+        let mut kdbush = KDBush::new(10, 1);
+        kdbush.coords = vec![2.0, 3.0, 1.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+        kdbush.ids = vec![0, 1, 2, 3, 4];
+        kdbush.select(2, 0, 4, 1);
+
+        assert_eq!(kdbush.coords[4], 5.0);
+    }
+
+    #[test]
+    fn test_select_single_element() {
+        let mut kdbush = KDBush::new(10, 1);
+        kdbush.coords = vec![2.0];
+        kdbush.ids = vec![0];
+        kdbush.select(0, 0, 0, 0);
+
+        assert_eq!(kdbush.coords[0], 2.0);
+    }
 }
