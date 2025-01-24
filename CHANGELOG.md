@@ -2,11 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.3] - 2025-01-24
+
+### ⚙️ Miscellaneous Tasks
+
+- Update rust version
+- Add code coverage (#10)
+
 ## [1.2.2] - 2025-01-13
 
 ### 🐛 Bug Fixes
 
 - Normalize and denormalize data range in proportion (#9)
+
+### ⚙️ Miscellaneous Tasks
+
+- Release supercluster version 1.2.2
 
 ## [1.2.1] - 2025-01-03
 
