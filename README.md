@@ -64,34 +64,32 @@ use geojson::FeatureCollection;
 use supercluster::{ CoordinateSystem, Supercluster, Options };
 
 fn main() {
-  let options = Options {
-      max_zoom: 16,
-      min_zoom: 0,
-      min_points: 2,
-      radius: 40.0,
-      node_size: 64,
-      extent: 512.0,
-      coordinate_system: CoordinateSystem::LatLng,
-  };
-
-  // Create a new instance with the specified configuration settings
-  let mut cluster = Supercluster::new(options);
-
-  // Load a FeatureCollection Object into the Supercluster instance
-
-  // [GeoJSON Format Specification § 5](https://tools.ietf.org/html/rfc7946#section-5)
-  let feature_collection = FeatureCollection {
-    bbox: None,
-    // [GeoJSON Format Specification § 3.2](https://datatracker.ietf.org/doc/html/rfc7946#section-3.2)
-    features: vec![],
-    foreign_members: None,
-  };
-  let index = cluster.load(feature_collection);
-
-  // Retrieve a FeatureCollection Object within a tile at the given zoom level and tile coordinates
-  let tile = index.get_tile(0, 0.0, 0.0).expect("cannot get a tile");
-
-  ...
+    // Set the configuration settings for the Supercluster instance
+    let options = Options {
+        max_zoom: 16,
+        min_zoom: 0,
+        min_points: 2,
+        radius: 40.0,
+        node_size: 64,
+        extent: 512.0,
+        coordinate_system: CoordinateSystem::LatLng,
+    };
+  
+    // Create a new instance with the specified configuration settings
+    let mut cluster = Supercluster::new(options);
+  
+    // Load a FeatureCollection Object into the Supercluster instance
+    // [GeoJSON Format Specification § 5](https://tools.ietf.org/html/rfc7946#section-5)
+    let feature_collection = FeatureCollection {
+      bbox: None,
+      // [GeoJSON Format Specification § 3.2](https://datatracker.ietf.org/doc/html/rfc7946#section-3.2)
+      features: vec![],
+      foreign_members: None,
+    };
+    let index = cluster.load(feature_collection.features);
+  
+    // Get a tile  
+    let tile = index.get_tile(0, 0.0, 0.0);
 }
 ```
 

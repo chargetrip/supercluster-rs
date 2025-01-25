@@ -9,6 +9,7 @@ use geojson::{feature::Id, Feature, FeatureCollection, Geometry, JsonObject, Val
 use kdbush::KDBush;
 use range::DataRange;
 use serde_json::json;
+use thiserror::Error;
 
 /// An offset index used to access the zoom level value associated with a cluster in the data arrays.
 const OFFSET_ZOOM: usize = 2;
@@ -33,6 +34,21 @@ pub enum CoordinateSystem {
 
     /// Cartesian coordinates. Used for non-geospatial (i.e. microscopy, etc.) data.
     Cartesian { range: DataRange },
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum SuperclusterError {
+    /// Cluster not found with the specified ID.
+    #[error("Cluster not found with the specified ID.")]
+    ClusterNotFound,
+
+    /// Tree not found at the specified zoom level.
+    #[error("Tree not found at the specified zoom level.")]
+    TreeNotFound,
+
+    /// Tile not found at the specified coordinates and zoom level.
+    #[error("Tile not found at the specified coordinates and zoom level.")]
+    TileNotFound,
 }
 
 /// Supercluster configuration options.
@@ -91,7 +107,7 @@ impl Supercluster {
     /// A new `Supercluster` instance with the given configuration.
     pub fn new(options: Options) -> Self {
         let capacity = options.max_zoom + 1;
-        let trees: Vec<KDBush> = (0..capacity + 1)
+        let trees = (0..capacity + 1)
             .map(|_| KDBush::new(0, options.node_size))
             .collect();
 
@@ -142,10 +158,10 @@ impl Supercluster {
                 }
                 CoordinateSystem::LatLng => {
                     // Longitude
-                    data.push(lng_x(coordinates[0]));
+                    data.push(convert_longitude_to_spherical_mercator(coordinates[0]));
 
                     // Latitude
-                    data.push(lat_y(coordinates[1]));
+                    data.push(convert_latitude_to_spherical_mercator(coordinates[1]));
                 }
             };
 
@@ -181,7 +197,7 @@ impl Supercluster {
     ///
     /// # Arguments
     ///
-    /// - `bbox`: The bounding box as an array of four coordinates [min_lng, min_lat, max_lng, max_lat].
+    /// - `bbox`: The bounding box as an array of four coordinates [min_lng, min_lat, maconvert_spherical_mercator_to_longitude, max_lat].
     /// - `zoom`: The zoom level at which to retrieve clusters.
     ///
     /// # Returns
@@ -217,15 +233,15 @@ impl Supercluster {
                 }
 
                 tree.range(
-                    lng_x(min_lng),
-                    lat_y(max_lat),
-                    lng_x(max_lng),
-                    lat_y(min_lat),
+                    convert_longitude_to_spherical_mercator(min_lng),
+                    convert_latitude_to_spherical_mercator(max_lat),
+                    convert_longitude_to_spherical_mercator(max_lng),
+                    convert_latitude_to_spherical_mercator(min_lat),
                 )
             }
         };
 
-        let mut clusters = Vec::new();
+        let mut clusters = vec![];
 
         for id in ids {
             let k = self.stride * id;
@@ -238,7 +254,7 @@ impl Supercluster {
                     &self.options.coordinate_system,
                 )
             } else {
-                self.points[tree.data[k + OFFSET_ID] as usize].clone()
+                self.points[tree.data[k + OFFSET_ID] as usize].to_owned()
             });
         }
 
@@ -253,23 +269,18 @@ impl Supercluster {
     ///
     /// # Returns
     ///
-    /// A `Result` containing a vector of GeoJSON features representing the children of the specified cluster if successful,
-    /// or an error message if the cluster is not found.
-    pub fn get_children(&self, cluster_id: usize) -> Result<Vec<Feature>, &'static str> {
+    /// Vector of GeoJSON features representing the cluster with the specified ID.
+    pub fn get_children(&self, cluster_id: usize) -> Result<Vec<Feature>, SuperclusterError> {
         let origin_id = self.get_origin_id(cluster_id);
         let origin_zoom = self.get_origin_zoom(cluster_id);
-        let error_msg = "No cluster with the specified id.";
-        let tree = self.trees.get(origin_zoom);
-
-        if tree.is_none() {
-            return Err(error_msg);
-        }
-
-        let tree = tree.expect("tree is not defined");
+        let tree = match self.trees.get(origin_zoom) {
+            Some(tree) => tree,
+            None => return Err(SuperclusterError::TreeNotFound),
+        };
         let data = &tree.data;
 
         if origin_id * self.stride >= data.len() {
-            return Err(error_msg);
+            return Err(SuperclusterError::ClusterNotFound);
         }
 
         let r = self.options.radius
@@ -279,8 +290,7 @@ impl Supercluster {
         let y = data[origin_id * self.stride + 1];
 
         let ids = tree.within(x, y, r);
-
-        let mut children = Vec::new();
+        let mut children = vec![];
 
         for id in ids {
             let k = id * self.stride;
@@ -295,14 +305,13 @@ impl Supercluster {
                     ));
                 } else {
                     let point_id = data[k + OFFSET_ID] as usize;
-
-                    children.push(self.points[point_id].clone());
+                    children.push(self.points[point_id].to_owned());
                 }
             }
         }
 
         if children.is_empty() {
-            return Err(error_msg);
+            return Err(SuperclusterError::ClusterNotFound);
         }
 
         Ok(children)
@@ -321,7 +330,6 @@ impl Supercluster {
     /// A vector of GeoJSON features representing the individual leaf features within the cluster.
     pub fn get_leaves(&self, cluster_id: usize, limit: usize, offset: usize) -> Vec<Feature> {
         let mut leaves = vec![];
-
         self.append_leaves(&mut leaves, cluster_id, limit, offset, 0);
 
         leaves
@@ -337,8 +345,8 @@ impl Supercluster {
     ///
     /// # Returns
     ///
-    /// An optional `Tile` containing a vector of GeoJSON features within the specified tile, or `None` if there are no features.
-    pub fn get_tile(&self, z: u8, x: f64, y: f64) -> Option<FeatureCollection> {
+    /// A list of GeoJSON features within the specified tile, otherwise an error if the tile is not found.
+    pub fn get_tile(&self, z: u8, x: f64, y: f64) -> Result<FeatureCollection, SuperclusterError> {
         let tree = &self.trees[self.limit_zoom(z)];
         let z2: f64 = (2u32).pow(z as u32) as f64;
         let p = self.options.radius / self.options.extent;
@@ -352,26 +360,23 @@ impl Supercluster {
         };
 
         let ids = tree.range((x - p) / z2, top, (x + 1.0 + p) / z2, bottom);
-
         self.add_tile_features(&ids, &tree.data, x, y, z2, &mut tile);
 
         if x == 0.0 {
             let ids = tree.range(1.0 - p / z2, top, 1.0, bottom);
-
             self.add_tile_features(&ids, &tree.data, z2, y, z2, &mut tile);
         }
 
         if x == z2 - 1.0 {
             let ids = tree.range(0.0, top, p / z2, bottom);
-
             self.add_tile_features(&ids, &tree.data, -1.0, y, z2, &mut tile);
         }
 
         if tile.features.is_empty() {
-            None
-        } else {
-            Some(tile)
+            return Err(SuperclusterError::TileNotFound);
         }
+
+        Ok(tile)
     }
 
     /// Determine the zoom level at which a specific cluster expands.
@@ -482,7 +487,7 @@ impl Supercluster {
     ///
     /// # Returns
     ///
-    /// A `KDBush` instance with the specified data.
+    /// `KDBush` instance with the specified data.
     fn create_tree(&mut self, data: Vec<f64>) -> KDBush {
         let mut tree = KDBush::new(data.len() / self.stride, self.options.node_size);
 
@@ -519,47 +524,46 @@ impl Supercluster {
             let k = i * self.stride;
             let is_cluster = data[k + OFFSET_NUM] > 1.0;
 
-            let px;
-            let py;
-            let properties;
-
-            if is_cluster {
-                properties = get_cluster_properties(data, k, &self.cluster_props);
-
-                px = data[k];
-                py = data[k + 1];
+            let (px, py, properties) = if is_cluster {
+                (
+                    data[k],
+                    data[k + 1],
+                    get_cluster_properties(data, k, &self.cluster_props),
+                )
             } else {
                 let p = &self.points[data[k + OFFSET_ID] as usize];
-                properties = match p.properties.as_ref() {
-                    Some(properties) => properties.clone(),
+                let properties = match p.properties.as_ref() {
+                    Some(properties) => properties.to_owned(),
                     None => continue, // Handle the case where properties is None
                 };
 
-                match p.geometry.as_ref() {
+                let (px, py) = match p.geometry.as_ref() {
                     Some(geometry) => {
                         if let Point(coordinates) = &geometry.value {
                             match &self.options.coordinate_system {
-                                CoordinateSystem::Cartesian { range } => {
-                                    px = range.normalize(coordinates[0]);
-                                    py = range.normalize(coordinates[1]);
-                                }
-                                CoordinateSystem::LatLng => {
-                                    px = lng_x(coordinates[0]);
-                                    py = lat_y(coordinates[1]);
-                                }
+                                CoordinateSystem::Cartesian { range } => (
+                                    range.normalize(coordinates[0]),
+                                    range.normalize(coordinates[1]),
+                                ),
+                                CoordinateSystem::LatLng => (
+                                    convert_longitude_to_spherical_mercator(coordinates[0]),
+                                    convert_latitude_to_spherical_mercator(coordinates[1]),
+                                ),
                             }
                         } else {
                             continue;
                         }
                     }
                     None => continue, // Handle the case where geometry is None
-                }
-            }
+                };
+
+                (px, py, properties)
+            };
 
             let id = if is_cluster {
                 Some(Id::String(data[k + OFFSET_ID].to_string()))
             } else {
-                self.points[data[k + OFFSET_ID] as usize].id.clone()
+                self.points[data[k + OFFSET_ID] as usize].id.to_owned()
             };
 
             let geometry = Geometry::new(Point(vec![
@@ -604,8 +608,8 @@ impl Supercluster {
     /// and the second one contains data arrays for the next zoom level.
     fn cluster(&self, tree: &KDBush, zoom: u8) -> (Vec<f64>, Vec<f64>) {
         let r = self.options.radius / (self.options.extent * (2.0_f64).powi(zoom as i32));
-        let mut data = tree.data.clone();
-        let mut next_data = Vec::new();
+        let mut data = tree.data.to_owned();
+        let mut next_data = vec![];
 
         // Loop through each point
         for i in (0..data.len()).step_by(self.stride) {
@@ -747,7 +751,10 @@ fn get_cluster_json(
             range.denormalize(data[i]),
             range.denormalize(data[i + 1]),
         ])),
-        CoordinateSystem::LatLng => Geometry::new(Point(vec![x_lng(data[i]), y_lat(data[i + 1])])),
+        CoordinateSystem::LatLng => Geometry::new(Point(vec![
+            convert_spherical_mercator_to_longitude(data[i]),
+            convert_spherical_mercator_to_latitude(data[i + 1]),
+        ])),
     };
 
     Feature {
@@ -781,7 +788,7 @@ fn get_cluster_properties(data: &[f64], i: usize, cluster_props: &[JsonObject]) 
     };
 
     let mut properties = if !cluster_props.is_empty() && data.get(i + OFFSET_PROP).is_some() {
-        cluster_props[data[i + OFFSET_PROP] as usize].clone()
+        cluster_props[data[i + OFFSET_PROP] as usize].to_owned()
     } else {
         JsonObject::new()
     };
@@ -806,7 +813,7 @@ fn get_cluster_properties(data: &[f64], i: usize, cluster_props: &[JsonObject]) 
 /// # Returns
 ///
 /// The converted value in the [0..1] range.
-fn lng_x(lng: f64) -> f64 {
+fn convert_longitude_to_spherical_mercator(lng: f64) -> f64 {
     lng / 360.0 + 0.5
 }
 
@@ -819,7 +826,7 @@ fn lng_x(lng: f64) -> f64 {
 /// # Returns
 ///
 /// The converted value in the [0..1] range.
-fn lat_y(lat: f64) -> f64 {
+fn convert_latitude_to_spherical_mercator(lat: f64) -> f64 {
     let sin = lat.to_radians().sin();
     let y = 0.5 - (0.25 * ((1.0 + sin) / (1.0 - sin)).ln()) / PI;
 
@@ -835,7 +842,7 @@ fn lat_y(lat: f64) -> f64 {
 /// # Returns
 ///
 /// The converted longitude value.
-fn x_lng(x: f64) -> f64 {
+fn convert_spherical_mercator_to_longitude(x: f64) -> f64 {
     (x - 0.5) * 360.0
 }
 
@@ -848,7 +855,7 @@ fn x_lng(x: f64) -> f64 {
 /// # Returns
 ///
 /// The converted latitude value.
-fn y_lat(y: f64) -> f64 {
+fn convert_spherical_mercator_to_latitude(y: f64) -> f64 {
     let y2 = ((180.0 - y * 360.0) * PI) / 180.0;
     (360.0 * y2.exp().atan()) / PI - 90.0
 }
@@ -1032,36 +1039,48 @@ mod tests {
     }
 
     #[test]
-    fn test_lng_x() {
-        assert_eq!(lng_x(0.0), 0.5);
-        assert_eq!(lng_x(180.0), 1.0);
-        assert_eq!(lng_x(-180.0), 0.0);
-        assert_eq!(lng_x(90.0), 0.75);
-        assert_eq!(lng_x(-90.0), 0.25);
+    fn test_convert_longitude_to_spherical_mercator() {
+        assert_eq!(convert_longitude_to_spherical_mercator(0.0), 0.5);
+        assert_eq!(convert_longitude_to_spherical_mercator(180.0), 1.0);
+        assert_eq!(convert_longitude_to_spherical_mercator(-180.0), 0.0);
+        assert_eq!(convert_longitude_to_spherical_mercator(90.0), 0.75);
+        assert_eq!(convert_longitude_to_spherical_mercator(-90.0), 0.25);
     }
 
     #[test]
-    fn test_lat_y() {
-        assert_eq!(lat_y(0.0), 0.5);
-        assert_eq!(lat_y(90.0), 0.0);
-        assert_eq!(lat_y(-90.0), 1.0);
-        assert_eq!(lat_y(45.0), 0.35972503691520497);
-        assert_eq!(lat_y(-45.0), 0.640274963084795);
+    fn test_convert_latitude_to_spherical_mercator() {
+        assert_eq!(convert_latitude_to_spherical_mercator(0.0), 0.5);
+        assert_eq!(convert_latitude_to_spherical_mercator(90.0), 0.0);
+        assert_eq!(convert_latitude_to_spherical_mercator(-90.0), 1.0);
+        assert_eq!(
+            convert_latitude_to_spherical_mercator(45.0),
+            0.35972503691520497
+        );
+        assert_eq!(
+            convert_latitude_to_spherical_mercator(-45.0),
+            0.640274963084795
+        );
     }
 
     #[test]
-    fn test_x_lng() {
-        assert_eq!(x_lng(0.5), 0.0);
-        assert_eq!(x_lng(1.0), 180.0);
-        assert_eq!(x_lng(0.0), -180.0);
-        assert_eq!(x_lng(0.75), 90.0);
-        assert_eq!(x_lng(0.25), -90.0);
+    fn test_convert_spherical_mercator_to_longitude() {
+        assert_eq!(convert_spherical_mercator_to_longitude(0.5), 0.0);
+        assert_eq!(convert_spherical_mercator_to_longitude(1.0), 180.0);
+        assert_eq!(convert_spherical_mercator_to_longitude(0.0), -180.0);
+        assert_eq!(convert_spherical_mercator_to_longitude(0.75), 90.0);
+        assert_eq!(convert_spherical_mercator_to_longitude(0.25), -90.0);
     }
 
     #[test]
-    fn test_y_lat() {
-        assert_eq!(y_lat(0.5), 0.0);
-        assert_eq!(y_lat(0.875), -79.17133464081944);
-        assert_eq!(y_lat(0.125), 79.17133464081945);
+    fn test_convert_spherical_mercator_to_latitude() {
+        assert_eq!(convert_spherical_mercator_to_latitude(0.5), 0.0);
+        assert_eq!(
+            convert_spherical_mercator_to_latitude(0.875),
+            -79.17133464081944
+        );
+        assert_eq!(
+            convert_spherical_mercator_to_latitude(0.125),
+            79.17133464081945
+        );
     }
 }

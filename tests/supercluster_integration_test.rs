@@ -6,19 +6,29 @@ use common::{
 };
 use geojson::{Feature, Geometry, JsonObject, Value::Point};
 use serde_json::json;
-use supercluster::{CoordinateSystem, Supercluster};
+use supercluster::{CoordinateSystem, Supercluster, SuperclusterError};
 
 #[test]
-fn test_generate_clusters() {
+fn test_get_tile() {
     let places_tile = load_tile_places();
 
     let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16, CoordinateSystem::LatLng));
     let index = cluster.load(load_places());
-
-    let tile = index.get_tile(0, 0.0, 0.0).expect("cannot get a tile");
+    let tile = index.get_tile(0, 0.0, 0.0).unwrap();
 
     assert_eq!(tile.features.len(), places_tile.features.len());
     assert_eq!(tile.features, places_tile.features);
+}
+
+#[test]
+fn test_get_tile_not_found() {
+    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 5, 16, CoordinateSystem::LatLng));
+    let index = cluster.load(load_places());
+
+    assert_eq!(
+        index.get_tile(10, 10.0, 10.0),
+        Err(SuperclusterError::TileNotFound)
+    );
 }
 
 #[test]
@@ -52,11 +62,18 @@ fn test_get_cluster() {
         })
         .collect();
 
-    // Define the expected cluster counts.
-    let expected_counts: Vec<usize> = vec![6, 7, 2, 1];
+    assert_eq!(cluster_counts, vec![6, 7, 2, 1]);
+}
 
-    // Assert that the child counts match the expected counts.
-    assert_eq!(cluster_counts, expected_counts);
+#[test]
+fn test_get_cluster_fail_with_undefined_tree() {
+    let mut cluster = Supercluster::new(get_options(40.0, 512.0, 2, 16, CoordinateSystem::LatLng));
+    let index = cluster.load(load_places());
+
+    assert_eq!(
+        index.get_children(100000),
+        Err(SuperclusterError::TreeNotFound)
+    );
 }
 
 #[test]
