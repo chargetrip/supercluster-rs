@@ -6,12 +6,14 @@ on:
     paths:
       - '**.rs'
       - 'src/**.rs'
+      - 'tests/**.rs'
       - '.github/workflows/**.yml'
   pull_request:
     branches: [ "main" ]
     paths:
       - '**.rs'
       - 'src/**.rs'
+      - 'tests/**.rs'
       - '.github/workflows/**.yml'
 
 env:
@@ -37,7 +39,7 @@ jobs:
     - name: Run lint
       run: cargo fmt -- --check
     - name: Run tests
-      run: cargo tarpaulin --out xml
+      run: cargo tarpaulin --tests --bins --all-targets --locked --out xml
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v3
       env:
