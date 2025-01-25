@@ -2,12 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0] - 2025-01-25
+
+### ⚙️ Miscellaneous Tasks
+
+- Update ci
+
 ## [1.2.3] - 2025-01-24
 
 ### ⚙️ Miscellaneous Tasks
 
 - Update rust version
 - Add code coverage (#10)
+- Release supercluster version 1.2.3
 
 ## [1.2.2] - 2025-01-13
 
