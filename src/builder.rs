@@ -31,25 +31,25 @@ pub struct Options {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct SuperclusterBuilder {
     /// Minimal zoom level to generate clusters on.
-    min_zoom: Option<u8>,
+    pub min_zoom: Option<u8>,
 
     /// Maximal zoom level to cluster the points on.
-    max_zoom: Option<u8>,
+    pub max_zoom: Option<u8>,
 
     /// Minimum points to form a cluster.
-    min_points: Option<u8>,
+    pub min_points: Option<u8>,
 
     /// Cluster radius in pixels.
-    radius: Option<f64>,
+    pub radius: Option<f64>,
 
     /// Tile extent (radius is calculated relative to it).
-    extent: Option<f64>,
+    pub extent: Option<f64>,
 
     /// Size of the KD-tree leaf node, affects performance.
-    node_size: Option<usize>,
+    pub node_size: Option<usize>,
 
     /// Type of coordinate system for clustering.
-    coordinate_system: Option<CoordinateSystem>,
+    pub coordinate_system: Option<CoordinateSystem>,
 }
 
 impl SuperclusterBuilder {
