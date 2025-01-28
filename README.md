@@ -15,6 +15,54 @@ This crate was initially inspired by Mapbox's supercluster [blog post](https://b
 
 ![Features](https://cloud.githubusercontent.com/assets/25395/11857351/43407b46-a40c-11e5-8662-e99ab1cd2cb7.gif)
 
+## Documentation
+
+For more in-depth details, please refer to the full [documentation](https://docs.rs/supercluster).
+
+If you encounter any issues or have questions that are not addressed in the documentation, feel free to [submit an issue](https://github.com/chargetrip/supercluster-rs/issues).
+
+## Usage
+
+To use the `supercluster` crate in your project, add it to your `Cargo.toml`:
+
+```toml
+[dependencies]
+supercluster = "x.x.x"
+```
+
+Below is an example of how to create and run a supercluster using the crate.
+This example demonstrates how to build supercluster options, create a new supercluster, and get a tile.
+For more detailed information and advanced usage, please refer to the full [documentation](https://docs.rs/supercluster).
+
+```rust
+use geojson::FeatureCollection;
+use supercluster::{ CoordinateSystem, Options, Supercluster, SuperclusterError };
+
+fn main() -> Result<(), SuperclusterError> {
+    // Set the configuration settings
+    let options = Supercluster::builder()
+        .radius(40.0)
+        .extent(512.0)
+        .min_points(2)
+        .max_zoom(16)
+        .coordinate_system(CoordinateSystem::LatLng)
+        .build();
+
+    // Create a new instance with the specified configuration settings
+    let mut cluster = Supercluster::new(options);
+
+    // Load a FeatureCollection Object into the Supercluster instance
+    // [GeoJSON Format Specification § 5](https://tools.ietf.org/html/rfc7946#section-5)
+    let feature_collection = vec![];
+    let index = cluster.load(feature_collection);
+
+    // Get a tile
+    let tile = index.get_tile(0, 0.0, 0.0)?;
+
+    Ok(())
+}
+```
+
 ## Features
 
 - `load(points)`: Loads a [FeatureCollection](https://datatracker.ietf.org/doc/html/rfc7946#section-3.3) Object. Each feature should be a [Feature Object](https://datatracker.ietf.org/doc/html/rfc7946#section-3.2).
@@ -29,69 +77,9 @@ This crate was initially inspired by Mapbox's supercluster [blog post](https://b
 
 - `get_cluster_expansion_zoom(cluster_id)`: Returns the zoom on which the cluster expands into several children (useful for "click to zoom" feature) given the cluster's `cluster_id`.
 
-## Options
-
-| Option              | Description                                                       |
-|---------------------|-------------------------------------------------------------------|
-| `min_zoom`          | Minimum zoom level at which clusters are generated.               |
-| `max_zoom`          | Maximum zoom level at which clusters are generated.               |
-| `min_points`        | Minimum number of points to form a cluster.                       |
-| `radius`            | Cluster radius, in pixels.                                        |
-| `extent`            | (Tiles) Tile extent. Radius is calculated relative to this value. |
-| `node_size`         | Size of the KD-tree leaf node. Affects performance.               |
-| `coordinate_system` | Type of coordinate system for clustering.                         |
-
 ## Safety
 
 This crate uses `#![forbid(unsafe_code)]` to ensure everything is implemented in 100% safe Rust.
-
-## Documentation
-
-For more in-depth details, please refer to the full [documentation](https://docs.rs/supercluster).
-
-If you encounter any issues or have questions that are not addressed in the documentation, feel free to [submit an issue](https://github.com/chargetrip/supercluster-rs/issues).
-
-## Usage
-
-Run the following Cargo command in your project directory:
-
-```bash
-cargo add supercluster
-```
-
-```rust
-use geojson::FeatureCollection;
-use supercluster::{ CoordinateSystem, Supercluster, Options };
-
-fn main() {
-    // Set the configuration settings for the Supercluster instance
-    let options = Options {
-        max_zoom: 16,
-        min_zoom: 0,
-        min_points: 2,
-        radius: 40.0,
-        node_size: 64,
-        extent: 512.0,
-        coordinate_system: CoordinateSystem::LatLng,
-    };
-  
-    // Create a new instance with the specified configuration settings
-    let mut cluster = Supercluster::new(options);
-  
-    // Load a FeatureCollection Object into the Supercluster instance
-    // [GeoJSON Format Specification § 5](https://tools.ietf.org/html/rfc7946#section-5)
-    let feature_collection = FeatureCollection {
-      bbox: None,
-      // [GeoJSON Format Specification § 3.2](https://datatracker.ietf.org/doc/html/rfc7946#section-3.2)
-      features: vec![],
-      foreign_members: None,
-    };
-    let index = cluster.load(feature_collection.features);
-  
-    // Get a tile  
-    let tile = index.get_tile(0, 0.0, 0.0);
-}
-```
 
 ## Contributing
 

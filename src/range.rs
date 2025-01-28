@@ -1,8 +1,8 @@
-use std::cell::OnceCell;
+use serde::{Deserialize, Serialize};
 
 /// The range of the incoming data if choosing the cartesian coordinate system.
 /// Applicable for non-geospatial data (i.e. microscopy, etc.).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct DataRange {
     /// The minimum x-coordinate value.
     pub min_x: f64,
@@ -17,10 +17,10 @@ pub struct DataRange {
     pub max_y: f64,
 
     /// The cached value for offset.
-    pub offset: OnceCell<f64>,
+    pub offset: Option<f64>,
 
     // The cached value for scale.
-    pub scale: OnceCell<f64>,
+    pub scale: Option<f64>,
 }
 
 impl DataRange {
@@ -56,7 +56,8 @@ impl DataRange {
     ///
     /// The minimum range value.
     fn offset(&self) -> f64 {
-        *self.offset.get_or_init(|| f64::min(self.min_x, self.min_y))
+        self.offset
+            .unwrap_or_else(|| f64::min(self.min_x, self.min_y))
     }
 
     /// Compute and cache the maximum range value.
@@ -65,9 +66,8 @@ impl DataRange {
     ///
     /// The maximum range value.
     fn scale(&self) -> f64 {
-        *self
-            .scale
-            .get_or_init(|| f64::max(self.max_x, self.max_y) - self.offset())
+        self.scale
+            .unwrap_or_else(|| f64::max(self.max_x, self.max_y) - self.offset())
     }
 }
 
@@ -83,8 +83,8 @@ impl Default for DataRange {
             min_y: 0.0,
             max_x: 1.0,
             max_y: 1.0,
-            offset: OnceCell::new(),
-            scale: OnceCell::new(),
+            offset: None,
+            scale: None,
         }
     }
 }

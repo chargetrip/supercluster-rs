@@ -1,24 +1,6 @@
 use geojson::{Feature, FeatureCollection, Value};
 use std::{fs, path::Path};
-use supercluster::{range::DataRange, CoordinateSystem, Options};
-
-pub fn get_options(
-    radius: f64,
-    extent: f64,
-    min_points: u8,
-    max_zoom: u8,
-    coordinate_system: CoordinateSystem,
-) -> Options {
-    Options {
-        radius,
-        extent,
-        max_zoom,
-        min_zoom: 0,
-        min_points,
-        node_size: 64,
-        coordinate_system,
-    }
-}
+use supercluster::range::DataRange;
 
 pub fn get_data_range(data: &Vec<Feature>) -> Option<DataRange> {
     let mut min_x = f64::INFINITY;

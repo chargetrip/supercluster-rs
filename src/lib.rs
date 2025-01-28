@@ -2,14 +2,19 @@
 
 use std::f64::consts::PI;
 
+use geojson::{feature::Id, Feature, FeatureCollection, Geometry, JsonObject, Value::Point};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+pub mod builder;
+pub mod error;
 pub mod kdbush;
 pub mod range;
 
-use geojson::{feature::Id, Feature, FeatureCollection, Geometry, JsonObject, Value::Point};
-use kdbush::KDBush;
-use range::DataRange;
-use serde_json::json;
-use thiserror::Error;
+pub use builder::*;
+pub use error::*;
+pub use kdbush::*;
+pub use range::*;
 
 /// An offset index used to access the zoom level value associated with a cluster in the data arrays.
 const OFFSET_ZOOM: usize = 2;
@@ -27,7 +32,7 @@ const OFFSET_NUM: usize = 5;
 const OFFSET_PROP: usize = 6;
 
 /// Coordinate system for clustering.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub enum CoordinateSystem {
     /// Latitude and longitude coordinates. Used for geo-spatial data.
     LatLng,
@@ -36,51 +41,11 @@ pub enum CoordinateSystem {
     Cartesian { range: DataRange },
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum SuperclusterError {
-    /// Cluster not found with the specified ID.
-    #[error("Cluster not found with the specified ID.")]
-    ClusterNotFound,
-
-    /// Tree not found at the specified zoom level.
-    #[error("Tree not found at the specified zoom level.")]
-    TreeNotFound,
-
-    /// Tile not found at the specified coordinates and zoom level.
-    #[error("Tile not found at the specified coordinates and zoom level.")]
-    TileNotFound,
-}
-
-/// Supercluster configuration options.
-#[derive(Clone, Debug)]
-pub struct Options {
-    /// Minimal zoom level to generate clusters on.
-    pub min_zoom: u8,
-
-    /// Maximal zoom level to cluster the points on.
-    pub max_zoom: u8,
-
-    /// Minimum points to form a cluster.
-    pub min_points: u8,
-
-    /// Cluster radius in pixels.
-    pub radius: f64,
-
-    /// Tile extent (radius is calculated relative to it).
-    pub extent: f64,
-
-    /// Size of the KD-tree leaf node, affects performance.
-    pub node_size: usize,
-
-    /// Type of coordinate system for clustering.
-    pub coordinate_system: CoordinateSystem,
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 /// A spatial clustering configuration and data structure.
 pub struct Supercluster {
     /// Configuration settings.
-    options: Options,
+    pub options: Options,
 
     /// Vector of KDBush structures for different zoom levels.
     trees: Vec<KDBush>,
@@ -96,6 +61,14 @@ pub struct Supercluster {
 }
 
 impl Supercluster {
+    /// Create a new supercluster instance with configuration settings.
+    ///
+    /// # Returns
+    ///
+    /// New supercluster builder.
+    pub fn builder() -> SuperclusterBuilder {
+        SuperclusterBuilder::new()
+    }
     /// Create a new instance of `Supercluster` with the specified configuration settings.
     ///
     /// # Arguments
@@ -104,7 +77,7 @@ impl Supercluster {
     ///
     /// # Returns
     ///
-    /// A new `Supercluster` instance with the given configuration.
+    /// New `Supercluster` instance with the given configuration.
     pub fn new(options: Options) -> Self {
         let capacity = options.max_zoom + 1;
         let trees = (0..capacity + 1)
@@ -865,15 +838,8 @@ mod tests {
     use super::*;
 
     fn setup() -> Supercluster {
-        Supercluster::new(Options {
-            radius: 40.0,
-            extent: 512.0,
-            max_zoom: 16,
-            min_zoom: 0,
-            min_points: 2,
-            node_size: 64,
-            coordinate_system: CoordinateSystem::LatLng,
-        })
+        let options = Supercluster::builder().build();
+        Supercluster::new(options)
     }
 
     #[test]

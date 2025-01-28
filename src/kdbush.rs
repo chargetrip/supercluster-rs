@@ -1,8 +1,10 @@
+use serde::{Deserialize, Serialize};
+
 /// Array of coordinates with longitude as first value and latitude as second one.
 type Point = [f64; 2];
 
 /// Static spatial index for 2D points based on a flat KD-tree.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct KDBush {
     /// Node size for the KD-tree. Determines the number of points in a leaf node.
     pub node_size: usize,
