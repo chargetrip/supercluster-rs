@@ -2,11 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.1] - 2025-01-28
+
+### 🚀 Features
+
+- Supercluster builder
+
 ## [2.0.0] - 2025-01-25
 
 ### ⚙️ Miscellaneous Tasks
 
 - Update ci
+- Release supercluster version 2.0.0
 
 ## [1.2.3] - 2025-01-24
 
