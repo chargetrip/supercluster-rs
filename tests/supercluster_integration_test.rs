@@ -19,7 +19,7 @@ fn test_get_tile() {
         .coordinate_system(CoordinateSystem::LatLng)
         .build();
     let mut cluster = Supercluster::new(options);
-    let index = cluster.load(load_places());
+    let index = cluster.load(load_places()).unwrap();
     let tile = index.get_tile(0, 0.0, 0.0).unwrap();
 
     assert_eq!(tile.features.len(), places_tile.features.len());
@@ -36,7 +36,7 @@ fn test_get_tile_not_found() {
         .coordinate_system(CoordinateSystem::LatLng)
         .build();
     let mut cluster = Supercluster::new(options);
-    let index = cluster.load(load_places());
+    let index = cluster.load(load_places()).unwrap();
 
     assert_eq!(
         index.get_tile(10, 10.0, 10.0),
@@ -56,7 +56,7 @@ fn test_generate_clusters_with_min_points() {
         .coordinate_system(CoordinateSystem::LatLng)
         .build();
     let mut cluster = Supercluster::new(options);
-    let index = cluster.load(load_places());
+    let index = cluster.load(load_places()).unwrap();
 
     let tile = index.get_tile(0, 0.0, 0.0).expect("cannot get a tile");
 
@@ -74,7 +74,7 @@ fn test_get_cluster() {
         .coordinate_system(CoordinateSystem::LatLng)
         .build();
     let mut cluster = Supercluster::new(options);
-    let index = cluster.load(load_places());
+    let index = cluster.load(load_places()).unwrap();
 
     let cluster_counts: Vec<usize> = index
         .get_children(164)
@@ -102,7 +102,7 @@ fn test_get_cluster_fail_with_undefined_tree() {
         .coordinate_system(CoordinateSystem::LatLng)
         .build();
     let mut cluster = Supercluster::new(options);
-    let index = cluster.load(load_places());
+    let index = cluster.load(load_places()).unwrap();
 
     assert_eq!(
         index.get_children(100000),
@@ -120,7 +120,7 @@ fn test_cluster_expansion_zoom() {
         .coordinate_system(CoordinateSystem::LatLng)
         .build();
     let mut cluster = Supercluster::new(options);
-    let index = cluster.load(load_places());
+    let index = cluster.load(load_places()).unwrap();
 
     assert_eq!(index.get_cluster_expansion_zoom(164), 1);
     assert_eq!(index.get_cluster_expansion_zoom(196), 1);
@@ -139,7 +139,7 @@ fn test_cluster_expansion_zoom_for_max_zoom() {
         .coordinate_system(CoordinateSystem::LatLng)
         .build();
     let mut cluster = Supercluster::new(options);
-    let index = cluster.load(load_places());
+    let index = cluster.load(load_places()).unwrap();
 
     assert_eq!(index.get_cluster_expansion_zoom(2504), 5);
 }
@@ -167,7 +167,7 @@ fn test_get_cluster_leaves() {
         .coordinate_system(CoordinateSystem::LatLng)
         .build();
     let mut cluster = Supercluster::new(options);
-    let index = cluster.load(load_places());
+    let index = cluster.load(load_places()).unwrap();
 
     let leaf_names: Vec<String> = index
         .get_leaves(164, 10, 5)
@@ -189,39 +189,43 @@ fn test_clusters_when_query_crosses_international_dateline() {
         .coordinate_system(CoordinateSystem::LatLng)
         .build();
     let mut cluster = Supercluster::new(options);
-    let index = cluster.load(vec![
-        Feature {
-            id: None,
-            bbox: None,
-            foreign_members: None,
-            geometry: Some(Geometry::new(Point(vec![-178.989, 0.0]))),
-            properties: Some(JsonObject::new()),
-        },
-        Feature {
-            id: None,
-            bbox: None,
-            foreign_members: None,
-            geometry: Some(Geometry::new(Point(vec![-178.99, 0.0]))),
-            properties: Some(JsonObject::new()),
-        },
-        Feature {
-            id: None,
-            bbox: None,
-            foreign_members: None,
-            geometry: Some(Geometry::new(Point(vec![-178.991, 0.0]))),
-            properties: Some(JsonObject::new()),
-        },
-        Feature {
-            id: None,
-            bbox: None,
-            foreign_members: None,
-            geometry: Some(Geometry::new(Point(vec![-178.992, 0.0]))),
-            properties: Some(JsonObject::new()),
-        },
-    ]);
+    let index = cluster
+        .load(vec![
+            Feature {
+                id: None,
+                bbox: None,
+                foreign_members: None,
+                geometry: Some(Geometry::new(Point(vec![-178.989, 0.0]))),
+                properties: Some(JsonObject::new()),
+            },
+            Feature {
+                id: None,
+                bbox: None,
+                foreign_members: None,
+                geometry: Some(Geometry::new(Point(vec![-178.99, 0.0]))),
+                properties: Some(JsonObject::new()),
+            },
+            Feature {
+                id: None,
+                bbox: None,
+                foreign_members: None,
+                geometry: Some(Geometry::new(Point(vec![-178.991, 0.0]))),
+                properties: Some(JsonObject::new()),
+            },
+            Feature {
+                id: None,
+                bbox: None,
+                foreign_members: None,
+                geometry: Some(Geometry::new(Point(vec![-178.992, 0.0]))),
+                properties: Some(JsonObject::new()),
+            },
+        ])
+        .unwrap();
 
-    let non_crossing = index.get_clusters([-179.0, -10.0, -177.0, 10.0], 1);
-    let crossing = index.get_clusters([179.0, -10.0, -177.0, 10.0], 1);
+    let non_crossing = index
+        .get_clusters([-179.0, -10.0, -177.0, 10.0], 1)
+        .unwrap();
+    let crossing = index.get_clusters([179.0, -10.0, -177.0, 10.0], 1).unwrap();
 
     assert!(!crossing.is_empty());
     assert!(!non_crossing.is_empty());
@@ -238,46 +242,55 @@ fn test_does_not_crash_on_weird_bbox_values() {
         .coordinate_system(CoordinateSystem::LatLng)
         .build();
     let mut cluster = Supercluster::new(options);
-    let index = cluster.load(load_places());
+    let index = cluster.load(load_places()).unwrap();
 
     assert_eq!(
         index
             .get_clusters([129.42639, -103.720017, -445.930843, 114.518236], 1)
+            .unwrap()
             .len(),
         26
     );
     assert_eq!(
         index
             .get_clusters([112.207836, -84.578666, -463.149397, 120.169159], 1)
+            .unwrap()
             .len(),
         27
     );
     assert_eq!(
         index
             .get_clusters([129.886277, -82.33268, -445.470956, 120.39093], 1)
+            .unwrap()
             .len(),
         26
     );
     assert_eq!(
         index
             .get_clusters([458.220043, -84.239039, -117.13719, 120.206585], 1)
+            .unwrap()
             .len(),
         25
     );
     assert_eq!(
         index
             .get_clusters([456.713058, -80.354196, -118.644175, 120.539148], 1)
+            .unwrap()
             .len(),
         25
     );
     assert_eq!(
         index
             .get_clusters([453.105328, -75.857422, -122.251904, 120.73276], 1)
+            .unwrap()
             .len(),
         25
     );
     assert_eq!(
-        index.get_clusters([-180.0, -90.0, 180.0, 90.0], 1).len(),
+        index
+            .get_clusters([-180.0, -90.0, 180.0, 90.0], 1)
+            .unwrap()
+            .len(),
         61
     );
 }
@@ -295,9 +308,9 @@ fn test_cartesian_coordinates() {
         .coordinate_system(CoordinateSystem::Cartesian { range })
         .build();
     let mut cluster = Supercluster::new(options);
-    let index = cluster.load(data);
+    let index = cluster.load(data).unwrap();
 
-    let clusters = index.get_clusters([0.0, 0.0, 1000.0, 1000.0], 0);
+    let clusters = index.get_clusters([0.0, 0.0, 1000.0, 1000.0], 0).unwrap();
 
     assert_eq!(clusters.len(), 4);
     assert_eq!(clusters[0].property("point_count").unwrap(), 3);

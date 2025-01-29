@@ -1,10 +1,11 @@
 #![forbid(unsafe_code)]
 
-use std::f64::consts::PI;
+use std::{collections::HashMap, f64::consts::PI, hash::BuildHasherDefault};
 
 use geojson::{feature::Id, Feature, FeatureCollection, Geometry, JsonObject, Value::Point};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use twox_hash::XxHash64;
 
 pub mod builder;
 pub mod error;
@@ -47,21 +48,21 @@ pub struct Supercluster {
     /// Configuration settings.
     pub options: Options,
 
-    /// Vector of KDBush structures for different zoom levels.
-    trees: Vec<KDBush>,
+    /// Map of KD-trees for each zoom level.
+    pub trees: HashMap<usize, KDBush, BuildHasherDefault<XxHash64>>,
 
     /// Stride used for data access within the KD-tree.
-    stride: usize,
+    pub stride: usize,
 
     /// Input data points.
     pub points: Vec<Feature>,
 
     /// Clusters metadata.
-    cluster_props: Vec<JsonObject>,
+    pub cluster_props: Vec<JsonObject>,
 }
 
 impl Supercluster {
-    /// Create a new supercluster instance with configuration settings.
+    /// Create a new supercluster builder instance.
     ///
     /// # Returns
     ///
@@ -69,6 +70,12 @@ impl Supercluster {
     pub fn builder() -> SuperclusterBuilder {
         SuperclusterBuilder::new()
     }
+
+    /// Create a new feature builder instance.
+    pub fn feature_builder() -> FeatureBuilder {
+        FeatureBuilder::new()
+    }
+
     /// Create a new instance of `Supercluster` with the specified configuration settings.
     ///
     /// # Arguments
@@ -79,17 +86,12 @@ impl Supercluster {
     ///
     /// New `Supercluster` instance with the given configuration.
     pub fn new(options: Options) -> Self {
-        let capacity = options.max_zoom + 1;
-        let trees = (0..capacity + 1)
-            .map(|_| KDBush::new(0, options.node_size))
-            .collect();
-
         Supercluster {
-            trees,
             options,
             stride: 6,
             points: vec![],
             cluster_props: vec![],
+            trees: HashMap::default(),
         }
     }
 
@@ -101,10 +103,10 @@ impl Supercluster {
     ///
     /// # Returns
     ///
-    /// A mutable reference to the updated `Supercluster` instance.
-    pub fn load(&mut self, points: Vec<Feature>) -> &mut Self {
-        let min_zoom = self.options.min_zoom;
-        let max_zoom = self.options.max_zoom;
+    /// Supercluster instance with the input points loaded and clustered.
+    pub fn load(&mut self, points: Vec<Feature>) -> Result<&mut Self, SuperclusterError> {
+        let min_zoom = self.options.min_zoom as usize;
+        let max_zoom = self.options.max_zoom as usize;
 
         self.points = points;
 
@@ -151,19 +153,32 @@ impl Supercluster {
             data.push(1.0);
         }
 
-        self.trees[(max_zoom as usize) + 1] = self.create_tree(data);
+        let tree = self.create_tree(data);
+        self.trees.insert((max_zoom) + 1, tree);
 
         // Cluster points on max zoom, then cluster the results on previous zoom, etc.;
         // Results in a cluster hierarchy across zoom levels
         for zoom in (min_zoom..=max_zoom).rev() {
-            // Create a new set of clusters for the zoom and index them with a KD-tree
-            let (previous, current) = self.cluster(&self.trees[(zoom as usize) + 1], zoom);
+            let next_zoom = zoom + 1;
 
-            self.trees[(zoom as usize) + 1].data = previous;
-            self.trees[zoom as usize] = self.create_tree(current);
+            // Create a new set of clusters for the zoom and index them with a KD-tree
+            let (previous, current) = self.cluster(
+                self.trees
+                    .get(&next_zoom)
+                    .ok_or(SuperclusterError::TreeNotFound)?,
+                zoom,
+            );
+
+            self.trees
+                .get_mut(&next_zoom)
+                .ok_or(SuperclusterError::TreeNotFound)?
+                .data = previous;
+
+            let tree = self.create_tree(current);
+            self.trees.insert(zoom, tree);
         }
 
-        self
+        Ok(self)
     }
 
     /// Retrieve clustered features within the specified bounding box and zoom level.
@@ -175,9 +190,17 @@ impl Supercluster {
     ///
     /// # Returns
     ///
-    /// A vector of GeoJSON features representing the clusters within the specified bounding box and zoom level.
-    pub fn get_clusters(&self, bbox: [f64; 4], zoom: u8) -> Vec<Feature> {
-        let tree = &self.trees[self.limit_zoom(zoom)];
+    /// List of GeoJSON features representing the clusters within the specified bounding box and zoom level.
+    pub fn get_clusters(
+        &self,
+        bbox: [f64; 4],
+        zoom: u8,
+    ) -> Result<Vec<Feature>, SuperclusterError> {
+        let tree = &self
+            .trees
+            .get(&self.limit_zoom(zoom))
+            .ok_or(SuperclusterError::TreeNotFound)?;
+
         let ids = match &self.options.coordinate_system {
             CoordinateSystem::Cartesian { range } => tree.range(
                 range.normalize(bbox[0]),
@@ -199,10 +222,16 @@ impl Supercluster {
                     min_lng = -180.0;
                     max_lng = 180.0;
                 } else if min_lng > max_lng {
-                    let eastern_hem = self.get_clusters([min_lng, min_lat, 180.0, max_lat], zoom);
-                    let western_hem = self.get_clusters([-180.0, min_lat, max_lng, max_lat], zoom);
+                    let mut eastern_hem = self
+                        .get_clusters([min_lng, min_lat, 180.0, max_lat], zoom)
+                        .unwrap_or_default();
+                    let western_hem = self
+                        .get_clusters([-180.0, min_lat, max_lng, max_lat], zoom)
+                        .unwrap_or_default();
 
-                    return eastern_hem.into_iter().chain(western_hem).collect();
+                    eastern_hem.extend(western_hem);
+
+                    return Ok(eastern_hem);
                 }
 
                 tree.range(
@@ -231,7 +260,7 @@ impl Supercluster {
             });
         }
 
-        clusters
+        Ok(clusters)
     }
 
     /// Retrieve the cluster features for a specified cluster ID.
@@ -246,10 +275,10 @@ impl Supercluster {
     pub fn get_children(&self, cluster_id: usize) -> Result<Vec<Feature>, SuperclusterError> {
         let origin_id = self.get_origin_id(cluster_id);
         let origin_zoom = self.get_origin_zoom(cluster_id);
-        let tree = match self.trees.get(origin_zoom) {
-            Some(tree) => tree,
-            None => return Err(SuperclusterError::TreeNotFound),
-        };
+        let tree = self
+            .trees
+            .get(&origin_zoom)
+            .ok_or(SuperclusterError::TreeNotFound)?;
         let data = &tree.data;
 
         if origin_id * self.stride >= data.len() {
@@ -320,7 +349,11 @@ impl Supercluster {
     ///
     /// A list of GeoJSON features within the specified tile, otherwise an error if the tile is not found.
     pub fn get_tile(&self, z: u8, x: f64, y: f64) -> Result<FeatureCollection, SuperclusterError> {
-        let tree = &self.trees[self.limit_zoom(z)];
+        let zoom = self.limit_zoom(z);
+        let tree = match self.trees.get(&zoom) {
+            Some(tree) => tree,
+            None => return Err(SuperclusterError::TreeNotFound),
+        };
         let z2: f64 = (2u32).pow(z as u32) as f64;
         let p = self.options.radius / self.options.extent;
         let top = (y - p) / z2;
@@ -579,7 +612,7 @@ impl Supercluster {
     ///
     /// A tuple of two vectors: the first one contains updated data arrays for the current zoom level,
     /// and the second one contains data arrays for the next zoom level.
-    fn cluster(&self, tree: &KDBush, zoom: u8) -> (Vec<f64>, Vec<f64>) {
+    fn cluster(&self, tree: &KDBush, zoom: usize) -> (Vec<f64>, Vec<f64>) {
         let r = self.options.radius / (self.options.extent * (2.0_f64).powi(zoom as i32));
         let mut data = tree.data.to_owned();
         let mut next_data = vec![];
@@ -618,7 +651,7 @@ impl Supercluster {
                 let mut wy = y * num_points_origin;
 
                 // Encode both zoom and point index on which the cluster originated -- offset by total length of features
-                let id = ((i / self.stride) << 5) + ((zoom as usize) + 1) + self.points.len();
+                let id = ((i / self.stride) << 5) + (zoom + 1) + self.points.len();
 
                 for neighbor_id in neighbor_ids {
                     let k = neighbor_id * self.stride;
@@ -840,6 +873,34 @@ mod tests {
     fn setup() -> Supercluster {
         let options = Supercluster::builder().build();
         Supercluster::new(options)
+    }
+
+    #[test]
+    fn test_builder() {
+        let options = Supercluster::builder().build();
+        let supercluster = Supercluster::new(options);
+
+        assert_eq!(supercluster.options.min_zoom, 0);
+        assert_eq!(supercluster.options.max_zoom, 16);
+        assert_eq!(supercluster.options.radius, 40.0);
+        assert_eq!(supercluster.options.extent, 512.0);
+        assert_eq!(supercluster.options.node_size, 64);
+        assert_eq!(supercluster.options.min_points, 2);
+        assert_eq!(
+            supercluster.options.coordinate_system,
+            CoordinateSystem::LatLng
+        );
+    }
+
+    #[test]
+    fn test_feature_builder() {
+        let features = Supercluster::feature_builder()
+            .add_point(vec![0.0, 0.0])
+            .build();
+        let feature = features.first().unwrap();
+
+        assert_eq!(feature.id, Some(Id::String("0".to_string())));
+        assert_eq!(feature.geometry, Some(Geometry::new(Point(vec![0.0, 0.0]))));
     }
 
     #[test]

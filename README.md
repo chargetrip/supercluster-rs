@@ -35,8 +35,7 @@ This example demonstrates how to build supercluster options, create a new superc
 For more detailed information and advanced usage, please refer to the full [documentation](https://docs.rs/supercluster).
 
 ```rust
-use geojson::FeatureCollection;
-use supercluster::{ CoordinateSystem, Options, Supercluster, SuperclusterError };
+use supercluster::{ CoordinateSystem, Supercluster, SuperclusterError };
 
 fn main() -> Result<(), SuperclusterError> {
     // Set the configuration settings
@@ -51,13 +50,16 @@ fn main() -> Result<(), SuperclusterError> {
     // Create a new instance with the specified configuration settings
     let mut cluster = Supercluster::new(options);
 
-    // Load a FeatureCollection Object into the Supercluster instance
+    // Create a FeatureCollection Object
     // [GeoJSON Format Specification § 5](https://tools.ietf.org/html/rfc7946#section-5)
-    let feature_collection = vec![];
-    let index = cluster.load(feature_collection);
+    let features = Supercluster::feature_builder()
+        .add_point(vec![0.0, 0.0])
+        .build();
 
-    // Get a tile
-    let tile = index.get_tile(0, 0.0, 0.0)?;
+    // Load a FeatureCollection Object into the Supercluster instance
+    let index = cluster.load(features)?;
+
+    index.get_tile(0, 0.0, 0.0)?;
 
     Ok(())
 }

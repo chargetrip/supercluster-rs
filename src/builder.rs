@@ -1,4 +1,8 @@
+use std::{collections::HashMap, hash::BuildHasherDefault};
+
+use geojson::{feature::Id, Feature, Geometry, Value};
 use serde::{Deserialize, Serialize};
+use twox_hash::XxHash64;
 
 use crate::CoordinateSystem;
 
@@ -25,6 +29,72 @@ pub struct Options {
 
     /// Type of coordinate system for clustering.
     pub coordinate_system: CoordinateSystem,
+}
+
+/// Feature configuration options builder.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct FeatureBuilder {
+    /// Points to cluster.
+    pub points: HashMap<String, Vec<f64>, BuildHasherDefault<XxHash64>>,
+}
+
+impl FeatureBuilder {
+    /// Create a new feature builder to set the points.
+    ///
+    /// # Returns
+    ///
+    /// New feature builder.
+    pub fn new() -> Self {
+        FeatureBuilder::default()
+    }
+
+    /// Add a point to the feature builder.
+    ///
+    /// # Arguments
+    ///
+    /// - `point`: Point to add to the feature builder.
+    ///
+    /// # Returns
+    ///
+    /// The feature builder.
+    pub fn add_point(mut self, point: Vec<f64>) -> Self {
+        self.points.insert(self.points.len().to_string(), point);
+        self
+    }
+
+    /// Add points to the feature builder.
+    ///
+    /// # Arguments
+    ///
+    /// - `points`: Points to add to the feature builder.
+    ///
+    /// # Returns
+    ///
+    /// The feature builder.
+    pub fn add_points(mut self, points: Vec<Vec<f64>>) -> Self {
+        for point in points {
+            self.points.insert(self.points.len().to_string(), point);
+        }
+        self
+    }
+
+    /// Build a list of features.
+    ///
+    /// # Returns
+    ///
+    /// List of features.
+    pub fn build(self) -> Vec<Feature> {
+        self.points
+            .into_iter()
+            .map(|(id, point)| Feature {
+                id: Some(Id::String(id)),
+                geometry: Some(Geometry::new(Value::Point(point))),
+                bbox: None,
+                properties: None,
+                foreign_members: None,
+            })
+            .collect()
+    }
 }
 
 /// Supercluster configuration options builder.
@@ -180,8 +250,17 @@ impl SuperclusterBuilder {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
+
+    #[test]
+    fn test_feature_builder_default() {
+        let features = FeatureBuilder::default()
+            .add_point(vec![0.0, 0.0])
+            .add_points(vec![vec![0.0, 1.0]])
+            .build();
+
+        assert_eq!(features.len(), 2);
+    }
 
     #[test]
     fn test_supercluster_builder_default() {
