@@ -27,7 +27,7 @@ To use the `supercluster` crate in your project, add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-supercluster = "x.x.x"
+supercluster = "2.0.5"
 ```
 
 Below is an example of how to create and run a supercluster using the crate.
@@ -64,6 +64,20 @@ fn main() -> Result<(), SuperclusterError> {
     Ok(())
 }
 ```
+
+## Benchmarks
+
+We use the `criterion` crate to benchmark the performance of the `supercluster` crate.
+
+Benchmarks help us understand the performance characteristics of supercluster and identify areas for optimization.
+
+We have several benchmark scenarios to test different aspects of supercluster:
+
+- **Loading a Feature Collection**: Tests the performance of loading a `FeatureCollection` into the `Supercluster`.
+- **Getting a Tile**: Tests the performance of retrieving a tile from the `Supercluster`.
+- **Getting Clusters**: Tests the performance of retrieving clusters for a given bounding box and zoom level.
+
+For more detailed benchmark scenarios, please refer to the [`benches`](https://github.com/chargetrip/supercluster-rs/tree/main/benches) directory in the repository.
 
 ## Safety
 

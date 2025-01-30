@@ -19,12 +19,12 @@
 //!
 //! ```toml
 //! [dependencies]
-//! supercluster = "x.x.x"
+//! supercluster = "2.0.5"
 //! ```
 //!
 //! Below is an example of how to create and run a supercluster using the crate.
+//!
 //! This example demonstrates how to build supercluster options, create a new supercluster, and get a tile.
-//! For more detailed information and advanced usage, please refer to the full [documentation](https://docs.rs/supercluster).
 //!
 //! ```rust
 //! use supercluster::{ CoordinateSystem, Supercluster, SuperclusterError };
@@ -59,14 +59,19 @@
 //! }
 //! ```
 //!
-//! ## Features
+//! ## Benchmarks
 //!
-//! - `load(points)`: Loads a [FeatureCollection](https://datatracker.ietf.org/doc/html/rfc7946#section-3.3) Object. Each feature should be a [Feature Object](https://datatracker.ietf.org/doc/html/rfc7946#section-3.2).
-//! - `get_clusters(bbox, zoom)`: For the given `bbox` array (`[west_lng, south_lat, east_lng, north_lat]`) and `zoom`, returns an array of clusters and points as [Feature Object](https://datatracker.ietf.org/doc/html/rfc7946#section-3.2) objects.
-//! - `get_tile(z, x, y)`: For a given zoom and x/y coordinates, returns a [FeatureCollection](https://datatracker.ietf.org/doc/html/rfc7946#section-3.3) Object.
-//! - `get_children(cluster_id)`: Returns the children of a cluster (on the next zoom level) given its id (`cluster_id` value from feature properties).
-//! - `get_leaves(cluster_id, limit, offset)`: Returns all the points of a cluster (given its `cluster_id`), with pagination support.
-//! - `get_cluster_expansion_zoom(cluster_id)`: Returns the zoom on which the cluster expands into several children (useful for "click to zoom" feature) given the cluster's `cluster_id`.
+//! We use the `criterion` crate to benchmark the performance of the `supercluster` crate.
+//!
+//! Benchmarks help us understand the performance characteristics of supercluster and identify areas for optimization.
+//!
+//! We have several benchmark scenarios to test different aspects of supercluster:
+//!
+//! - **Loading a Feature Collection**: Tests the performance of loading a `FeatureCollection` into the `Supercluster`.
+//! - **Getting a Tile**: Tests the performance of retrieving a tile from the `Supercluster`.
+//! - **Getting Clusters**: Tests the performance of retrieving clusters for a given bounding box and zoom level.
+//!
+//! For more detailed benchmark scenarios, please refer to the [`benches`](https://github.com/chargetrip/supercluster-rs/tree/main/benches) directory in the repository.
 //!
 //! ## Safety
 //!

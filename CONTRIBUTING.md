@@ -92,6 +92,24 @@ Generate documentation in HTML format:
 cargo doc --open
 ```
 
+### Benchmarks
+
+You can run benchmarks locally for the changes you have made to the project.
+The project uses [`criterion`](https://bheisler.github.io/criterion.rs/book/index.html) as its benchmarking tool.
+
+To run a benchmark against the changes you have made, for example, you can run;
+
+```sh
+cd benches
+
+# Run all benchmarks
+cargo bench
+
+# Run all tests in the `benches/supercluster_bench.rs` file
+cargo bench --bench supercluster_bench
+
+# After running benches, you can check the statistics under `target/criterion`
+```
 
 ## Examples
 
