@@ -2,11 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.5] - 2025-01-30
+
+### ⚙️ Miscellaneous Tasks
+
+- Add benches
+
 ## [2.0.4] - 2025-01-30
 
 ### 📚 Documentation
 
 - Improve rustdoc
+
+### ⚙️ Miscellaneous Tasks
+
+- Release supercluster version 2.0.4
 
 ## [2.0.3] - 2025-01-29
 
