@@ -1,3 +1,7 @@
+//! # Range module
+//!
+//! This module contains the range implementation for the supercluster crate.
+
 use serde::{Deserialize, Serialize};
 
 /// The range of the incoming data if choosing the cartesian coordinate system.
@@ -5,26 +9,33 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct DataRange {
     /// The minimum x-coordinate value.
+    /// Default is 0.0.
     pub min_x: f64,
 
     /// The minimum y-coordinate value.
+    /// Default is 0.0.
     pub min_y: f64,
 
     /// The maximum x-coordinate value.
+    /// Default is 1.0.
     pub max_x: f64,
 
     /// The maximum y-coordinate value.
+    /// Default is 1.0.
     pub max_y: f64,
 
     /// The cached value for offset.
+    /// No default value.
     pub offset: Option<f64>,
 
-    // The cached value for scale.
+    /// The cached value for scale.
+    /// No default value.
     pub scale: Option<f64>,
 }
 
 impl DataRange {
     /// Normalize the coordinate value to the range [0, 1].
+    /// The formula is `(v - offset) / scale`.
     ///
     /// # Arguments
     ///
@@ -38,6 +49,7 @@ impl DataRange {
     }
 
     /// Denormalize the coordinate value from the range [0, 1] to the original range.
+    /// The formula is `v_scaled * scale + offset`.
     ///
     /// # Arguments
     ///
@@ -51,6 +63,7 @@ impl DataRange {
     }
 
     /// Compute and cache the minimum range value.
+    /// If `offset` is not set, the minimum value between `min_x` and `min_y` is returned.
     ///
     /// # Returns
     ///
@@ -61,6 +74,7 @@ impl DataRange {
     }
 
     /// Compute and cache the maximum range value.
+    /// If `scale` is not set, the maximum value between `max_x` and `max_y` is returned.
     ///
     /// # Returns
     ///

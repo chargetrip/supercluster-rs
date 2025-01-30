@@ -1,3 +1,7 @@
+//! # Builder module
+//!
+//! This module contains the builder pattern for the supercluster configuration settings.
+
 use std::{collections::HashMap, hash::BuildHasherDefault};
 
 use geojson::{feature::Id, Feature, Geometry, Value};
@@ -8,26 +12,33 @@ use crate::CoordinateSystem;
 
 /// Supercluster configuration options.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Options {
+pub struct SuperclusterOptions {
     /// Minimal zoom level to generate clusters on.
+    /// The default value is 0.
     pub min_zoom: u8,
 
     /// Maximal zoom level to cluster the points on.
+    /// The default value is 16.
     pub max_zoom: u8,
 
     /// Minimum points to form a cluster.
+    /// The default value is 2.
     pub min_points: u8,
 
-    /// Cluster radius in pixels.
+    /// Cluster radius, in pixels.
+    /// The default value is 40.0.
     pub radius: f64,
 
     /// Tile extent (radius is calculated relative to it).
+    /// The default value is 512.0.
     pub extent: f64,
 
     /// Size of the KD-tree leaf node, affects performance.
+    /// The default value is 64.
     pub node_size: usize,
 
     /// Type of coordinate system for clustering.
+    /// The default value is `CoordinateSystem::LatLng`.
     pub coordinate_system: CoordinateSystem,
 }
 
@@ -49,6 +60,7 @@ impl FeatureBuilder {
     }
 
     /// Add a point to the feature builder.
+    /// The point is a vector of two f64 values representing the longitude and latitude.
     ///
     /// # Arguments
     ///
@@ -63,6 +75,7 @@ impl FeatureBuilder {
     }
 
     /// Add points to the feature builder.
+    /// The points are a vector of vectors of two f64 values representing the longitude and latitude.
     ///
     /// # Arguments
     ///
@@ -101,24 +114,31 @@ impl FeatureBuilder {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct SuperclusterBuilder {
     /// Minimal zoom level to generate clusters on.
+    /// The default value is 0.
     pub min_zoom: Option<u8>,
 
     /// Maximal zoom level to cluster the points on.
+    /// The default value is 16.
     pub max_zoom: Option<u8>,
 
     /// Minimum points to form a cluster.
+    /// The default value is 2.
     pub min_points: Option<u8>,
 
-    /// Cluster radius in pixels.
+    /// Cluster radius, in pixels.
+    /// The default value is 40.0.
     pub radius: Option<f64>,
 
     /// Tile extent (radius is calculated relative to it).
+    /// The default value is 512.0.
     pub extent: Option<f64>,
 
     /// Size of the KD-tree leaf node, affects performance.
+    /// The default value is 64.
     pub node_size: Option<usize>,
 
     /// Type of coordinate system for clustering.
+    /// The default value is `CoordinateSystem::LatLng`.
     pub coordinate_system: Option<CoordinateSystem>,
 }
 
@@ -235,8 +255,8 @@ impl SuperclusterBuilder {
     /// # Returns
     ///
     /// The supercluster options.
-    pub fn build(self) -> Options {
-        Options {
+    pub fn build(self) -> SuperclusterOptions {
+        SuperclusterOptions {
             min_zoom: self.min_zoom.unwrap_or(0),
             max_zoom: self.max_zoom.unwrap_or(16),
             min_points: self.min_points.unwrap_or(2),

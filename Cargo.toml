@@ -7,7 +7,7 @@ license = "MIT"
 readme = "README.md"
 authors = ["Chargetrip <dev@chargetrip.com>"]
 keywords = ["supercluster", "geospatial", "geo", "tile", "mvt"]
-exclude = [".github/**"]
+exclude = [".github/**", "examples/**", "tests/**"]
 homepage = "https://chargetrip.com"
 documentation = "https://docs.rs/supercluster"
 repository = "https://github.com/chargetrip/supercluster-rs"
@@ -22,3 +22,23 @@ twox-hash = "2.1.0"
 [lib]
 name = "supercluster"
 path = "src/lib.rs"
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
+
+[[example]]
+name = "feature_builder"
+path = "examples/feature_builder.rs"
+
+[[example]]
+name = "clusters"
+path = "examples/clusters.rs"
+
+[[example]]
+name = "tile"
+path = "examples/tile.rs"
+
+[[example]]
+name = "cartesian_coordinates"
+path = "examples/cartesian_coordinates.rs"

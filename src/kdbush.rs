@@ -1,24 +1,35 @@
+//! # KDBush module
+//!
+//! Contains the static spatial index for 2D points based on a flat KD-tree.
+
 use serde::{Deserialize, Serialize};
 
 /// Array of coordinates with longitude as first value and latitude as second one.
 type Point = [f64; 2];
 
 /// Static spatial index for 2D points based on a flat KD-tree.
+/// The KD-tree is used to perform range and within queries on the points.
+/// The index is built from a list of 2D points and can be queried to find points within a specified bounding box or radius.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct KDBush {
     /// Node size for the KD-tree. Determines the number of points in a leaf node.
+    /// Affects the performance of the index.
     pub node_size: usize,
 
     /// A list of point IDs used to reference points in the KD-tree.
+    /// The IDs are used to retrieve the original points from the index.
     pub ids: Vec<usize>,
 
     /// A flat array containing the X and Y coordinates of all points in interleaved order.
+    /// The coordinates are stored as [x1, y1, x2, y2, ..., xn, yn].
     pub coords: Vec<f64>,
 
     /// A list of 2D points represented as an array of [longitude, latitude] coordinates.
+    /// The points are used to build the KD-tree index.
     pub points: Vec<Point>,
 
     /// A list of additional data associated with the points (e.g., properties).
+    /// The data is stored in the same order as the points.
     pub data: Vec<f64>,
 }
 

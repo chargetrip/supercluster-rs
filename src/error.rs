@@ -1,6 +1,11 @@
+//! # Error module
+//!
+//! Contains the error type for the supercluster crate.
+
 use thiserror::Error;
 
 /// Supercluster error.
+/// Represents the different errors that can occur in the supercluster crate.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum SuperclusterError {
     /// Cluster not found with the specified ID.
