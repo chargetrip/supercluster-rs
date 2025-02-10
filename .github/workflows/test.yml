@@ -7,20 +7,21 @@ on:
       - '**.rs'
       - 'src/**.rs'
       - 'tests/**.rs'
-      - '.github/workflows/**.yml'
   pull_request:
     branches: [ "main" ]
     paths:
       - '**.rs'
       - 'src/**.rs'
       - 'tests/**.rs'
-      - '.github/workflows/**.yml'
 
 env:
   CI: true
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
   test:
+
     runs-on: ubuntu-latest
 
     steps:
@@ -35,13 +36,13 @@ jobs:
     - name: Run build
       run: cargo build --locked
     - name: Run clippy
-      run: cargo clippy --all-targets --all-features --no-deps -- -D warnings
+      run: cargo clippy --locked --all-targets --all-features --no-deps -- -D warnings
     - name: Run lint
       run: cargo fmt -- --check
     - name: Run tests
       run: cargo tarpaulin --tests --bins --all-targets --locked --out xml
     - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v5
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       with:
