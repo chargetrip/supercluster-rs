@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.6](https://github.com/chargetrip/supercluster-rs/compare/v2.0.5...v2.0.6) - 2025-02-10
+
+### Other
+
+- update Cargo.toml dependencies
+
 ## [2.0.5] - 2025-01-30
 
 ### ⚙️ Miscellaneous Tasks
