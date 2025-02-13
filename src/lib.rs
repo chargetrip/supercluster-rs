@@ -19,8 +19,6 @@
 //!
 //! ## Documentation
 //!
-//! For more in-depth details, please refer to the full [documentation](https://docs.rs/supercluster).
-//!
 //! If you encounter any issues or have questions that are not addressed in the documentation, feel free to [submit an issue](https://github.com/chargetrip/supercluster-rs/issues).
 //! This crate was initially inspired by Mapbox's supercluster [blog post](https://blog.mapbox.com/clustering-millions-of-points-on-a-map-with-supercluster-272046ec5c97).
 //!
@@ -84,9 +82,9 @@
 //!
 //! We have several benchmark scenarios to test different aspects of supercluster:
 //!
-//! - **Loading a Feature Collection**: Tests the performance of loading a `FeatureCollection` into the `Supercluster`.
 //! - **Getting a Tile**: Tests the performance of retrieving a tile from the `Supercluster`.
 //! - **Getting Clusters**: Tests the performance of retrieving clusters for a given bounding box and zoom level.
+//! - **Loading a Feature Collection**: Tests the performance of loading a `FeatureCollection` into the `Supercluster`.
 //!
 //! For more detailed benchmark scenarios, please refer to the [`benches`](https://github.com/chargetrip/supercluster-rs/tree/main/benches) directory in the repository.
 //!
