@@ -69,6 +69,9 @@ impl KDBush {
     /// This method constructs the KD-tree index based on the points added to the KDBush instance.
     /// After calling this method, the index will be ready for range and within queries.
     pub fn build_index(&mut self) {
+        #[cfg(feature = "logger")]
+        log::debug!("Building KDBush index with {} points", self.points.len());
+
         self.coords = vec![0.0; 2 * self.points.len()];
 
         for (i, point) in self.points.iter().enumerate() {
@@ -79,6 +82,9 @@ impl KDBush {
         }
 
         self.sort(0, self.ids.len() - 1, 0);
+
+        #[cfg(feature = "logger")]
+        log::debug!("KDBush index built successfully");
     }
 
     /// Find all point indices within the specified bounding box defined by minimum and maximum coordinates.
@@ -94,6 +100,15 @@ impl KDBush {
     ///
     /// A vector of point indices that fall within the specified bounding box.
     pub fn range(&self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<usize> {
+        #[cfg(feature = "logger")]
+        log::debug!(
+            "Finding points within range [{}, {}, {}, {}]",
+            min_x,
+            min_y,
+            max_x,
+            max_y
+        );
+
         let mut stack = vec![(0, self.ids.len() - 1, 0)];
         let mut result: Vec<usize> = Vec::new();
         let mut x: f64;
@@ -146,6 +161,14 @@ impl KDBush {
     ///
     /// A vector of point indices that fall within the specified radius from the query point.
     pub fn within(&self, qx: f64, qy: f64, radius: f64) -> Vec<usize> {
+        #[cfg(feature = "logger")]
+        log::debug!(
+            "Finding points within radius {} from query point [{}, {}]",
+            radius,
+            qx,
+            qy
+        );
+
         let mut stack = vec![(0, self.ids.len() - 1, 0)];
         let mut result: Vec<usize> = Vec::new();
         let r2 = radius * radius;

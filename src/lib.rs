@@ -6,6 +6,17 @@
 //!
 //! A high-performance Rust crate for geospatial and non-geospatial point clustering.
 //!
+//!
+//! ## Reference implementation
+//! [![test](https://github.com/chargetrip/supercluster-rs/actions/workflows/test.yml/badge.svg)](https://github.com/chargetrip/supercluster-rs/actions/workflows/test.yml)
+//! [![docs](https://docs.rs/supercluster/badge.svg)](https://docs.rs/supercluster)
+//! [![crate](https://img.shields.io/crates/v/supercluster.svg)](https://crates.io/crates/supercluster)
+//! ![downloads](https://img.shields.io/crates/d/supercluster)
+//! ![GitHub](https://img.shields.io/github/license/chargetrip/supercluster-rs)
+//! [![codecov](https://codecov.io/gh/chargetrip/supercluster-rs/graph/badge.svg?token=0S31CZY2ZJ)](https://codecov.io/gh/chargetrip/supercluster-rs)
+//!
+//! ![Features](https://cloud.githubusercontent.com/assets/25395/11857351/43407b46-a40c-11e5-8662-e99ab1cd2cb7.gif)
+//!
 //! ## Documentation
 //!
 //! For more in-depth details, please refer to the full [documentation](https://docs.rs/supercluster).
@@ -19,7 +30,14 @@
 //!
 //! ```toml
 //! [dependencies]
-//! supercluster = "2.0.5"
+//! supercluster = "2.0.7"
+//! ```
+//!
+//! You can also include additional features, such as logging, by specifying them in your `Cargo.toml`:
+//!
+//! ```toml
+//! [dependencies]
+//! supercluster = { version = "2.0.7", features = ["logger"] }
 //! ```
 //!
 //! Below is an example of how to create and run a supercluster using the crate.
@@ -42,13 +60,12 @@
 //!     // Create a new instance with the specified configuration settings
 //!     let mut cluster = Supercluster::new(options);
 //!
-//!     // Create a FeatureCollection Object
-//!     // [GeoJSON Format Specification § 5](https://tools.ietf.org/html/rfc7946#section-5)
+//!     // Create a a list of features
 //!     let features = Supercluster::feature_builder()
 //!         .add_point(vec![0.0, 0.0])
 //!         .build();
 //!
-//!     // Load a FeatureCollection Object into the Supercluster instance
+//!     // Load a list of features into the supercluster
 //!     let index = cluster.load(features)?;
 //!
 //!     if let Err(err) = index.get_tile(0, 0.0, 0.0) {

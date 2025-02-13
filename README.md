@@ -27,7 +27,14 @@ To use the `supercluster` crate in your project, add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-supercluster = "2.0.5"
+supercluster = "2.0.7"
+```
+
+You can also include additional features, such as logging, by specifying them in your `Cargo.toml`:
+
+```toml
+[dependencies]
+supercluster = { version = "2.0.7", features = ["logger"] }
 ```
 
 Below is an example of how to create and run a supercluster using the crate.
@@ -50,13 +57,12 @@ fn main() -> Result<(), SuperclusterError> {
     // Create a new instance with the specified configuration settings
     let mut cluster = Supercluster::new(options);
 
-    // Create a FeatureCollection Object
-    // [GeoJSON Format Specification § 5](https://tools.ietf.org/html/rfc7946#section-5)
+    // Create a a list of features
     let features = Supercluster::feature_builder()
         .add_point(vec![0.0, 0.0])
         .build();
 
-    // Load a FeatureCollection Object into the Supercluster instance
+    // Load a list of features into the supercluster
     let index = cluster.load(features)?;
 
     index.get_tile(0, 0.0, 0.0)?;

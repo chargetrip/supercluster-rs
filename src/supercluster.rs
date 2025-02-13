@@ -102,6 +102,9 @@ impl Supercluster {
     ///
     /// New `Supercluster` instance with the given configuration.
     pub fn new(options: SuperclusterOptions) -> Self {
+        #[cfg(feature = "logger")]
+        log::debug!("Creating a new supercluster instance");
+
         Supercluster {
             options,
             stride: 6,
@@ -124,6 +127,9 @@ impl Supercluster {
     ///
     /// Supercluster instance with the input points loaded and clustered.
     pub fn load(&mut self, points: Vec<Feature>) -> Result<&mut Self, SuperclusterError> {
+        #[cfg(feature = "logger")]
+        log::debug!("Loading input {} points into supercluster", points.len());
+
         let min_zoom = self.options.min_zoom as usize;
         let max_zoom = self.options.max_zoom as usize;
 
@@ -131,6 +137,9 @@ impl Supercluster {
 
         // Generate a cluster object for each point and index input points into a KD-tree
         let mut data = vec![];
+
+        #[cfg(feature = "logger")]
+        log::debug!("Coordinate system: {:?}", self.options.coordinate_system);
 
         for (i, feature) in self.points.iter().enumerate() {
             // Store internal point/cluster data in flat numeric arrays for performance
@@ -215,6 +224,13 @@ impl Supercluster {
         bbox: [f64; 4],
         zoom: u8,
     ) -> Result<Vec<Feature>, SuperclusterError> {
+        #[cfg(feature = "logger")]
+        log::debug!(
+            "Retrieving clusters for zoom level {} and bounding box {:?}",
+            zoom,
+            bbox
+        );
+
         let tree = &self
             .trees
             .get(&self.limit_zoom(zoom))
@@ -279,6 +295,9 @@ impl Supercluster {
             });
         }
 
+        #[cfg(feature = "logger")]
+        log::debug!("Retrieved {} clusters", clusters.len());
+
         Ok(clusters)
     }
 
@@ -302,6 +321,9 @@ impl Supercluster {
         let data = &tree.data;
 
         if origin_id * self.stride >= data.len() {
+            #[cfg(feature = "logger")]
+            log::error!("Cluster not found for ID {}", cluster_id);
+
             return Err(SuperclusterError::ClusterNotFound);
         }
 
@@ -377,7 +399,12 @@ impl Supercluster {
         let zoom = self.limit_zoom(z);
         let tree = match self.trees.get(&zoom) {
             Some(tree) => tree,
-            None => return Err(SuperclusterError::TreeNotFound),
+            None => {
+                #[cfg(feature = "logger")]
+                log::error!("Tree not found for zoom level {}", z);
+
+                return Err(SuperclusterError::TreeNotFound);
+            }
         };
         let z2: f64 = (2u32).pow(z as u32) as f64;
         let p = self.options.radius / self.options.extent;
@@ -404,8 +431,20 @@ impl Supercluster {
         }
 
         if tile.features.is_empty() {
+            #[cfg(feature = "logger")]
+            log::error!("Tile not found for zoom level {}, x: {}, y: {}", z, x, y);
+
             return Err(SuperclusterError::TileNotFound);
         }
+
+        #[cfg(feature = "logger")]
+        log::debug!(
+            "Retrieved {} features for tile at zoom level {}, x: {}, y: {}",
+            tile.features.len(),
+            z,
+            x,
+            y
+        );
 
         Ok(tile)
     }
@@ -634,6 +673,9 @@ impl Supercluster {
     ///
     /// The effective zoom level considering the configured minimum and maximum zoom levels.
     pub fn limit_zoom(&self, zoom: u8) -> usize {
+        #[cfg(feature = "logger")]
+        log::debug!("Limiting zoom level to {}", zoom);
+
         zoom.max(self.options.min_zoom)
             .min(self.options.max_zoom + 1) as usize
     }
@@ -651,6 +693,10 @@ impl Supercluster {
     /// and the second one contains data arrays for the next zoom level.
     pub fn cluster(&self, tree: &KDBush, zoom: usize) -> (Vec<f64>, Vec<f64>) {
         let r = self.options.radius / (self.options.extent * (2.0_f64).powi(zoom as i32));
+
+        #[cfg(feature = "logger")]
+        log::debug!("Clustering points at zoom level {}", zoom);
+
         let mut data = tree.data.to_owned();
         let mut next_data = vec![];
 
