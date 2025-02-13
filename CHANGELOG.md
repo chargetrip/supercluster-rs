@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0](https://github.com/chargetrip/supercluster-rs/compare/v2.0.6...v2.1.0) - 2025-02-13
+
+### Added
+
+- logging feature
+
+### Other
+
+- update readme
+
 ## [2.0.6](https://github.com/chargetrip/supercluster-rs/compare/v2.0.5...v2.0.6) - 2025-02-10
 
 ### Other
