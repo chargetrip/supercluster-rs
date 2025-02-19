@@ -15,21 +15,23 @@ repository = "https://github.com/chargetrip/supercluster-rs"
 [dependencies]
 geojson = "0.24.1"
 log = { version = "0.4.25", optional = true }
-serde = { version = "1.0.217", features = ["derive"] }
-serde_json = "1.0.138"
+serde = { version = "1.0.217", features = ["derive"], optional = true }
+serde_json = { version = "1.0.138", optional = true }
 thiserror = "2.0.11"
 twox-hash = "2.1.0"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 env_logger = "0.11.6"
+serde_json = "1.0.138"
 
 [features]
-logger = ["log"]
+cluster_metadata = ["serde_json"]
 
 [[bench]]
 name = "supercluster_bench"
 harness = false
+required-features = ["cluster_metadata", "log", "serde"]
 
 [lib]
 name = "supercluster"
@@ -38,6 +40,7 @@ path = "src/lib.rs"
 [[example]]
 name = "basic"
 path = "examples/basic.rs"
+required-features = ["cluster_metadata"]
 
 [[example]]
 name = "feature_builder"
@@ -46,6 +49,7 @@ path = "examples/feature_builder.rs"
 [[example]]
 name = "clusters"
 path = "examples/clusters.rs"
+required-features = ["cluster_metadata"]
 
 [[example]]
 name = "tile"
@@ -54,7 +58,19 @@ path = "examples/tile.rs"
 [[example]]
 name = "cartesian_coordinates"
 path = "examples/cartesian_coordinates.rs"
+required-features = ["cluster_metadata"]
 
 [[example]]
-name = "logging"
-path = "examples/logging.rs"
+name = "log"
+path = "examples/log.rs"
+required-features = ["log"]
+
+[[example]]
+name = "serde"
+path = "examples/serde.rs"
+required-features = ["serde"]
+
+[[example]]
+name = "without_cluster_metadata"
+path = "examples/without_cluster_metadata.rs"
+required-features = ["serde"]

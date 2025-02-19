@@ -49,5 +49,9 @@ fn main() -> Result<(), SuperclusterError> {
 
     println!("Tile: {:?}", tile);
 
+    for feature in tile.features {
+        assert!(feature.properties.is_some());
+    }
+
     Ok(())
 }

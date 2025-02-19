@@ -2,6 +2,7 @@
 //!
 //! Contains the static spatial index for 2D points based on a flat KD-tree.
 
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Array of coordinates with longitude as first value and latitude as second one.
@@ -10,7 +11,8 @@ type Point = [f64; 2];
 /// Static spatial index for 2D points based on a flat KD-tree.
 /// The KD-tree is used to perform range and within queries on the points.
 /// The index is built from a list of 2D points and can be queried to find points within a specified bounding box or radius.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct KDBush {
     /// Node size for the KD-tree. Determines the number of points in a leaf node.
     /// Affects the performance of the index.
@@ -69,7 +71,7 @@ impl KDBush {
     /// This method constructs the KD-tree index based on the points added to the KDBush instance.
     /// After calling this method, the index will be ready for range and within queries.
     pub fn build_index(&mut self) {
-        #[cfg(feature = "logger")]
+        #[cfg(feature = "log")]
         log::debug!("Building KDBush index with {} points", self.points.len());
 
         self.coords = vec![0.0; 2 * self.points.len()];
@@ -83,7 +85,7 @@ impl KDBush {
 
         self.sort(0, self.ids.len() - 1, 0);
 
-        #[cfg(feature = "logger")]
+        #[cfg(feature = "log")]
         log::debug!("KDBush index built successfully");
     }
 
@@ -100,7 +102,7 @@ impl KDBush {
     ///
     /// A vector of point indices that fall within the specified bounding box.
     pub fn range(&self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<usize> {
-        #[cfg(feature = "logger")]
+        #[cfg(feature = "log")]
         log::debug!(
             "Finding points within range [{}, {}, {}, {}]",
             min_x,
@@ -161,7 +163,7 @@ impl KDBush {
     ///
     /// A vector of point indices that fall within the specified radius from the query point.
     pub fn within(&self, qx: f64, qy: f64, radius: f64) -> Vec<usize> {
-        #[cfg(feature = "logger")]
+        #[cfg(feature = "log")]
         log::debug!(
             "Finding points within radius {} from query point [{}, {}]",
             radius,

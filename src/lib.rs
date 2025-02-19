@@ -35,7 +35,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! supercluster = { version = "2.1.1", features = ["logger"] }
+//! supercluster = { version = "2.1.1", features = ["log", "serde", "cluster_metadata"] }
 //! ```
 //!
 //! Below is an example of how to create and run a supercluster using the crate.
