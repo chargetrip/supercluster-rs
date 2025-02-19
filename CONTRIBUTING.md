@@ -75,7 +75,7 @@ cargo test
 Run [clippy](https://github.com/rust-lang/rust-clippy) to lint the code:
 
 ```sh
-cargo clippy --all-targets --all-features --no-deps -- -D warnings
+cargo clippy --locked --all-targets --all-features --no-deps -- -D warnings
 ```
 
 Run [rustfmt](https://github.com/rust-lang/rustfmt) to format the code:

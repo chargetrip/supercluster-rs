@@ -40,7 +40,7 @@ jobs:
     - name: Run lint
       run: cargo fmt -- --check
     - name: Run tests
-      run: cargo tarpaulin --tests --bins --all-targets --locked --out xml
+      run: cargo tarpaulin --tests --bins --all-targets --all-features --locked --out xml
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v5
       env:

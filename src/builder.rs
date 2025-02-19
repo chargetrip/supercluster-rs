@@ -5,13 +5,15 @@
 use std::{collections::HashMap, hash::BuildHasherDefault};
 
 use geojson::{feature::Id, Feature, Geometry, Value};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use twox_hash::XxHash64;
 
 use crate::CoordinateSystem;
 
 /// Supercluster configuration options.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct SuperclusterOptions {
     /// Minimal zoom level to generate clusters on.
     /// The default value is 0.
@@ -43,7 +45,8 @@ pub struct SuperclusterOptions {
 }
 
 /// Feature configuration options builder.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct FeatureBuilder {
     /// Points to cluster.
     pub points: HashMap<String, Vec<f64>, BuildHasherDefault<XxHash64>>,
@@ -111,7 +114,8 @@ impl FeatureBuilder {
 }
 
 /// Supercluster configuration options builder.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct SuperclusterBuilder {
     /// Minimal zoom level to generate clusters on.
     /// The default value is 0.

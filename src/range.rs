@@ -2,11 +2,13 @@
 //!
 //! This module contains the range implementation for the supercluster crate.
 
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// The range of the incoming data if choosing the cartesian coordinate system.
 /// Applicable for non-geospatial data (i.e. microscopy, etc.).
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct DataRange {
     /// The minimum x-coordinate value.
     /// Default is 0.0.

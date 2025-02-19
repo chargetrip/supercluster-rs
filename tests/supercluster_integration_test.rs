@@ -4,7 +4,6 @@ use common::{
     get_data_range, load_cartesian, load_places, load_tile_places, load_tile_places_with_min_5,
 };
 use geojson::{Feature, Geometry, JsonObject, Value::Point};
-use serde_json::json;
 use supercluster::{CoordinateSystem, Supercluster, SuperclusterError};
 
 #[test]
@@ -65,6 +64,7 @@ fn test_generate_clusters_with_min_points() {
 }
 
 #[test]
+#[cfg(feature = "cluster_metadata")]
 fn test_get_cluster() {
     let options = Supercluster::builder()
         .radius(40.0)
@@ -83,7 +83,7 @@ fn test_get_cluster() {
         .map(|cluster| {
             cluster
                 .property("point_count")
-                .unwrap_or(&json!(1))
+                .unwrap_or(&serde_json::json!(1))
                 .as_u64()
                 .unwrap() as usize
         })

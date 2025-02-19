@@ -14,8 +14,12 @@
 
 use std::{collections::HashMap, f64::consts::PI, hash::BuildHasherDefault};
 
-use geojson::{feature::Id, Feature, FeatureCollection, Geometry, JsonObject, Value::Point};
+#[cfg(feature = "cluster_metadata")]
+use geojson::JsonObject;
+use geojson::{feature::Id, Feature, FeatureCollection, Geometry, Value::Point};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "cluster_metadata")]
 use serde_json::json;
 use twox_hash::XxHash64;
 
@@ -36,11 +40,13 @@ const OFFSET_PARENT: usize = 4;
 const OFFSET_NUM: usize = 5;
 
 /// An offset index used to access the properties associated with a cluster in the data arrays.
+#[cfg(feature = "cluster_metadata")]
 const OFFSET_PROP: usize = 6;
 
 /// Coordinate system for clustering.
 /// The coordinate system is used to determine the range of the incoming data.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum CoordinateSystem {
     /// Latitude and longitude coordinates. Used for geo-spatial data.
     LatLng,
@@ -54,7 +60,8 @@ pub enum CoordinateSystem {
 }
 
 /// A spatial clustering configuration and data structure.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Supercluster {
     /// Configuration settings.
     pub options: SuperclusterOptions,
@@ -74,7 +81,8 @@ pub struct Supercluster {
 
     /// Clusters metadata.
     /// A vector of JSON objects representing cluster properties.
-    pub cluster_props: Vec<JsonObject>,
+    #[cfg(feature = "cluster_metadata")]
+    pub metadata: Vec<JsonObject>,
 }
 
 impl Supercluster {
@@ -102,15 +110,16 @@ impl Supercluster {
     ///
     /// New `Supercluster` instance with the given configuration.
     pub fn new(options: SuperclusterOptions) -> Self {
-        #[cfg(feature = "logger")]
+        #[cfg(feature = "log")]
         log::debug!("Creating a new supercluster instance");
 
         Supercluster {
             options,
             stride: 6,
             points: vec![],
-            cluster_props: vec![],
             trees: HashMap::default(),
+            #[cfg(feature = "cluster_metadata")]
+            metadata: vec![],
         }
     }
 
@@ -127,7 +136,7 @@ impl Supercluster {
     ///
     /// Supercluster instance with the input points loaded and clustered.
     pub fn load(&mut self, points: Vec<Feature>) -> Result<&mut Self, SuperclusterError> {
-        #[cfg(feature = "logger")]
+        #[cfg(feature = "log")]
         log::debug!("Loading input {} points into supercluster", points.len());
 
         let min_zoom = self.options.min_zoom as usize;
@@ -138,7 +147,7 @@ impl Supercluster {
         // Generate a cluster object for each point and index input points into a KD-tree
         let mut data = vec![];
 
-        #[cfg(feature = "logger")]
+        #[cfg(feature = "log")]
         log::debug!("Coordinate system: {:?}", self.options.coordinate_system);
 
         for (i, feature) in self.points.iter().enumerate() {
@@ -224,7 +233,7 @@ impl Supercluster {
         bbox: [f64; 4],
         zoom: u8,
     ) -> Result<Vec<Feature>, SuperclusterError> {
-        #[cfg(feature = "logger")]
+        #[cfg(feature = "log")]
         log::debug!(
             "Retrieving clusters for zoom level {} and bounding box {:?}",
             zoom,
@@ -284,18 +293,19 @@ impl Supercluster {
             let k = self.stride * id;
 
             clusters.push(if tree.data[k + OFFSET_NUM] > 1.0 {
-                get_cluster_json(
+                get_cluster(
                     &tree.data,
                     k,
-                    &self.cluster_props,
                     &self.options.coordinate_system,
+                    #[cfg(feature = "cluster_metadata")]
+                    &self.metadata,
                 )
             } else {
                 self.points[tree.data[k + OFFSET_ID] as usize].to_owned()
             });
         }
 
-        #[cfg(feature = "logger")]
+        #[cfg(feature = "log")]
         log::debug!("Retrieved {} clusters", clusters.len());
 
         Ok(clusters)
@@ -321,7 +331,7 @@ impl Supercluster {
         let data = &tree.data;
 
         if origin_id * self.stride >= data.len() {
-            #[cfg(feature = "logger")]
+            #[cfg(feature = "log")]
             log::error!("Cluster not found for ID {}", cluster_id);
 
             return Err(SuperclusterError::ClusterNotFound);
@@ -341,11 +351,12 @@ impl Supercluster {
 
             if data[k + OFFSET_PARENT] == (cluster_id as f64) {
                 if data[k + OFFSET_NUM] > 1.0 {
-                    children.push(get_cluster_json(
+                    children.push(get_cluster(
                         data,
                         k,
-                        &self.cluster_props,
                         &self.options.coordinate_system,
+                        #[cfg(feature = "cluster_metadata")]
+                        &self.metadata,
                     ));
                 } else {
                     let point_id = data[k + OFFSET_ID] as usize;
@@ -400,7 +411,7 @@ impl Supercluster {
         let tree = match self.trees.get(&zoom) {
             Some(tree) => tree,
             None => {
-                #[cfg(feature = "logger")]
+                #[cfg(feature = "log")]
                 log::error!("Tree not found for zoom level {}", z);
 
                 return Err(SuperclusterError::TreeNotFound);
@@ -431,13 +442,13 @@ impl Supercluster {
         }
 
         if tile.features.is_empty() {
-            #[cfg(feature = "logger")]
+            #[cfg(feature = "log")]
             log::error!("Tile not found for zoom level {}, x: {}, y: {}", z, x, y);
 
             return Err(SuperclusterError::TileNotFound);
         }
 
-        #[cfg(feature = "logger")]
+        #[cfg(feature = "log")]
         log::debug!(
             "Retrieved {} features for tile at zoom level {}, x: {}, y: {}",
             tile.features.len(),
@@ -605,14 +616,17 @@ impl Supercluster {
             let k = i * self.stride;
             let is_cluster = data[k + OFFSET_NUM] > 1.0;
 
-            let (px, py, properties) = if is_cluster {
+            let cluster = if is_cluster {
                 (
                     data[k],
                     data[k + 1],
-                    get_cluster_properties(data, k, &self.cluster_props),
+                    #[cfg(feature = "cluster_metadata")]
+                    get_cluster_metadata(data, k, &self.metadata),
                 )
             } else {
                 let p = &self.points[data[k + OFFSET_ID] as usize];
+
+                #[cfg(feature = "cluster_metadata")]
                 let properties = match p.properties.as_ref() {
                     Some(properties) => properties.to_owned(),
                     None => continue, // Handle the case where properties is None
@@ -638,7 +652,12 @@ impl Supercluster {
                     None => continue, // Handle the case where geometry is None
                 };
 
-                (px, py, properties)
+                (
+                    px,
+                    py,
+                    #[cfg(feature = "cluster_metadata")]
+                    properties,
+                )
             };
 
             let id = if is_cluster {
@@ -648,8 +667,8 @@ impl Supercluster {
             };
 
             let geometry = Geometry::new(Point(vec![
-                (self.options.extent * (px * z2 - x)).round(),
-                (self.options.extent * (py * z2 - y)).round(),
+                (self.options.extent * (cluster.0 * z2 - x)).round(),
+                (self.options.extent * (cluster.1 * z2 - y)).round(),
             ]));
 
             tile.features.push(Feature {
@@ -657,7 +676,10 @@ impl Supercluster {
                 bbox: None,
                 foreign_members: None,
                 geometry: Some(geometry),
-                properties: Some(properties),
+                #[cfg(feature = "cluster_metadata")]
+                properties: Some(cluster.2),
+                #[cfg(not(feature = "cluster_metadata"))]
+                properties: None,
             });
         }
     }
@@ -673,7 +695,7 @@ impl Supercluster {
     ///
     /// The effective zoom level considering the configured minimum and maximum zoom levels.
     pub fn limit_zoom(&self, zoom: u8) -> usize {
-        #[cfg(feature = "logger")]
+        #[cfg(feature = "log")]
         log::debug!("Limiting zoom level to {}", zoom);
 
         zoom.max(self.options.min_zoom)
@@ -694,7 +716,7 @@ impl Supercluster {
     pub fn cluster(&self, tree: &KDBush, zoom: usize) -> (Vec<f64>, Vec<f64>) {
         let r = self.options.radius / (self.options.extent * (2.0_f64).powi(zoom as i32));
 
-        #[cfg(feature = "logger")]
+        #[cfg(feature = "log")]
         log::debug!("Clustering points at zoom level {}", zoom);
 
         let mut data = tree.data.to_owned();
@@ -824,17 +846,17 @@ impl Supercluster {
 ///
 /// - `data`: A reference to the flat numeric arrays representing point data.
 /// - `i`: The index in the data array for the cluster.
-/// - `cluster_props`: A reference to a vector of cluster properties.
 /// - `coordinate_system`: The coordinate system used for clustering.
+/// - `metadata`: The cluster metadata.
 ///
 /// # Returns
 ///
 /// A GeoJSON feature representing a cluster.
-fn get_cluster_json(
+fn get_cluster(
     data: &[f64],
     i: usize,
-    cluster_props: &[JsonObject],
     coordinate_system: &CoordinateSystem,
+    #[cfg(feature = "cluster_metadata")] metadata: &[JsonObject],
 ) -> Feature {
     let geometry = match coordinate_system {
         CoordinateSystem::Cartesian { range } => Geometry::new(Point(vec![
@@ -852,22 +874,26 @@ fn get_cluster_json(
         bbox: None,
         foreign_members: None,
         geometry: Some(geometry),
-        properties: Some(get_cluster_properties(data, i, cluster_props)),
+        #[cfg(feature = "cluster_metadata")]
+        properties: Some(get_cluster_metadata(data, i, metadata)),
+        #[cfg(not(feature = "cluster_metadata"))]
+        properties: None,
     }
 }
 
-/// Retrieve properties for a cluster based on clustered point data.
+/// Retrieve metadata for a cluster based on clustered point data.
 ///
 /// # Arguments
 ///
 /// - `data`: A reference to the flat numeric arrays representing point data.
 /// - `i`: The index in the data array for the cluster.
-/// - `cluster_props`: A reference to a vector of cluster properties.
+/// - `metadata`: The cluster metadata.
 ///
 /// # Returns
 ///
-/// Properties for the cluster based on the clustered point data.
-fn get_cluster_properties(data: &[f64], i: usize, cluster_props: &[JsonObject]) -> JsonObject {
+/// Metadata for the cluster based on the clustered point data.
+#[cfg(feature = "cluster_metadata")]
+fn get_cluster_metadata(data: &[f64], i: usize, metadata: &[JsonObject]) -> JsonObject {
     let count = data[i + OFFSET_NUM];
     let abbrev = if count >= 10000.0 {
         format!("{}k", count / 1000.0)
@@ -877,8 +903,8 @@ fn get_cluster_properties(data: &[f64], i: usize, cluster_props: &[JsonObject]) 
         count.to_string()
     };
 
-    let mut properties = if !cluster_props.is_empty() && data.get(i + OFFSET_PROP).is_some() {
-        cluster_props[data[i + OFFSET_PROP] as usize].to_owned()
+    let mut properties = if !metadata.is_empty() && data.get(i + OFFSET_PROP).is_some() {
+        metadata[data[i + OFFSET_PROP] as usize].to_owned()
     } else {
         JsonObject::new()
     };
@@ -954,6 +980,8 @@ fn convert_spherical_mercator_to_latitude(y: f64) -> f64 {
 mod tests {
     use super::*;
 
+    use geojson::JsonObject;
+
     fn setup() -> Supercluster {
         let options = Supercluster::builder().build();
         Supercluster::new(options)
@@ -1009,21 +1037,22 @@ mod tests {
     }
 
     #[test]
-    fn test_get_cluster_json_with_cluster_props() {
+    #[cfg(feature = "cluster_metadata")]
+    fn test_get_cluster_with_metadata() {
         let data = [0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0];
         let i = 0;
-        let mut cluster_props = JsonObject::new();
+        let mut metadata = JsonObject::new();
 
-        cluster_props.insert("cluster".to_string(), json!(false));
-        cluster_props.insert("cluster_id".to_string(), json!(0));
-        cluster_props.insert("point_count".to_string(), json!(0));
-        cluster_props.insert("name".to_string(), json!("name".to_string()));
-        cluster_props.insert(
+        metadata.insert("cluster".to_string(), serde_json::json!(false));
+        metadata.insert("cluster_id".to_string(), serde_json::json!(0));
+        metadata.insert("point_count".to_string(), serde_json::json!(0));
+        metadata.insert("name".to_string(), serde_json::json!("name".to_string()));
+        metadata.insert(
             "point_count_abbreviated".to_string(),
-            json!("0".to_string()),
+            serde_json::json!("0".to_string()),
         );
 
-        let result = get_cluster_json(&data, i, &[cluster_props], &CoordinateSystem::LatLng);
+        let result = get_cluster(&data, i, &CoordinateSystem::LatLng, &[metadata]);
 
         assert_eq!(result.id, Some(Id::String("0".to_string())));
 
@@ -1055,12 +1084,13 @@ mod tests {
     }
 
     #[test]
-    fn test_get_cluster_json_without_cluster_props() {
+    #[cfg(feature = "cluster_metadata")]
+    fn test_get_cluster_without_metadata() {
         let data = [0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0];
         let i = 0;
-        let cluster_props = vec![];
+        let metadata = vec![];
 
-        let result = get_cluster_json(&data, i, &cluster_props, &CoordinateSystem::LatLng);
+        let result = get_cluster(&data, i, &CoordinateSystem::LatLng, &metadata);
 
         assert_eq!(result.id, Some(Id::String("0".to_string())));
 
@@ -1094,21 +1124,22 @@ mod tests {
     }
 
     #[test]
-    fn test_get_cluster_properties_with_cluster_props() {
+    #[cfg(feature = "cluster_metadata")]
+    fn test_get_cluster_metadata_with_metadata() {
         let data = [0.0, 0.0, 0.0, 0.0, 0.0, 10000.0, 0.0];
         let i = 0;
-        let mut cluster_props = JsonObject::new();
+        let mut metadata = JsonObject::new();
 
-        cluster_props.insert("cluster".to_string(), json!(false));
-        cluster_props.insert("cluster_id".to_string(), json!(0));
-        cluster_props.insert("point_count".to_string(), json!(0));
-        cluster_props.insert("name".to_string(), json!("name".to_string()));
-        cluster_props.insert(
+        metadata.insert("cluster".to_string(), serde_json::json!(false));
+        metadata.insert("cluster_id".to_string(), serde_json::json!(0));
+        metadata.insert("point_count".to_string(), serde_json::json!(0));
+        metadata.insert("name".to_string(), serde_json::json!("name".to_string()));
+        metadata.insert(
             "point_count_abbreviated".to_string(),
-            json!("0".to_string()),
+            serde_json::json!("0".to_string()),
         );
 
-        let result = get_cluster_properties(&data, i, &[cluster_props]);
+        let result = get_cluster_metadata(&data, i, &[metadata]);
 
         assert!(result.get("cluster").unwrap().as_bool().unwrap());
         assert_eq!(result.get("cluster_id").unwrap().as_i64().unwrap(), 0);
@@ -1128,12 +1159,13 @@ mod tests {
     }
 
     #[test]
-    fn test_get_cluster_properties_without_cluster_props() {
+    #[cfg(feature = "cluster_metadata")]
+    fn test_get_cluster_metadata_without_metadata() {
         let data = [0.0, 0.0, 0.0, 0.0, 0.0, 1000.0, 0.0];
         let i = 0;
-        let cluster_props = vec![];
+        let metadata = vec![];
 
-        let result = get_cluster_properties(&data, i, &cluster_props);
+        let result = get_cluster_metadata(&data, i, &metadata);
 
         assert!(result.get("cluster").unwrap().as_bool().unwrap());
         assert_eq!(result.get("cluster_id").unwrap().as_i64().unwrap(), 0);
