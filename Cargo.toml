@@ -16,14 +16,14 @@ repository = "https://github.com/chargetrip/supercluster-rs"
 geojson = "0.24.1"
 log = { version = "0.4.25", optional = true }
 serde = { version = "1.0.218", features = ["derive"], optional = true }
-serde_json = { version = "1.0.138", optional = true }
+serde_json = { version = "1.0.139", optional = true }
 thiserror = "2.0.11"
 twox-hash = "2.1.0"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 env_logger = "0.11.6"
-serde_json = "1.0.138"
+serde_json = "1.0.139"
 
 [features]
 cluster_metadata = ["serde_json"]
