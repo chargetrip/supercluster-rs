@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.1](https://github.com/chargetrip/supercluster-rs/compare/v3.0.0...v3.0.1) - 2025-02-25
+
+### Other
+
+- Merge pull request [#20](https://github.com/chargetrip/supercluster-rs/pull/20) from chargetrip/dependabot/cargo/log-0.4.26
+- *(deps)* bump log from 0.4.25 to 0.4.26
+- *(deps)* bump serde from 1.0.217 to 1.0.218
+
 ## [3.0.0](https://github.com/chargetrip/supercluster-rs/compare/v2.1.1...v3.0.0) - 2025-02-19
 
 ### Added
