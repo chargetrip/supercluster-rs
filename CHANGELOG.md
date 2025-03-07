@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.2](https://github.com/chargetrip/supercluster-rs/compare/v3.0.1...v3.0.2) - 2025-03-07
+
+### Other
+
+- *(deps)* bump geojson from 0.24.1 to 0.24.2
+- *(deps)* bump thiserror from 2.0.11 to 2.0.12
+- *(deps)* bump serde_json from 1.0.139 to 1.0.140
+
 ## [3.0.1](https://github.com/chargetrip/supercluster-rs/compare/v3.0.0...v3.0.1) - 2025-02-25
 
 ### Other
