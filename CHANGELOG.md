@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.3](https://github.com/chargetrip/supercluster-rs/compare/v3.0.2...v3.0.3) - 2025-03-24
+
+### Other
+
+- *(deps)* bump log from 0.4.26 to 0.4.27
+- *(deps)* bump serde from 1.0.218 to 1.0.219
+
 ## [3.0.2](https://github.com/chargetrip/supercluster-rs/compare/v3.0.1...v3.0.2) - 2025-03-07
 
 ### Other
