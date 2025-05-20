@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.4](https://github.com/chargetrip/supercluster-rs/compare/v3.0.3...v3.0.4) - 2025-05-20
+
+### Other
+
+- update rust toolchain
+- *(deps)* bump criterion from 0.5.1 to 0.6.0
+
 ## [3.0.3](https://github.com/chargetrip/supercluster-rs/compare/v3.0.2...v3.0.3) - 2025-03-24
 
 ### Other
