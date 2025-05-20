@@ -27,14 +27,14 @@ To use the `supercluster` crate in your project, add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-supercluster = "3.0.0"
+supercluster = "3.0.4"
 ```
 
 You can also include additional features, such as logging, by specifying them in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-supercluster = { version = "3.0.0", features = ["log", "serde", "cluster_metadata"] }
+supercluster = { version = "3.0.4", features = ["log", "serde", "cluster_metadata"] }
 ```
 
 Below is an example of how to create and run a supercluster using the crate.

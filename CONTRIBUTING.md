@@ -64,10 +64,16 @@ cargo build
 
 ### Testing the project
 
-To run the tests, use:
+To run the tests with all features, use:
 
 ```sh
-cargo test
+cargo test --all-features
+```
+
+To run the tests with a specific feature, use:
+
+```sh
+cargo test --features cluster_metadata
 ```
 
 ### Code Quality Checks
