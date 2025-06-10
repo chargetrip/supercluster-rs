@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.5](https://github.com/chargetrip/supercluster-rs/compare/v3.0.4...v3.0.5) - 2025-06-10
+
+### Other
+
+- Merge pull request #31 from chargetrip/dependabot/cargo/twox-hash-2.1.1
+
 ## [3.0.4](https://github.com/chargetrip/supercluster-rs/compare/v3.0.3...v3.0.4) - 2025-05-20
 
 ### Other
