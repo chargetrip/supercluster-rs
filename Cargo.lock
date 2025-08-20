@@ -586,7 +586,7 @@ dependencies = [
 
 [[package]]
 name = "supercluster"
-version = "3.0.5"
+version = "3.0.6"
 dependencies = [
  "criterion",
  "env_logger",
