@@ -17,7 +17,7 @@ geojson = "0.24.2"
 log = { version = "0.4.28", optional = true }
 serde = { version = "1.0.219", features = ["derive"], optional = true }
 serde_json = { version = "1.0.145", optional = true }
-thiserror = "2.0.16"
+thiserror = "2.0.17"
 twox-hash = "2.1.2"
 
 [dev-dependencies]
