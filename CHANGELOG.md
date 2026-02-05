@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.8](https://github.com/chargetrip/supercluster-rs/compare/v3.0.7...v3.0.8) - 2026-02-05
+
+### Other
+
+- *(deps)* bump thiserror from 2.0.17 to 2.0.18
+- *(deps)* bump serde_json from 1.0.148 to 1.0.149
+- *(deps)* bump serde_json from 1.0.145 to 1.0.148
+- Merge pull request #52 from chargetrip/dependabot/cargo/log-0.4.29
+- *(deps)* bump criterion from 0.7.0 to 0.8.1
+- Merge pull request #48 from chargetrip/dependabot/cargo/thiserror-2.0.17
+- *(deps)* bump thiserror from 2.0.16 to 2.0.17
+- *(deps)* bump serde_json from 1.0.143 to 1.0.145
+
 ## [3.0.7](https://github.com/chargetrip/supercluster-rs/compare/v3.0.6...v3.0.7) - 2025-09-09
 
 ### Other
