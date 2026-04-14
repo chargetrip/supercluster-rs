@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.9](https://github.com/chargetrip/supercluster-rs/compare/v3.0.8...v3.0.9) - 2026-04-14
+
+### Other
+
+- *(deps)* bump rand from 0.9.1 to 0.9.4
+- Merge pull request #58 from chargetrip/dependabot/cargo/geojson-1.0.0
+
 ## [3.0.8](https://github.com/chargetrip/supercluster-rs/compare/v3.0.7...v3.0.8) - 2026-02-05
 
 ### Other
