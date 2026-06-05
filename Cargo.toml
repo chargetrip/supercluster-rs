@@ -14,7 +14,7 @@ repository = "https://github.com/chargetrip/supercluster-rs"
 
 [dependencies]
 geojson = "1.0.0"
-log = { version = "0.4.29", optional = true }
+log = { version = "0.4.31", optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 serde_json = { version = "1.0.150", optional = true }
 thiserror = "2.0.18"
