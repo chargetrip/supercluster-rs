@@ -64,10 +64,16 @@ cargo build
 
 ### Testing the project
 
-To run the tests with all features, use:
+To run the tests with all features, including the README examples as doc tests, use:
 
 ```sh
 cargo test --all-features
+```
+
+To run the tests without any feature, use:
+
+```sh
+cargo test
 ```
 
 To run the tests with a specific feature, use:
@@ -92,10 +98,10 @@ cargo fmt
 
 ### Documentation
 
-Generate documentation in HTML format:
+Generate the documentation in HTML format, including the items behind features:
 
 ```bash
-cargo doc --open
+cargo doc --all-features --open
 ```
 
 ### Benchmarks
@@ -106,13 +112,14 @@ The project uses [`criterion`](https://bheisler.github.io/criterion.rs/book/inde
 To run a benchmark against the changes you have made, for example, you can run;
 
 ```sh
-cd benches
-
-# Run all benchmarks
-cargo bench
+# Run all benchmarks, which need the `geojson` feature
+cargo bench --features geojson
 
 # Run all tests in the `benches/supercluster_bench.rs` file
-cargo bench --bench supercluster_bench
+cargo bench --features geojson --bench supercluster_bench
+
+# Run only the benchmarks with a million points, which are slow
+cargo bench --features geojson --bench supercluster_bench -- "one million points"
 
 # After running benches, you can check the statistics under `target/criterion`
 ```

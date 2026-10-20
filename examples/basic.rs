@@ -38,7 +38,7 @@ fn main() -> Result<(), SuperclusterError> {
     supercluster.load_features(features)?;
 
     // Get a tile from the Supercluster instance
-    let tile = supercluster.get_tile(0, 0.0, 0.0).to_feature_collection();
+    let tile = supercluster.get_tile(0, 0, 0).to_feature_collection();
 
     println!("Tile: {:?}", tile);
 

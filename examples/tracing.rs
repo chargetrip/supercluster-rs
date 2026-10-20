@@ -35,7 +35,7 @@ fn main() -> Result<(), SuperclusterError> {
     supercluster.load_features(features)?;
 
     // Querying does not log anything
-    supercluster.get_tile(0, 0.0, 0.0);
+    supercluster.get_tile(0, 0, 0);
 
     Ok(())
 }

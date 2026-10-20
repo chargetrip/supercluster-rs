@@ -32,7 +32,7 @@ pub struct SuperclusterOptions {
     pub extent: f64,
 
     /// Size of the KD-tree leaf node, affects performance.
-    /// The default value is 64.
+    /// It cannot be 0. The default value is 64.
     pub node_size: usize,
 
     /// Type of coordinate system for clustering.
@@ -65,7 +65,7 @@ pub struct SuperclusterBuilder {
     pub extent: Option<f64>,
 
     /// Size of the KD-tree leaf node, affects performance.
-    /// The default value is 64.
+    /// It cannot be 0. The default value is 64.
     pub node_size: Option<usize>,
 
     /// Type of coordinate system for clustering.
@@ -157,7 +157,7 @@ impl SuperclusterBuilder {
     ///
     /// # Arguments
     ///
-    /// - `node_size`: Size of the KD-tree leaf node, affects performance.
+    /// - `node_size`: Size of the KD-tree leaf node, affects performance. It cannot be 0.
     ///
     /// # Returns
     ///

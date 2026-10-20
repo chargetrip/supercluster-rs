@@ -39,7 +39,7 @@ fn main() -> Result<(), SuperclusterError> {
     )?;
 
     // Get a tile, here the only one on zoom level 0
-    let tile = supercluster.get_tile(0, 0.0, 0.0);
+    let tile = supercluster.get_tile(0, 0, 0);
 
     for tile_item in &tile.items {
         match &tile_item.item {

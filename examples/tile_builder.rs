@@ -80,11 +80,7 @@ fn main() -> Result<(), SuperclusterError> {
     )?;
 
     let builder = AvailableStations {
-        tile: TileCoordinates {
-            x: 0.0,
-            y: 0.0,
-            z: 0,
-        },
+        tile: TileCoordinates { x: 0, y: 0, z: 0 },
     };
 
     // The cluster counts the available stations only and moves to their center, Rotterdam is left out

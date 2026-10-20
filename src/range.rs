@@ -36,7 +36,7 @@ pub struct DataRange {
 }
 
 impl DataRange {
-    /// Normalize the coordinate value to the range [0, 1].
+    /// Normalize the coordinate value to the range `[0, 1]`.
     /// The formula is `(v - offset) / scale`.
     ///
     /// # Arguments
@@ -50,7 +50,7 @@ impl DataRange {
         (v - self.offset()) / self.scale()
     }
 
-    /// Denormalize the coordinate value from the range [0, 1] to the original range.
+    /// Denormalize the coordinate value from the range `[0, 1]` to the original range.
     /// The formula is `v_scaled * scale + offset`.
     ///
     /// # Arguments

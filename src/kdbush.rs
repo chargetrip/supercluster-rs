@@ -21,7 +21,7 @@ pub struct KDBush {
     pub ids: Vec<u32>,
 
     /// A flat array containing the X and Y coordinates of all points in interleaved order.
-    /// The coordinates are stored as [x1, y1, x2, y2, ..., xn, yn].
+    /// The coordinates are stored as `[x1, y1, x2, y2, ..., xn, yn]`.
     pub coords: Vec<f64>,
 
     /// The values the supercluster keeps for each point or cluster, in the order the points were added.
@@ -144,12 +144,43 @@ impl KDBush {
     ///
     /// A vector of point indices that fall within the specified radius from the query point.
     pub fn within(&self, qx: f64, qy: f64, radius: f64) -> Vec<usize> {
+        let mut stack = vec![];
+        let mut result = vec![];
+
+        self.within_into(qx, qy, radius, &mut stack, &mut result);
+
+        result
+    }
+
+    /// Find all point indices within a given radius from a query point, like `within`, but write
+    /// them into buffers that the caller reuses between queries. This avoids allocating two
+    /// vectors for every query, which adds up when you query every point of a large index.
+    ///
+    /// # Arguments
+    ///
+    /// - `qx`: The X-coordinate (longitude) of the query point.
+    /// - `qy`: The Y-coordinate (latitude) of the query point.
+    /// - `radius`: The radius around the query point.
+    /// - `stack`: The buffer the search works in. The search clears it first.
+    /// - `result`: The buffer that receives the point indices within the specified radius, in the
+    ///   order `within` returns them. The search clears it first.
+    pub fn within_into(
+        &self,
+        qx: f64,
+        qy: f64,
+        radius: f64,
+        stack: &mut Vec<(usize, usize, usize)>,
+        result: &mut Vec<usize>,
+    ) {
+        stack.clear();
+        result.clear();
+
         if self.ids.is_empty() {
-            return Vec::new();
+            return;
         }
 
-        let mut stack = vec![(0, self.ids.len() - 1, 0)];
-        let mut result: Vec<usize> = Vec::new();
+        stack.push((0, self.ids.len() - 1, 0));
+
         let r2 = radius * radius;
 
         while let Some((axis, right, left)) = stack.pop() {
@@ -185,8 +216,6 @@ impl KDBush {
                 stack.push((next_axis, right, m + 1));
             }
         }
-
-        result
     }
 
     /// Sort points in the KD-tree along a specified axis.
@@ -510,6 +539,29 @@ mod tests {
         index.build_index();
 
         assert!(index.range(0.0, 0.0, 100.0, 100.0).is_empty());
+    }
+
+    #[test]
+    fn test_within_into() {
+        let mut index = KDBush::new(POINTS.len(), 10);
+
+        for point in POINTS.iter() {
+            index.add_point(point[0], point[1]);
+        }
+
+        index.build_index();
+
+        // The buffers still hold the result of an earlier query, which the new query clears
+        let mut stack = vec![(1, 2, 3)];
+        let mut result = vec![999];
+
+        index.within_into(50.0, 50.0, 20.0, &mut stack, &mut result);
+
+        assert_eq!(result, index.within(50.0, 50.0, 20.0));
+
+        index.within_into(10.0, 10.0, 5.0, &mut stack, &mut result);
+
+        assert_eq!(result, index.within(10.0, 10.0, 5.0));
     }
 
     #[test]

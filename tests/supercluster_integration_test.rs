@@ -54,7 +54,7 @@ fn get_point_count(item: &Item<'_, Feature>) -> usize {
 fn test_get_tile() {
     let places_tile = load_tile_places();
     let supercluster = load_supercluster(create_options());
-    let tile = supercluster.get_tile(0, 0.0, 0.0).to_feature_collection();
+    let tile = supercluster.get_tile(0, 0, 0).to_feature_collection();
 
     assert_eq!(tile.features.len(), places_tile.features.len());
     assert_eq!(tile.features, places_tile.features);
@@ -64,7 +64,7 @@ fn test_get_tile() {
 fn test_get_tile_not_found() {
     let supercluster = load_supercluster(create_options());
 
-    assert!(supercluster.get_tile(10, 10.0, 10.0).is_empty());
+    assert!(supercluster.get_tile(10, 10, 10).is_empty());
 }
 
 #[test]
@@ -75,12 +75,12 @@ fn test_get_tile_with_cluster_max_zoom() {
 
     for x in 0..4 {
         for y in 0..4 {
-            let tile = supercluster.get_tile(2, x as f64, y as f64);
+            let tile = supercluster.get_tile(2, x, y);
 
             clustered += tile.items.len();
 
             // Above the maximum zoom level to cluster on, all that is left are the points
-            let tile = supercluster.get_tile_with_cluster_max_zoom(2, x as f64, y as f64, Some(1));
+            let tile = supercluster.get_tile_with_cluster_max_zoom(2, x, y, Some(1));
 
             assert!(tile
                 .items
@@ -107,7 +107,7 @@ fn test_generate_clusters_with_min_points() {
         .coordinate_system(CoordinateSystem::LatLng)
         .build();
     let supercluster = load_supercluster(options);
-    let tile = supercluster.get_tile(0, 0.0, 0.0).to_feature_collection();
+    let tile = supercluster.get_tile(0, 0, 0).to_feature_collection();
 
     assert_eq!(tile.features.len(), places_tile.features.len());
     assert_eq!(tile.features, places_tile.features);

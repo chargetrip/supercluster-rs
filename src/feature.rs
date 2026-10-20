@@ -18,7 +18,7 @@
 //!
 //! supercluster.load_features(features).unwrap();
 //!
-//! let tile = supercluster.get_tile(0, 0.0, 0.0).to_feature_collection();
+//! let tile = supercluster.get_tile(0, 0, 0).to_feature_collection();
 //!
 //! assert_eq!(tile.features.len(), 1);
 //! ```
@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn test_tile_to_feature_collection() {
         let supercluster = load_features();
-        let collection = supercluster.get_tile(0, 0.0, 0.0).to_feature_collection();
+        let collection = supercluster.get_tile(0, 0, 0).to_feature_collection();
 
         assert_eq!(collection.features.len(), 1);
 
@@ -346,7 +346,7 @@ mod tests {
     fn test_tile_to_feature_collection_with_points() {
         let supercluster = load_features();
         let collection = supercluster
-            .get_tile_with_cluster_max_zoom(1, 1.0, 0.0, Some(0))
+            .get_tile_with_cluster_max_zoom(1, 1, 0, Some(0))
             .to_feature_collection();
 
         assert_eq!(collection.features.len(), 2);

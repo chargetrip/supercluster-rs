@@ -10,13 +10,13 @@ use crate::{Item, Supercluster, SuperclusterError, TileItem};
 const RECENTER_LIMIT: usize = 20;
 
 /// Coordinates of a tile.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TileCoordinates {
-    /// The X coordinate of the tile.
-    pub x: f64,
+    /// The X coordinate of the tile, counted from the left.
+    pub x: u32,
 
-    /// The Y coordinate of the tile.
-    pub y: f64,
+    /// The Y coordinate of the tile, counted from the top.
+    pub y: u32,
 
     /// The zoom level of the tile.
     pub z: u8,
@@ -149,8 +149,13 @@ where
             let tile = builder.get_tile_coordinates();
             let (x, y) = supercluster.normalize(center);
 
-            coordinates =
-                supercluster.get_tile_position(x, y, 2f64.powi(tile.z as i32), tile.x, tile.y);
+            coordinates = supercluster.get_tile_position(
+                x,
+                y,
+                2f64.powi(tile.z as i32),
+                f64::from(tile.x),
+                f64::from(tile.y),
+            );
         }
     }
 
@@ -282,11 +287,7 @@ mod tests {
     }
 
     /// The only tile at zoom level 0.
-    const WORLD_TILE: TileCoordinates = TileCoordinates {
-        x: 0.0,
-        y: 0.0,
-        z: 0,
-    };
+    const WORLD_TILE: TileCoordinates = TileCoordinates { x: 0, y: 0, z: 0 };
 
     /// Build a tile of a supercluster with the points loaded.
     /// A point is a longitude, a latitude and whether the filter keeps it.
@@ -295,7 +296,7 @@ mod tests {
         tile: TileCoordinates,
         cluster_max_zoom_override: Option<u8>,
     ) -> Vec<Mapped> {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+        let mut supercluster = Supercluster::<TestPoint>::new(SuperclusterBuilder::new().build());
 
         supercluster
             .load_with(
@@ -370,11 +371,7 @@ mod tests {
     #[test]
     fn test_build_with_cluster_max_zoom_override() {
         let points = [(10.0, 50.0, true), (12.0, 50.0, true)];
-        let tile = TileCoordinates {
-            x: 1.0,
-            y: 0.0,
-            z: 1,
-        };
+        let tile = TileCoordinates { x: 1, y: 0, z: 1 };
 
         let clustered = build(&points, tile, None);
 
@@ -390,11 +387,7 @@ mod tests {
     #[test]
     fn test_build_for_empty_tile() {
         let points = [(10.0, 50.0, true), (12.0, 50.0, true)];
-        let tile = TileCoordinates {
-            x: 0.0,
-            y: 1.0,
-            z: 1,
-        };
+        let tile = TileCoordinates { x: 0, y: 1, z: 1 };
 
         assert!(build(&points, tile, None).is_empty());
     }

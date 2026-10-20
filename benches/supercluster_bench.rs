@@ -17,8 +17,7 @@ fn create_options() -> SuperclusterOptions {
         .build()
 }
 
-/// Create points that are spread over the world, without a random number generator so every run
-/// uses the same points.
+/// Create points spread over the world with a fixed formula, so every run uses the same points.
 fn create_points(count: usize) -> Vec<[f64; 2]> {
     (0..count)
         .map(|i| {
@@ -46,7 +45,7 @@ fn bench_supercluster(c: &mut Criterion) {
 
     c.bench_function("get tile", |b| {
         b.iter(|| {
-            let _ = supercluster.get_tile(black_box(0), black_box(0.0), black_box(0.0));
+            let _ = supercluster.get_tile(black_box(0), black_box(0), black_box(0));
         })
     });
 
@@ -69,7 +68,7 @@ fn bench_many_points(c: &mut Criterion) {
 
     c.bench_function("get tile of 10000 points", |b| {
         b.iter(|| {
-            let _ = supercluster.get_tile(black_box(3), black_box(4.0), black_box(3.0));
+            let _ = supercluster.get_tile(black_box(3), black_box(4), black_box(3));
         })
     });
 
@@ -95,5 +94,39 @@ fn bench_many_points(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_supercluster, bench_many_points);
+fn bench_one_million_points(c: &mut Criterion) {
+    // `cargo test` runs each benchmark once as a check, which could take a long time and a lot of
+    // memory here, so only `cargo bench` runs this group
+    if !std::env::args().any(|argument| argument == "--bench") {
+        return;
+    }
+
+    let points = create_points(1_000_000);
+    let mut supercluster = Supercluster::new(create_options());
+    let mut group = c.benchmark_group("one million points");
+
+    // Each load is slow, so the group uses the smallest sample size criterion allows
+    group.sample_size(10);
+
+    group.bench_function("load", |b| {
+        b.iter(|| {
+            let _ = supercluster.load_with(black_box(points.clone()), |point| Some(*point));
+        })
+    });
+
+    group.bench_function("get tile", |b| {
+        b.iter(|| {
+            let _ = supercluster.get_tile(black_box(6), black_box(32), black_box(21));
+        })
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_supercluster,
+    bench_many_points,
+    bench_one_million_points
+);
 criterion_main!(benches);

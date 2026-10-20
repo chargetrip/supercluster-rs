@@ -19,6 +19,10 @@ pub enum SuperclusterError {
     #[error("The maximum zoom level cannot be above {}.", MAX_ZOOM_LIMIT)]
     InvalidMaxZoom,
 
+    /// The node size of the KD-tree is 0.
+    #[error("The node size cannot be 0.")]
+    InvalidNodeSize,
+
     /// There are more points than the index can address.
     #[error("The number of points cannot be above {}.", u32::MAX)]
     TooManyPoints,
@@ -33,6 +37,14 @@ mod tests {
         assert_eq!(
             SuperclusterError::InvalidMaxZoom.to_string(),
             format!("The maximum zoom level cannot be above {}.", MAX_ZOOM_LIMIT)
+        );
+    }
+
+    #[test]
+    fn test_invalid_node_size_message() {
+        assert_eq!(
+            SuperclusterError::InvalidNodeSize.to_string(),
+            "The node size cannot be 0."
         );
     }
 

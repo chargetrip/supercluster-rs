@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     supercluster.load_features(features)?;
 
     // Get a tile from the Supercluster instance
-    let tile = supercluster.get_tile(0, 0.0, 0.0).to_feature_collection();
+    let tile = supercluster.get_tile(0, 0, 0).to_feature_collection();
 
     println!("tile: {}", serde_json::to_string(&tile)?);
 
