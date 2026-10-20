@@ -1,4 +1,5 @@
 use std::hint::black_box;
+use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use geojson::{Feature, Geometry};
@@ -105,8 +106,10 @@ fn bench_one_million_points(c: &mut Criterion) {
     let mut supercluster = Supercluster::new(create_options());
     let mut group = c.benchmark_group("one million points");
 
-    // Each load is slow, so the group uses the smallest sample size criterion allows
+    // Each load is slow, so the group uses the smallest sample size criterion allows, with a
+    // longer measurement time so it can still fit that many samples.
     group.sample_size(10);
+    group.measurement_time(Duration::from_secs(60));
 
     group.bench_function("load", |b| {
         b.iter(|| {
