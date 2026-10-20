@@ -16,11 +16,12 @@
 //!
 //! let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
 //!
-//! supercluster.load_features(features).unwrap();
+//! supercluster.load_features(features)?;
 //!
 //! let tile = supercluster.get_tile(0, 0, 0).to_feature_collection();
 //!
 //! assert_eq!(tile.features.len(), 1);
+//! # Ok::<(), supercluster::SuperclusterError>(())
 //! ```
 
 use crate::{Cluster, Item, Supercluster, SuperclusterError, Tile, TileItem};

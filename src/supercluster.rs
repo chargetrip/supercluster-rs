@@ -185,6 +185,9 @@ impl<P> Tile<'_, P> {
 /// once. Loading is CPU-heavy and blocks the thread it runs on, so an application with an async
 /// runtime should run it on a thread of its own. Dropping a large supercluster is slow too, so drop
 /// it away from threads that serve requests.
+///
+/// With the `serde` feature, a supercluster can be written and read back. The data is not checked
+/// when it is read, so data that a supercluster did not write can make queries panic.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Supercluster<P> {
@@ -1383,7 +1386,7 @@ mod tests {
                 };
 
                 let leaves = supercluster.get_leaves(cluster.id, usize::MAX, 0).unwrap();
-                let mut leaves_of_children = vec![];
+                let mut leaves_of_children: Vec<&[f64; 2]> = vec![];
 
                 for child in supercluster.get_children(cluster.id).unwrap() {
                     match child {

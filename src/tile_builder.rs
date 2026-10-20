@@ -3,7 +3,7 @@
 //! Contains the `TileBuilder` trait, which builds the items of a tile while filtering the points
 //! inside clusters and mapping every cluster or point to a type of the caller's choice.
 
-use crate::{Item, Supercluster, SuperclusterError, TileItem};
+use crate::{Cluster, Item, Supercluster, SuperclusterError, TileItem};
 
 /// The number of points below which a filtered cluster is moved to the center of the points that
 /// are left.
@@ -146,20 +146,54 @@ where
         };
 
         if let Some(center) = center {
-            let tile = builder.get_tile_coordinates();
-            let (x, y) = supercluster.normalize(center);
-
-            coordinates = supercluster.get_tile_position(
-                x,
-                y,
-                2f64.powi(tile.z as i32),
-                f64::from(tile.x),
-                f64::from(tile.y),
+            coordinates = get_center_position(
+                supercluster,
+                builder.get_tile_coordinates(),
+                tile_item,
+                cluster,
+                center,
             );
         }
     }
 
     Ok(Some(builder.map(&tile_item.item, &points, coordinates)))
+}
+
+/// Get the position in a tile of the center of the points that are left in a cluster.
+/// A tile on the edge of the world also holds the clusters of the opposite edge, which sit a world
+/// width away, so the center goes in the same copy of the world as the cluster.
+///
+/// # Arguments
+///
+/// - `supercluster`: The supercluster the tile is built from.
+/// - `tile`: The coordinates of the tile.
+/// - `tile_item`: The item of the tile that holds the cluster.
+/// - `cluster`: The cluster of the item.
+/// - `center`: The center of the points that are left, in the coordinate system of the
+///   supercluster.
+///
+/// # Returns
+///
+/// The X and Y position in the tile, in the units of the tile extent.
+fn get_center_position<P>(
+    supercluster: &Supercluster<P>,
+    tile: TileCoordinates,
+    tile_item: &TileItem<'_, P>,
+    cluster: &Cluster,
+    center: [f64; 2],
+) -> [f64; 2] {
+    let z2 = 2f64.powi(tile.z as i32);
+    let (x, y) = supercluster.normalize(center);
+    let (cluster_x, _) = supercluster.normalize([cluster.x, cluster.y]);
+    let shown_x = (tile_item.x / supercluster.options().extent + f64::from(tile.x)) / z2;
+
+    supercluster.get_tile_position(
+        x + (shown_x - cluster_x).round(),
+        y,
+        z2,
+        f64::from(tile.x),
+        f64::from(tile.y),
+    )
 }
 
 /// Find the center of a list of points.
@@ -359,6 +393,38 @@ mod tests {
         // The cluster moves to the center of the points that are left, not of all three.
         assert_eq!(tile[0].1, 2);
         assert_eq!(tile[0].2[0], 272.0);
+    }
+
+    #[test]
+    fn test_build_with_one_point_left_at_the_west_edge() {
+        // Tile 0 only holds these points as a copy that sits left of the tile
+        let points = [(179.0, 10.0, true), (179.5, 10.0, false)];
+        let tile = TileCoordinates { x: 0, y: 0, z: 1 };
+        let filtered = build(&points, tile, None);
+        let unfiltered = build(&[(179.0, 10.0, true), (179.5, 10.0, true)], tile, None);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].1, 1);
+
+        // The cluster moves onto the point and stays left of the tile
+        assert_eq!(filtered[0].2[0], -3.0);
+        assert_eq!(filtered[0].2[1], unfiltered[0].2[1]);
+    }
+
+    #[test]
+    fn test_build_with_one_point_left_at_the_east_edge() {
+        // The last tile only holds these points as a copy that sits right of the tile
+        let points = [(-179.0, 10.0, true), (-179.5, 10.0, false)];
+        let tile = TileCoordinates { x: 1, y: 0, z: 1 };
+        let filtered = build(&points, tile, None);
+        let unfiltered = build(&[(-179.0, 10.0, true), (-179.5, 10.0, true)], tile, None);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].1, 1);
+
+        // The cluster moves onto the point and stays right of the tile
+        assert_eq!(filtered[0].2[0], 515.0);
+        assert_eq!(filtered[0].2[1], unfiltered[0].2[1]);
     }
 
     #[test]

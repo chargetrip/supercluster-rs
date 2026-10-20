@@ -33,7 +33,7 @@ supercluster = "4.0.0"
 No feature is on by default, so the crate only has what clustering needs. You can turn features on:
 
 - `geojson`: support for [GeoJSON](https://docs.rs/geojson) features.
-- `serde`: serialization of the options and of a loaded supercluster.
+- `serde`: serialization of the options and of a loaded supercluster. To read a supercluster back with `serde_json`, enable its `float_roundtrip` feature, or some numbers come back with a tiny difference. The data is not checked when it is read, so only read what a supercluster wrote.
 - `tracing`: reports through the [`tracing`](https://docs.rs/tracing) crate. A load reports a summary at the `debug` level, one event per zoom level at the `trace` level, and a warning for points left out because their coordinates are missing or not finite. The events have fields, such as the number of points. Queries report nothing. Applications that only use the `log` crate get the same events as `log` records.
 
 A `Supercluster` clusters any type and keeps the points as you load them, without copying.

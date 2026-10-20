@@ -35,8 +35,6 @@ pub mod tile_builder;
 
 pub use builder::*;
 pub use error::*;
-#[cfg(feature = "geojson")]
-pub use feature::*;
 pub use range::*;
 pub use supercluster::*;
 pub use tile_builder::*;
