@@ -73,7 +73,7 @@ cargo test --all-features
 To run the tests with a specific feature, use:
 
 ```sh
-cargo test --features cluster_metadata
+cargo test --features geojson
 ```
 
 ### Code Quality Checks

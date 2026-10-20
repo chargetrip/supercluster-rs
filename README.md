@@ -27,49 +27,128 @@ To use the `supercluster` crate in your project, add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-supercluster = "3.0.4"
+supercluster = "4.0.0"
 ```
 
-You can also include additional features, such as logging, by specifying them in your `Cargo.toml`:
+No feature is on by default, so the crate only has what clustering needs. You can turn features on:
 
-```toml
-[dependencies]
-supercluster = { version = "3.0.4", features = ["log", "serde", "cluster_metadata"] }
-```
+- `geojson`: support for [GeoJSON](https://docs.rs/geojson) features.
+- `serde`: serialization of the options and of a loaded supercluster.
+- `tracing`: reports through the [`tracing`](https://docs.rs/tracing) crate. A load reports a summary at the `debug` level, one event per zoom level at the `trace` level, and a warning for points left out because their coordinates are missing or not finite. The events have fields, such as the number of points. Queries report nothing. Applications that only use the `log` crate get the same events as `log` records.
 
-Below is an example of how to create and run a supercluster using the crate.
-This example demonstrates how to build supercluster options, create a new supercluster, and get a tile.
-For more detailed information and advanced usage, please refer to the full [documentation](https://docs.rs/supercluster).
+A `Supercluster` clusters any type and keeps the points as you load them, without copying.
+A closure tells where each point is, so you do not convert or wrap them, and shared data that changes stays shared.
 
 ```rust
-use supercluster::{ CoordinateSystem, Supercluster, SuperclusterError };
+use supercluster::{Item, Supercluster, SuperclusterBuilder, SuperclusterError};
 
 fn main() -> Result<(), SuperclusterError> {
     // Set the configuration settings
-    let options = Supercluster::builder()
+    let options = SuperclusterBuilder::new()
         .radius(40.0)
         .extent(512.0)
         .min_points(2)
         .max_zoom(16)
-        .coordinate_system(CoordinateSystem::LatLng)
         .build();
 
     // Create a new instance with the specified configuration settings
-    let mut cluster = Supercluster::new(options);
+    let mut supercluster = Supercluster::new(options);
 
-    // Create a a list of features
-    let features = Supercluster::feature_builder()
-        .add_point(vec![0.0, 0.0])
-        .build();
+    // Load the longitude and latitude of the points into the supercluster
+    supercluster.load_with(
+        vec![[-77.032, 38.913], [-77.033, 38.913], [0.0, 0.0]],
+        |point| Some(*point),
+    )?;
 
-    // Load a list of features into the supercluster
-    let index = cluster.load(features)?;
+    // Get the clusters and the points that are not clustered of a tile
+    let tile = supercluster.get_tile(0, 0.0, 0.0);
 
-    index.get_tile(0, 0.0, 0.0)?;
+    for tile_item in &tile.items {
+        match &tile_item.item {
+            Item::Cluster(cluster) => println!("{} points at {}, {}", cluster.point_count, tile_item.x, tile_item.y),
+            Item::Point { index, .. } => println!("point {} at {}, {}", index, tile_item.x, tile_item.y),
+        }
+    }
 
     Ok(())
 }
 ```
+
+### GeoJSON
+
+With the `geojson` feature a list of GeoJSON features is loaded as it is, with `load_features`, and what the supercluster returns converts back into GeoJSON.
+
+```toml
+[dependencies]
+supercluster = { version = "4.0.0", features = ["geojson"] }
+```
+
+```rust
+use geojson::{Feature, Geometry};
+use supercluster::{Supercluster, SuperclusterBuilder, SuperclusterError};
+
+fn main() -> Result<(), SuperclusterError> {
+    let features: Vec<Feature> = [[-77.032, 38.913], [-77.033, 38.913]]
+        .into_iter()
+        .map(|point| Feature::from(Geometry::new_point(point)))
+        .collect();
+
+    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+
+    supercluster.load_features(features)?;
+
+    let tile = supercluster.get_tile(0, 0.0, 0.0).to_feature_collection();
+
+    println!("Tile: {:?}", tile);
+
+    Ok(())
+}
+```
+
+### Your own points
+
+Your own types work the same way. The closure returns `None` for a point that has no coordinates, which leaves it out. A point whose coordinates are not finite numbers is left out too.
+
+```rust
+use supercluster::{Supercluster, SuperclusterBuilder};
+
+struct Station {
+    lng: f64,
+    lat: f64,
+}
+
+let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+
+supercluster.load_with(
+    vec![Station { lng: 4.9, lat: 52.37 }, Station { lng: 4.91, lat: 52.37 }],
+    |station| Some([station.lng, station.lat]),
+)?;
+```
+
+### Filtering and mapping tiles
+
+The `TileBuilder` trait builds the items of a tile while it filters the points inside the clusters, for example the ones that match a search, and maps every cluster or point to the type of your response.
+A cluster moves to the center of the points that are left after the filter.
+See the [`tile_builder`](https://github.com/chargetrip/supercluster-rs/blob/main/examples/tile_builder.rs) example.
+
+### Lowering the zoom level to cluster on
+
+`get_tile_with_cluster_max_zoom` and `get_cluster_expansion_zoom_with` take a maximum zoom level to cluster on, which can lower the `max_zoom` of the supercluster for a single request but not raise it.
+
+## Upgrading from 3.x
+
+Version 4 makes the supercluster generic over the type of the points.
+
+- `Supercluster` is now `Supercluster<P>`, and `load(features)` is `load_features(features)` with the `geojson` feature. `load_with(points, coordinates)` loads any other type. Create the options with `SuperclusterBuilder::new()`.
+- The `cluster_metadata` feature is gone, so remove it from your `Cargo.toml`. The GeoJSON features of clusters always have their `cluster`, `cluster_id`, `point_count` and `point_count_abbreviated` properties. The `geojson` feature holds all GeoJSON support and is not on by default anymore, so enable it with `supercluster = { version = "4.0.0", features = ["geojson"] }` if you use GeoJSON features.
+- The queries return `Item`s and a `Tile` instead of GeoJSON. Call `to_feature()` or `to_feature_collection()` to get GeoJSON features, whose tile geometry holds the position in the tile.
+- `get_tile` returns an empty `Tile` instead of the `TileNotFound` error. `SuperclusterError::TreeNotFound` and `TileNotFound` are gone, and unknown clusters give `ClusterNotFound` for `get_children`, `get_leaves` and `get_cluster_expansion_zoom`.
+- `get_leaves` takes the points of a cluster from an index, so it does not walk the clusters anymore. A `limit` of 0 gives no points.
+- The fields of `Supercluster` are private. Use `options()` and `points()`.
+- `FeatureBuilder` is gone. Plain coordinates can be loaded as they are, and `geojson` builds a feature with `Feature::from(Geometry::new_point([lng, lat]))`.
+- `KDBush` is not public anymore.
+- Points without coordinates, such as GeoJSON features that are not points, and points whose coordinates are not finite numbers are left out instead of causing a panic.
+- The `log` feature is now the `tracing` feature. It reports through `tracing`, with fields, and turns the events into `log` records for applications that only use the `log` crate. It logs one summary per load and never logs queries, where version 3 logged every query.
 
 ## Benchmarks
 
@@ -81,7 +160,7 @@ We have several benchmark scenarios to test different aspects of supercluster:
 
 - **Getting a Tile**: Tests the performance of retrieving a tile from the `Supercluster`.
 - **Getting Clusters**: Tests the performance of retrieving clusters for a given bounding box and zoom level.
-- **Loading a Feature Collection**: Tests the performance of loading a `FeatureCollection` into the `Supercluster`.
+- **Loading Points**: Tests the performance of loading points into the `Supercluster`.
 
 For more detailed benchmark scenarios, please refer to the [`benches`](https://github.com/chargetrip/supercluster-rs/tree/main/benches) directory in the repository.
 

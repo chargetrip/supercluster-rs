@@ -2,12 +2,8 @@
 //!
 //! This module contains the builder pattern for the supercluster configuration settings.
 
-use std::{collections::HashMap, hash::BuildHasherDefault};
-
-use geojson::{feature::Id, Feature, Geometry, Value};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use twox_hash::XxHash64;
 
 use crate::CoordinateSystem;
 
@@ -42,75 +38,6 @@ pub struct SuperclusterOptions {
     /// Type of coordinate system for clustering.
     /// The default value is `CoordinateSystem::LatLng`.
     pub coordinate_system: CoordinateSystem,
-}
-
-/// Feature configuration options builder.
-#[derive(Clone, Debug, Default, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub struct FeatureBuilder {
-    /// Points to cluster.
-    pub points: HashMap<String, Vec<f64>, BuildHasherDefault<XxHash64>>,
-}
-
-impl FeatureBuilder {
-    /// Create a new feature builder to set the points.
-    ///
-    /// # Returns
-    ///
-    /// New feature builder.
-    pub fn new() -> Self {
-        FeatureBuilder::default()
-    }
-
-    /// Add a point to the feature builder.
-    /// The point is a vector of two f64 values representing the longitude and latitude.
-    ///
-    /// # Arguments
-    ///
-    /// - `point`: Point to add to the feature builder.
-    ///
-    /// # Returns
-    ///
-    /// The feature builder.
-    pub fn add_point(mut self, point: Vec<f64>) -> Self {
-        self.points.insert(self.points.len().to_string(), point);
-        self
-    }
-
-    /// Add points to the feature builder.
-    /// The points are a vector of vectors of two f64 values representing the longitude and latitude.
-    ///
-    /// # Arguments
-    ///
-    /// - `points`: Points to add to the feature builder.
-    ///
-    /// # Returns
-    ///
-    /// The feature builder.
-    pub fn add_points(mut self, points: Vec<Vec<f64>>) -> Self {
-        for point in points {
-            self.points.insert(self.points.len().to_string(), point);
-        }
-        self
-    }
-
-    /// Build a list of features.
-    ///
-    /// # Returns
-    ///
-    /// List of features.
-    pub fn build(self) -> Vec<Feature> {
-        self.points
-            .into_iter()
-            .map(|(id, point)| Feature {
-                id: Some(Id::String(id)),
-                geometry: Some(Geometry::new(Value::Point(point))),
-                bbox: None,
-                properties: None,
-                foreign_members: None,
-            })
-            .collect()
-    }
 }
 
 /// Supercluster configuration options builder.
@@ -277,16 +204,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_feature_builder_default() {
-        let features = FeatureBuilder::default()
-            .add_point(vec![0.0, 0.0])
-            .add_points(vec![vec![0.0, 1.0]])
-            .build();
-
-        assert_eq!(features.len(), 2);
-    }
-
-    #[test]
     fn test_supercluster_builder_default() {
         let options = SuperclusterBuilder::default().build();
 
@@ -317,6 +234,28 @@ mod tests {
         assert_eq!(options.radius, 50.0);
         assert_eq!(options.extent, 1024.0);
         assert_eq!(options.node_size, 128);
+        assert_eq!(options.coordinate_system, CoordinateSystem::LatLng);
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_options_from_json() {
+        let options: SuperclusterOptions = serde_json::from_str(
+            r#"{
+                "radius": 40.0,
+                "extent": 512.0,
+                "min_points": 1,
+                "node_size": 64,
+                "min_zoom": 2,
+                "max_zoom": 16,
+                "coordinate_system": "LatLng"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(options.min_zoom, 2);
+        assert_eq!(options.max_zoom, 16);
+        assert_eq!(options.min_points, 1);
         assert_eq!(options.coordinate_system, CoordinateSystem::LatLng);
     }
 }

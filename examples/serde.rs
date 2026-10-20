@@ -1,12 +1,14 @@
-use supercluster::{FeatureBuilder, Supercluster, SuperclusterError};
+use std::error::Error;
 
-fn main() -> Result<(), SuperclusterError> {
+use geojson::{Feature, Geometry};
+use supercluster::Supercluster;
+
+fn main() -> Result<(), Box<dyn Error>> {
     // Create a list of features
-    let features = FeatureBuilder::new()
-        .add_point(vec![-77.032, 38.913])
-        .add_point(vec![-77.033, 38.913])
-        .add_point(vec![-77.034, 38.913])
-        .build();
+    let features: Vec<Feature> = [[-77.032, 38.913], [-77.033, 38.913], [-77.034, 38.913]]
+        .into_iter()
+        .map(|point| Feature::from(Geometry::new_point(point)))
+        .collect();
 
     // Create supercluster options from a JSON string
     let options = serde_json::from_str(
@@ -19,20 +21,18 @@ fn main() -> Result<(), SuperclusterError> {
             "max_zoom": 16,
             "coordinate_system": "LatLng"
         }"#,
-    )
-    .unwrap();
+    )?;
 
     // Create a new instance with the specified configuration settings
-    let mut cluster = Supercluster::new(options);
+    let mut supercluster = Supercluster::new(options);
 
     // Load features into the Supercluster instance
-    let index = cluster.load(features)?;
+    supercluster.load_features(features)?;
 
     // Get a tile from the Supercluster instance
-    let tile = index.get_tile(0, 0.0, 0.0)?;
+    let tile = supercluster.get_tile(0, 0.0, 0.0).to_feature_collection();
 
-    let json_string = serde_json::to_string(&tile).unwrap();
-    println!("tile: {}", json_string);
+    println!("tile: {}", serde_json::to_string(&tile)?);
 
     Ok(())
 }

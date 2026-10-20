@@ -5,12 +5,10 @@
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// Array of coordinates with longitude as first value and latitude as second one.
-type Point = [f64; 2];
-
 /// Static spatial index for 2D points based on a flat KD-tree.
 /// The KD-tree is used to perform range and within queries on the points.
 /// The index is built from a list of 2D points and can be queried to find points within a specified bounding box or radius.
+/// It holds up to `u32::MAX` points.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct KDBush {
@@ -20,39 +18,34 @@ pub struct KDBush {
 
     /// A list of point IDs used to reference points in the KD-tree.
     /// The IDs are used to retrieve the original points from the index.
-    pub ids: Vec<usize>,
+    pub ids: Vec<u32>,
 
     /// A flat array containing the X and Y coordinates of all points in interleaved order.
     /// The coordinates are stored as [x1, y1, x2, y2, ..., xn, yn].
     pub coords: Vec<f64>,
 
-    /// A list of 2D points represented as an array of [longitude, latitude] coordinates.
-    /// The points are used to build the KD-tree index.
-    pub points: Vec<Point>,
-
-    /// A list of additional data associated with the points (e.g., properties).
-    /// The data is stored in the same order as the points.
+    /// The values the supercluster keeps for each point or cluster, in the order the points were added.
+    /// The KD-tree does not read them.
     pub data: Vec<f64>,
 }
 
 impl KDBush {
-    /// Create a new KDBush index with the specified node size and the size hint for allocating memory.
+    /// Create a new KDBush index with the specified node size and room for the points that will be added.
     ///
     /// # Arguments
     ///
-    /// - `size_hint`: An estimate of the number of points that will be added to the index.
+    /// - `size`: The number of points that will be added to the index.
     /// - `node_size`: The maximum number of points in a leaf node of the KD-tree.
     ///
     /// # Returns
     ///
     /// A new `KDBush` instance with the given configuration.
-    pub fn new(size_hint: usize, node_size: usize) -> Self {
+    pub fn new(size: usize, node_size: usize) -> Self {
         KDBush {
             node_size,
-            ids: Vec::with_capacity(size_hint),
-            points: Vec::with_capacity(size_hint),
-            coords: Vec::with_capacity(size_hint),
-            data: Vec::with_capacity(size_hint),
+            ids: Vec::new(),
+            coords: Vec::with_capacity(2 * size),
+            data: Vec::new(),
         }
     }
 
@@ -63,7 +56,8 @@ impl KDBush {
     /// - `x`: The X-coordinate of the point (longitude).
     /// - `y`: The Y-coordinate of the point (latitude).
     pub fn add_point(&mut self, x: f64, y: f64) {
-        self.points.push([x, y]);
+        self.coords.push(x);
+        self.coords.push(y);
     }
 
     /// Build the KD-tree index from the added points.
@@ -71,22 +65,14 @@ impl KDBush {
     /// This method constructs the KD-tree index based on the points added to the KDBush instance.
     /// After calling this method, the index will be ready for range and within queries.
     pub fn build_index(&mut self) {
-        #[cfg(feature = "log")]
-        log::debug!("Building KDBush index with {} points", self.points.len());
+        self.ids = (0..(self.coords.len() / 2) as u32).collect();
 
-        self.coords = vec![0.0; 2 * self.points.len()];
-
-        for (i, point) in self.points.iter().enumerate() {
-            self.ids.push(i);
-
-            self.coords[i * 2] = point[0];
-            self.coords[i * 2 + 1] = point[1];
+        if !self.ids.is_empty() {
+            self.sort(0, self.ids.len() - 1, 0);
         }
 
-        self.sort(0, self.ids.len() - 1, 0);
-
-        #[cfg(feature = "log")]
-        log::debug!("KDBush index built successfully");
+        #[cfg(feature = "tracing")]
+        tracing::trace!(points = self.ids.len(), "Built a KDBush index");
     }
 
     /// Find all point indices within the specified bounding box defined by minimum and maximum coordinates.
@@ -102,14 +88,9 @@ impl KDBush {
     ///
     /// A vector of point indices that fall within the specified bounding box.
     pub fn range(&self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<usize> {
-        #[cfg(feature = "log")]
-        log::debug!(
-            "Finding points within range [{}, {}, {}, {}]",
-            min_x,
-            min_y,
-            max_x,
-            max_y
-        );
+        if self.ids.is_empty() {
+            return Vec::new();
+        }
 
         let mut stack = vec![(0, self.ids.len() - 1, 0)];
         let mut result: Vec<usize> = Vec::new();
@@ -123,7 +104,7 @@ impl KDBush {
                     y = self.coords[i * 2 + 1];
 
                     if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
-                        result.push(self.ids[i]);
+                        result.push(self.ids[i] as usize);
                     }
                 }
                 continue;
@@ -134,7 +115,7 @@ impl KDBush {
             y = self.coords[m * 2 + 1];
 
             if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
-                result.push(self.ids[m]);
+                result.push(self.ids[m] as usize);
             }
 
             let next_axis = (axis + 1) % 2;
@@ -163,13 +144,9 @@ impl KDBush {
     ///
     /// A vector of point indices that fall within the specified radius from the query point.
     pub fn within(&self, qx: f64, qy: f64, radius: f64) -> Vec<usize> {
-        #[cfg(feature = "log")]
-        log::debug!(
-            "Finding points within radius {} from query point [{}, {}]",
-            radius,
-            qx,
-            qy
-        );
+        if self.ids.is_empty() {
+            return Vec::new();
+        }
 
         let mut stack = vec![(0, self.ids.len() - 1, 0)];
         let mut result: Vec<usize> = Vec::new();
@@ -183,7 +160,7 @@ impl KDBush {
                     let dst = KDBush::sq_dist(x, y, qx, qy);
 
                     if dst <= r2 {
-                        result.push(self.ids[i]);
+                        result.push(self.ids[i] as usize);
                     }
                 }
 
@@ -195,7 +172,7 @@ impl KDBush {
             let y = self.coords[m * 2 + 1];
 
             if KDBush::sq_dist(x, y, qx, qy) <= r2 {
-                result.push(self.ids[m]);
+                result.push(self.ids[m] as usize);
             }
 
             let next_axis = (axis + 1) % 2;
@@ -491,7 +468,7 @@ mod tests {
         [46.0, 78.0],
     ];
 
-    pub const IDS: [usize; 100] = [
+    pub const IDS: [u32; 100] = [
         97, 74, 95, 30, 77, 38, 76, 27, 80, 55, 72, 90, 88, 48, 43, 46, 65, 39, 62, 93, 9, 96, 47,
         8, 3, 12, 15, 14, 21, 41, 36, 40, 69, 56, 85, 78, 17, 71, 44, 19, 18, 13, 99, 24, 67, 33,
         37, 49, 54, 57, 98, 45, 23, 31, 66, 68, 0, 32, 5, 51, 75, 73, 84, 35, 81, 22, 61, 89, 1,
@@ -517,6 +494,34 @@ mod tests {
     ];
 
     #[test]
+    fn test_build_index_without_points() {
+        let mut index = KDBush::new(0, 10);
+
+        index.build_index();
+
+        assert!(index.ids.is_empty());
+        assert!(index.coords.is_empty());
+    }
+
+    #[test]
+    fn test_range_without_points() {
+        let mut index = KDBush::new(0, 10);
+
+        index.build_index();
+
+        assert!(index.range(0.0, 0.0, 100.0, 100.0).is_empty());
+    }
+
+    #[test]
+    fn test_within_without_points() {
+        let mut index = KDBush::new(0, 10);
+
+        index.build_index();
+
+        assert!(index.within(50.0, 50.0, 100.0).is_empty());
+    }
+
+    #[test]
     fn test_build_index() {
         let mut index = KDBush::new(POINTS.len(), 10);
 
@@ -527,9 +532,9 @@ mod tests {
         index.build_index();
 
         assert_eq!(index.node_size, 10);
-        assert!(!index.points.is_empty());
+        assert_eq!(index.coords.len(), 2 * POINTS.len());
 
-        let expected_ids: Vec<usize> = IDS.to_vec();
+        let expected_ids: Vec<u32> = IDS.to_vec();
         let expected_coords: Vec<f64> = COORDS.to_vec();
 
         assert_eq!(index.ids, expected_ids);

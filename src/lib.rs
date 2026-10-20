@@ -28,51 +28,111 @@
 //!
 //! ```toml
 //! [dependencies]
-//! supercluster = "3.0.4"
+//! supercluster = "4.0.0"
 //! ```
 //!
-//! You can also include additional features, such as logging, by specifying them in your `Cargo.toml`:
+//! ## Features
 //!
-//! ```toml
-//! [dependencies]
-//! supercluster = { version = "3.0.4", features = ["log", "serde", "cluster_metadata"] }
-//! ```
+//! - `geojson`: support for [GeoJSON](https://docs.rs/geojson) features, see the `feature` module.
+//! - `serde`: serialization of the options and of a loaded supercluster.
+//! - `tracing`: reports through the [`tracing`](https://docs.rs/tracing) crate. A load reports a
+//!   summary at the `debug` level, one event per zoom level at the `trace` level, and a warning for
+//!   points left out because their coordinates are missing or not finite. The events have fields,
+//!   such as the number of points. Queries report nothing. Applications that only use the `log`
+//!   crate get the same events as `log` records.
 //!
-//! Below is an example of how to create and run a supercluster using the crate.
+//! ## Points
 //!
-//! This example demonstrates how to build supercluster options, create a new supercluster, and get a tile.
+//! A [`Supercluster`] clusters any type and keeps the points as you load them, without copying. A
+//! closure tells where each point is, so you do not convert or wrap them, and shared data that
+//! changes stays shared.
 //!
 //! ```rust
-//! use supercluster::{ CoordinateSystem, Supercluster, SuperclusterError };
+//! use supercluster::{Item, Supercluster, SuperclusterBuilder, SuperclusterError};
 //!
 //! fn main() -> Result<(), SuperclusterError> {
 //!     // Set the configuration settings
-//!     let options = Supercluster::builder()
+//!     let options = SuperclusterBuilder::new()
 //!         .radius(40.0)
 //!         .extent(512.0)
 //!         .min_points(2)
 //!         .max_zoom(16)
-//!         .coordinate_system(CoordinateSystem::LatLng)
 //!         .build();
 //!
 //!     // Create a new instance with the specified configuration settings
-//!     let mut cluster = Supercluster::new(options);
+//!     let mut supercluster = Supercluster::new(options);
 //!
-//!     // Create a a list of features
-//!     let features = Supercluster::feature_builder()
-//!         .add_point(vec![0.0, 0.0])
-//!         .build();
+//!     // Load the longitude and latitude of the points into the supercluster
+//!     supercluster.load_with(
+//!         vec![[-77.032, 38.913], [-77.033, 38.913], [0.0, 0.0]],
+//!         |point| Some(*point),
+//!     )?;
 //!
-//!     // Load a list of features into the supercluster
-//!     let index = cluster.load(features)?;
+//!     // Get the clusters and the points that are not clustered of a tile
+//!     let tile = supercluster.get_tile(0, 0.0, 0.0);
 //!
-//!     if let Err(err) = index.get_tile(0, 0.0, 0.0) {
-//!        println!("Error: {}", err);
+//!     assert_eq!(tile.items.len(), 2);
+//!
+//!     for tile_item in &tile.items {
+//!         match &tile_item.item {
+//!             Item::Cluster(cluster) => println!("{} points at {}, {}", cluster.point_count, tile_item.x, tile_item.y),
+//!             Item::Point { index, .. } => println!("point {} at {}, {}", index, tile_item.x, tile_item.y),
+//!         }
 //!     }
 //!
 //!     Ok(())
 //! }
 //! ```
+//!
+//! Your own types work the same way. The closure returns `None` for a point that has no
+//! coordinates, which leaves it out. A point whose coordinates are not finite numbers is left out
+//! too.
+//!
+//! ```rust
+//! use supercluster::{Item, Supercluster, SuperclusterBuilder};
+//!
+//! struct Station {
+//!     name: String,
+//!     lng: f64,
+//!     lat: f64,
+//! }
+//!
+//! let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+//!
+//! supercluster
+//!     .load_with(
+//!         vec![
+//!             Station { name: "A".to_string(), lng: 4.9, lat: 52.37 },
+//!             Station { name: "B".to_string(), lng: 4.91, lat: 52.37 },
+//!         ],
+//!         |station| Some([station.lng, station.lat]),
+//!     )
+//!     .unwrap();
+//!
+//! // The two stations are close, so the tile holds a cluster of them
+//! let tile = supercluster.get_tile(0, 0.0, 0.0);
+//! let Item::Cluster(cluster) = &tile.items[0].item else {
+//!     panic!("expected a cluster");
+//! };
+//!
+//! // The stations of the cluster, as they were loaded
+//! let mut names: Vec<&str> = supercluster
+//!     .get_leaves(cluster.id, 10, 0)
+//!     .unwrap()
+//!     .iter()
+//!     .map(|station| station.name.as_str())
+//!     .collect();
+//!
+//! names.sort();
+//!
+//! assert_eq!(names, ["A", "B"]);
+//! ```
+//!
+//! ## Filtering and mapping tiles
+//!
+//! The [`TileBuilder`] trait builds the items of a tile while it filters the points inside the
+//! clusters, for example the ones that match a search, and maps every cluster or point to the type
+//! of your response.
 //!
 //! ## Benchmarks
 //!
@@ -84,7 +144,7 @@
 //!
 //! - **Getting a Tile**: Tests the performance of retrieving a tile from the `Supercluster`.
 //! - **Getting Clusters**: Tests the performance of retrieving clusters for a given bounding box and zoom level.
-//! - **Loading a Feature Collection**: Tests the performance of loading a `FeatureCollection` into the `Supercluster`.
+//! - **Loading Points**: Tests the performance of loading points into the `Supercluster`.
 //!
 //! For more detailed benchmark scenarios, please refer to the [`benches`](https://github.com/chargetrip/supercluster-rs/tree/main/benches) directory in the repository.
 //!
@@ -112,9 +172,15 @@ pub mod builder;
 /// This module contains the error types for the supercluster crate.
 pub mod error;
 
+/// GeoJSON feature module.
+/// This module contains the GeoJSON support of the supercluster crate.
+/// It is available with the `geojson` feature.
+#[cfg(feature = "geojson")]
+pub mod feature;
+
 /// KDBush module.
-/// This module contains the KDBush implementation for the supercluster crate.
-pub mod kdbush;
+/// This module contains the KDBush implementation the supercluster uses to find points.
+mod kdbush;
 
 /// Range module.
 /// This module contains the range implementation for the supercluster crate.
@@ -124,8 +190,14 @@ pub mod range;
 /// This module contains the supercluster implementation for the supercluster crate.
 pub mod supercluster;
 
+/// Tile builder module.
+/// This module contains the tile builder, which filters and maps the items of a tile.
+pub mod tile_builder;
+
 pub use builder::*;
 pub use error::*;
-pub use kdbush::*;
+#[cfg(feature = "geojson")]
+pub use feature::*;
 pub use range::*;
 pub use supercluster::*;
+pub use tile_builder::*;
