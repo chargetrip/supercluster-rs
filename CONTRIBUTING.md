@@ -82,6 +82,25 @@ To run the tests with a specific feature, use:
 cargo test --features geojson
 ```
 
+The crate must also build with every combination of features, which CI checks with:
+
+```sh
+for features in geojson serde tracing "geojson serde tracing"; do
+  cargo check --locked --all-targets --no-default-features --features "$features"
+done
+```
+
+To run a single unit test or integration test while you work, filter by name instead of running the
+whole suite:
+
+```sh
+# A unit test, in src/**/mod tests
+cargo test --lib test_get_tile_without_loaded_points
+
+# An integration test, in tests/<file>.rs
+cargo test --test test_supercluster test_cluster_expansion_zoom
+```
+
 ### Code Quality Checks
 
 Run [clippy](https://github.com/rust-lang/rust-clippy) to lint the code:
@@ -96,12 +115,39 @@ Run [rustfmt](https://github.com/rust-lang/rustfmt) to format the code:
 cargo fmt
 ```
 
+Check formatting without changing any files, as CI does:
+
+```sh
+cargo fmt -- --check
+```
+
 ### Documentation
 
 Generate the documentation in HTML format, including the items behind features:
 
 ```bash
 cargo doc --all-features --open
+```
+
+CI also fails the build on any rustdoc warning, such as a missing doc comment:
+
+```sh
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features
+```
+
+### Coverage
+
+CI measures test coverage with [`cargo-tarpaulin`](https://github.com/xd009642/tarpaulin). To run it
+locally, install it once:
+
+```sh
+cargo install --locked cargo-tarpaulin
+```
+
+Then run the same check CI runs:
+
+```sh
+cargo tarpaulin --tests --bins --all-targets --all-features --locked
 ```
 
 ### Benchmarks
