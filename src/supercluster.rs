@@ -63,12 +63,45 @@ pub enum CoordinateSystem {
     },
 }
 
+/// The identifier of a cluster.
+///
+/// A client can send the number back, for example after reading it from the GeoJSON property
+/// `cluster_id`, and `ClusterId::new` or `From` turns it into an identifier again. A number that
+/// is not the identifier of a cluster of the supercluster gives a `ClusterNotFound` error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(transparent))]
+pub struct ClusterId(pub(crate) usize);
+
+impl ClusterId {
+    /// Create a cluster identifier from its number, as `get` returns it.
+    pub fn new(id: usize) -> Self {
+        ClusterId(id)
+    }
+
+    /// Get the number of the cluster identifier.
+    pub fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl From<usize> for ClusterId {
+    fn from(id: usize) -> Self {
+        ClusterId(id)
+    }
+}
+
+impl From<ClusterId> for usize {
+    fn from(id: ClusterId) -> Self {
+        id.0
+    }
+}
+
 /// A cluster of points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Cluster {
     /// The unique identifier of the cluster.
-    pub id: usize,
+    pub id: ClusterId,
 
     /// The number of points in the cluster.
     pub point_count: usize,
@@ -84,10 +117,6 @@ pub struct Cluster {
 
 impl Cluster {
     /// Get the number of points as a short text, for example `1.5k` for 1500 points.
-    ///
-    /// # Returns
-    ///
-    /// The number of points, abbreviated from 1000 points on.
     pub fn point_count_abbreviated(&self) -> String {
         let count = self.point_count as f64;
 
@@ -167,16 +196,12 @@ impl<P> Clone for Tile<'_, P> {
 
 impl<P> Tile<'_, P> {
     /// Check whether the tile has no items.
-    ///
-    /// # Returns
-    ///
-    /// `true` if the tile has no items, otherwise `false`.
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
 }
 
-/// A spatial clustering configuration and data structure.
+/// A spatial clustering configuration and data structure, built once by `load`.
 ///
 /// The points are kept as they are loaded, so a point type that shares its data, such as an
 /// `Arc`, is not copied.
@@ -211,117 +236,126 @@ pub struct Supercluster<P> {
 }
 
 impl<P> Supercluster<P> {
-    /// Create a new instance of `Supercluster` with the specified configuration settings.
+    /// Load the points into a new supercluster, which clusters them on every zoom level.
+    /// The points are clustered on the maximum zoom level, and the results are clustered on previous
+    /// zoom levels, which results in a cluster hierarchy across zoom levels.
     ///
-    /// # Arguments
+    /// `get_coordinates` returns the coordinates of a point in the coordinate system of the options,
+    /// the longitude and latitude for `LatLng`. It runs once for every point, in order. A point that
+    /// gets `None`, or coordinates that are not finite numbers, is left out of the clustering.
     ///
-    /// - `options`: The configuration options for Supercluster.
+    /// This is CPU-heavy and blocks the thread it runs on. To load other points, load a new
+    /// supercluster, and drop the old one first if memory is tight.
     ///
-    /// # Returns
+    /// # Errors
     ///
-    /// New `Supercluster` instance with the given configuration.
-    pub fn new(options: SuperclusterOptions) -> Self {
+    /// Returns `SuperclusterError::TooManyPoints` if there are more than `u32::MAX` points.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use supercluster::{Supercluster, SuperclusterOptions};
+    ///
+    /// struct Station {
+    ///     lng: f64,
+    ///     lat: f64,
+    /// }
+    ///
+    /// let stations = vec![Station { lng: 4.9, lat: 52.37 }, Station { lng: 4.91, lat: 52.37 }];
+    /// let supercluster = Supercluster::load(SuperclusterOptions::default(), stations, |station| {
+    ///     Some([station.lng, station.lat])
+    /// })?;
+    ///
+    /// assert_eq!(supercluster.points().len(), 2);
+    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// ```
+    pub fn load<F>(
+        options: SuperclusterOptions,
+        points: Vec<P>,
+        get_coordinates: F,
+    ) -> Result<Self, SuperclusterError>
+    where
+        F: FnMut(&P) -> Option<[f64; 2]>,
+    {
+        if u32::try_from(points.len()).is_err() {
+            return Err(SuperclusterError::TooManyPoints);
+        }
+
         let trees = (0..options.max_zoom as usize + 2)
             .map(|_| KDBush::new(0, options.node_size))
             .collect();
 
-        Supercluster {
+        let mut supercluster = Supercluster {
             options,
             trees,
-            points: vec![],
+            points,
             leaves: vec![],
-            leaf_ranges: HashMap::default(),
-        }
+            leaf_ranges: LeafRanges::default(),
+        };
+
+        supercluster.index(get_coordinates)?;
+
+        Ok(supercluster)
     }
 
     /// Get the configuration settings.
-    ///
-    /// # Returns
-    ///
-    /// The configuration options of the supercluster.
     pub fn options(&self) -> &SuperclusterOptions {
         &self.options
     }
 
     /// Get the points that were loaded.
-    ///
-    /// # Returns
-    ///
-    /// The points, in the order they were loaded.
     pub fn points(&self) -> &[P] {
         &self.points
     }
 
-    /// Retrieve clustered items within the specified bounding box and zoom level.
+    /// Get a view whose queries cluster up to `cluster_max_zoom` instead of the `max_zoom` of the
+    /// options. It can lower the `max_zoom` but not raise it. Above that zoom level, the view
+    /// returns the individual points instead of clusters.
     ///
-    /// # Arguments
+    /// # Examples
     ///
-    /// - `bbox`: The bounding box as an array of four coordinates `[min_lng, min_lat, max_lng, max_lat]`,
-    ///   or `[min_x, min_y, max_x, max_y]` for the `Cartesian` coordinate system.
-    /// - `zoom`: The zoom level at which to retrieve clusters.
+    /// ```
+    /// use supercluster::{Item, Supercluster, SuperclusterOptions};
     ///
-    /// # Returns
+    /// let points = vec![[10.0, 50.0], [12.0, 50.0]];
+    /// let supercluster =
+    ///     Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))?;
     ///
-    /// List of the clusters and the points that are not clustered within the specified bounding box and zoom level.
-    pub fn get_clusters(&self, bbox: [f64; 4], zoom: u8) -> Vec<Item<'_, P>> {
-        let tree = &self.trees[self.tree_index(zoom, self.options.max_zoom)];
-
-        let ids = match &self.options.coordinate_system {
-            CoordinateSystem::Cartesian { range } => tree.range(
-                range.normalize(bbox[0]),
-                range.normalize(bbox[1]),
-                range.normalize(bbox[2]),
-                range.normalize(bbox[3]),
-            ),
-            CoordinateSystem::LatLng => {
-                let mut min_lng = ((((bbox[0] + 180.0) % 360.0) + 360.0) % 360.0) - 180.0;
-                let min_lat = bbox[1].clamp(-90.0, 90.0);
-                let mut max_lng = if bbox[2] == 180.0 {
-                    180.0
-                } else {
-                    ((((bbox[2] + 180.0) % 360.0) + 360.0) % 360.0) - 180.0
-                };
-                let max_lat = bbox[3].clamp(-90.0, 90.0);
-
-                if bbox[2] - bbox[0] >= 360.0 {
-                    min_lng = -180.0;
-                    max_lng = 180.0;
-                } else if min_lng > max_lng {
-                    let mut eastern_hem =
-                        self.get_clusters([min_lng, min_lat, 180.0, max_lat], zoom);
-                    let western_hem = self.get_clusters([-180.0, min_lat, max_lng, max_lat], zoom);
-
-                    eastern_hem.extend(western_hem);
-
-                    return eastern_hem;
-                }
-
-                tree.range(
-                    convert_longitude_to_spherical_mercator(min_lng),
-                    convert_latitude_to_spherical_mercator(max_lat),
-                    convert_longitude_to_spherical_mercator(max_lng),
-                    convert_latitude_to_spherical_mercator(min_lat),
-                )
-            }
-        };
-
-        ids.into_iter()
-            .map(|id| self.get_item(&tree.data, id * STRIDE))
-            .collect()
+    /// // The two points form a cluster on zoom level 1, unless the view stops clustering at 0
+    /// let items = supercluster.with_cluster_max_zoom(0).clusters([-180.0, -90.0, 180.0, 90.0], 1);
+    ///
+    /// assert!(items.iter().all(|item| matches!(item, Item::Point { .. })));
+    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// ```
+    pub fn with_cluster_max_zoom(&self, cluster_max_zoom: u8) -> SuperclusterView<'_, P> {
+        SuperclusterView {
+            supercluster: self,
+            cluster_max_zoom: cluster_max_zoom.min(self.options.max_zoom),
+        }
     }
 
-    /// Retrieve the children of a cluster.
-    /// The cluster ID is the unique identifier of the cluster.
+    /// Get a view that clusters up to the `max_zoom` of the options, which the queries of the
+    /// supercluster itself use.
+    pub(crate) fn view(&self) -> SuperclusterView<'_, P> {
+        self.with_cluster_max_zoom(self.options.max_zoom)
+    }
+
+    /// Retrieve the clusters, and the points that are not clustered, within a bounding box at a
+    /// zoom level. `bbox` is `[min_lng, min_lat, max_lng, max_lat]`, or `[min_x, min_y, max_x,
+    /// max_y]` for the `Cartesian` coordinate system. A box that crosses the antimeridian, with
+    /// `min_lng` above `max_lng`, holds both sides.
+    pub fn clusters(&self, bbox: [f64; 4], zoom: u8) -> Vec<Item<'_, P>> {
+        self.view().clusters(bbox, zoom)
+    }
+
+    /// Retrieve the clusters and points a cluster is made of, on the zoom level after the one it
+    /// comes from.
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// - `cluster_id`: The unique identifier of the cluster.
-    ///
-    /// # Returns
-    ///
-    /// The clusters and points the cluster is made of, otherwise an error if there is no such cluster.
-    pub fn get_children(&self, cluster_id: usize) -> Result<Vec<Item<'_, P>>, SuperclusterError> {
-        let (zoom, offsets) = self.find_children(cluster_id, &mut vec![], &mut vec![])?;
+    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
+    pub fn children(&self, cluster_id: ClusterId) -> Result<Vec<Item<'_, P>>, SuperclusterError> {
+        let (zoom, offsets) = self.find_children(cluster_id.0, &mut vec![], &mut vec![])?;
         let data = &self.trees[zoom].data;
 
         Ok(offsets
@@ -330,251 +364,135 @@ impl<P> Supercluster<P> {
             .collect())
     }
 
-    /// Retrieve the individual points within a cluster.
-    /// The points of a cluster always come in the same order.
+    /// Retrieve the points of a cluster, as they were loaded.
+    /// The points of a cluster always come in the same order, so `skip` and `take` page through them.
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// - `cluster_id`: The unique identifier of the cluster.
-    /// - `limit`: The maximum number of points to retrieve.
-    /// - `offset`: The number of points to skip before the first one to retrieve.
+    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
     ///
-    /// # Returns
+    /// # Examples
     ///
-    /// The points within the cluster, otherwise an error if there is no such cluster.
-    pub fn get_leaves(
+    /// ```
+    /// use supercluster::{Item, Supercluster, SuperclusterOptions};
+    ///
+    /// let points = vec![[10.0, 50.0], [10.001, 50.0], [10.002, 50.0]];
+    /// let supercluster =
+    ///     Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))?;
+    ///
+    /// if let Item::Cluster(cluster) = supercluster.tile(0, 0, 0).items[0].item {
+    ///     // The second page of two points holds the last point
+    ///     let page: Vec<_> = supercluster.leaves(cluster.id)?.skip(2).take(2).collect();
+    ///
+    ///     assert_eq!(page.len(), 1);
+    /// }
+    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// ```
+    pub fn leaves(
         &self,
-        cluster_id: usize,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<&P>, SuperclusterError> {
-        Ok(self
-            .iter_leaf_indices(cluster_id)?
-            .skip(offset)
-            .take(limit)
-            .map(|index| &self.points[index])
-            .collect())
+        cluster_id: ClusterId,
+    ) -> Result<impl ExactSizeIterator<Item = &P> + '_, SuperclusterError> {
+        let &range = self
+            .leaf_ranges
+            .get(&cluster_id.0)
+            .ok_or(SuperclusterError::ClusterNotFound)?;
+
+        Ok(self.leaf_indices(range).map(|index| &self.points[index]))
     }
 
-    /// Retrieve the items within a tile at the given zoom level and tile coordinates.
-    /// The tile is a square area of the map. The items also include the ones of a buffer around
-    /// the tile, so clusters and points on its edge are not cut off. For `LatLng`, the first and
-    /// last tile also hold the items of the opposite edge, across the antimeridian. `Cartesian`
-    /// does not wrap, because the two ends of its `DataRange` are not next to each other.
+    /// Retrieve the items of the tile at zoom level `z`, `x` tiles from the left and `y` tiles from
+    /// the top. The items also include the ones of a buffer around the tile, so clusters and points
+    /// on its edge are not cut off. For `LatLng`, the first and last tile also hold the items of the
+    /// opposite edge, across the antimeridian. `Cartesian` does not wrap, because the two ends of
+    /// its `DataRange` are not next to each other. A tile with nothing in it has no items.
     ///
-    /// # Arguments
+    /// # Examples
     ///
-    /// - `z`: The zoom level of the tile.
-    /// - `x`: The X coordinate of the tile, counted from the left.
-    /// - `y`: The Y coordinate of the tile, counted from the top.
+    /// ```
+    /// use supercluster::{Item, Supercluster, SuperclusterOptions};
     ///
-    /// # Returns
+    /// let points = vec![[10.0, 50.0], [12.0, 50.0], [-100.0, -30.0]];
+    /// let supercluster =
+    ///     Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))?;
     ///
-    /// The items within the specified tile, which has none if there is nothing in the tile.
-    pub fn get_tile(&self, z: u8, x: u32, y: u32) -> Tile<'_, P> {
-        self.get_tile_with_cluster_max_zoom(z, x, y, None)
+    /// for tile_item in &supercluster.tile(0, 0, 0).items {
+    ///     match tile_item.item {
+    ///         Item::Cluster(cluster) => println!("{} points", cluster.point_count),
+    ///         Item::Point { index, .. } => println!("point {index}"),
+    ///     }
+    /// }
+    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// ```
+    pub fn tile(&self, z: u8, x: u32, y: u32) -> Tile<'_, P> {
+        self.view().tile(z, x, y)
     }
 
-    /// Retrieve the items within a tile, like `get_tile`, but let the caller lower the zoom
-    /// level up to which points are clustered.
-    /// Above that zoom level the tile holds the individual points instead of clusters.
+    /// Determine the zoom level at which a cluster expands, where it splits into more than one
+    /// cluster or point. A map zooms in to it when the user clicks the cluster.
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// - `z`: The zoom level of the tile.
-    /// - `x`: The X coordinate of the tile, counted from the left.
-    /// - `y`: The Y coordinate of the tile, counted from the top.
-    /// - `cluster_max_zoom`: Maximum zoom level to cluster on. It can lower the configured
-    ///   `max_zoom` but not raise it. `None` keeps the configured `max_zoom`.
-    ///
-    /// # Returns
-    ///
-    /// The items within the specified tile, which has none if there is nothing in the tile.
-    pub fn get_tile_with_cluster_max_zoom(
-        &self,
-        z: u8,
-        x: u32,
-        y: u32,
-        cluster_max_zoom: Option<u8>,
-    ) -> Tile<'_, P> {
-        let tree = &self.trees[self.tree_index(z, self.cluster_max_zoom(cluster_max_zoom))];
-        let (x, y) = (f64::from(x), f64::from(y));
-        let z2 = tiles_per_axis(z);
-        let p = self.options.radius / self.options.extent;
-        let top = (y - p) / z2;
-        let bottom = (y + 1.0 + p) / z2;
-
-        let mut items = vec![];
-
-        let ids = tree.range((x - p) / z2, top, (x + 1.0 + p) / z2, bottom);
-        self.add_tile_items(&ids, &tree.data, x, y, z2, &mut items);
-
-        // For `LatLng`, the first and last tile also show the other edge.
-        // The two ends of a `Cartesian` range are not next to each other, so they do not wrap.
-        if self.options.coordinate_system == CoordinateSystem::LatLng {
-            if x == 0.0 {
-                let ids = tree.range(1.0 - p / z2, top, 1.0, bottom);
-                self.add_tile_items(&ids, &tree.data, z2, y, z2, &mut items);
-            }
-
-            if x == z2 - 1.0 {
-                let ids = tree.range(0.0, top, p / z2, bottom);
-                self.add_tile_items(&ids, &tree.data, -1.0, y, z2, &mut items);
-            }
-        }
-
-        Tile { items }
-    }
-
-    /// Determine the zoom level at which a specific cluster expands.
-    /// The cluster expands at the zoom level where it is split into more than one cluster or point.
-    ///
-    /// # Arguments
-    ///
-    /// - `cluster_id`: The unique identifier of the cluster.
-    ///
-    /// # Returns
-    ///
-    /// The zoom level at which the cluster expands, otherwise an error if there is no such cluster.
-    pub fn get_cluster_expansion_zoom(
-        &self,
-        cluster_id: usize,
-    ) -> Result<usize, SuperclusterError> {
-        self.get_cluster_expansion_zoom_with(cluster_id, None, |_| true)
+    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
+    pub fn cluster_expansion_zoom(&self, cluster_id: ClusterId) -> Result<u8, SuperclusterError> {
+        self.view().cluster_expansion_zoom(cluster_id)
     }
 
     /// Determine the zoom level at which a specific cluster expands, like
-    /// `get_cluster_expansion_zoom`, but let the caller lower the zoom level up to which points are
-    /// clustered and leave points out.
+    /// `cluster_expansion_zoom`, but count only the points that pass a filter.
     /// A cluster counts when one of its points passes the filter. When a single cluster or point
     /// is left after the filter, the cluster does not look different on the next zoom level, so the
     /// search goes on with what is left.
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// - `cluster_id`: The unique identifier of the cluster.
-    /// - `cluster_max_zoom`: Maximum zoom level to cluster on. It can lower the configured
-    ///   `max_zoom` but not raise it. `None` keeps the configured `max_zoom`.
-    /// - `filter`: A closure that takes a point and returns whether it counts.
-    ///
-    /// # Returns
-    ///
-    /// The zoom level at which the cluster expands, otherwise an error if there is no such cluster.
-    /// Above the zoom level to cluster on, this is that zoom level plus one.
-    pub fn get_cluster_expansion_zoom_with<F>(
+    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
+    pub fn cluster_expansion_zoom_filtered<F>(
         &self,
-        mut cluster_id: usize,
-        cluster_max_zoom: Option<u8>,
+        cluster_id: ClusterId,
         filter: F,
-    ) -> Result<usize, SuperclusterError>
+    ) -> Result<u8, SuperclusterError>
     where
         F: Fn(&P) -> bool,
     {
-        let max_zoom = self.cluster_max_zoom(cluster_max_zoom) as usize;
-
-        // Buffers for the neighbor search, reused for every zoom level the cluster ascends through
-        let mut stack = vec![];
-        let mut neighbor_ids = vec![];
-
-        loop {
-            let (origin_zoom, offsets) =
-                self.find_children(cluster_id, &mut stack, &mut neighbor_ids)?;
-
-            // Above the maximum zoom level every cluster is split into its points.
-            if origin_zoom > max_zoom {
-                return Ok(max_zoom + 1);
-            }
-
-            let data = &self.trees[origin_zoom].data;
-
-            // Two available children are enough to know the cluster expands here
-            let mut first = None;
-            let mut second = None;
-
-            for offset in offsets {
-                if self.is_available(data, offset, &filter)? {
-                    if first.is_none() {
-                        first = Some(offset);
-                    } else {
-                        second = Some(offset);
-                        break;
-                    }
-                }
-            }
-
-            match (first, second) {
-                (Some(offset), None) if data[offset + OFFSET_NUM] > 1.0 => {
-                    cluster_id = data[offset + OFFSET_ID] as usize;
-                }
-                _ => return Ok(origin_zoom),
-            }
-        }
+        self.view()
+            .cluster_expansion_zoom_filtered(cluster_id, filter)
     }
 
-    /// Check whether a child of a cluster has a point that passes the filter.
-    ///
-    /// # Arguments
-    ///
-    /// - `data`: A reference to the flat numeric arrays representing the children.
-    /// - `offset`: The offset of the child in the data.
-    /// - `filter`: A closure that takes a point and returns whether it counts.
-    ///
-    /// # Returns
-    ///
-    /// `true` if the child is a point that passes, or a cluster with a point that passes.
-    /// It is an error if the points of a cluster are not indexed.
-    fn is_available<F>(
-        &self,
-        data: &[f64],
-        offset: usize,
-        filter: &F,
-    ) -> Result<bool, SuperclusterError>
+    /// Check whether the child at `offset` in `data` is a point that passes the filter, or a cluster
+    /// with a point that passes.
+    fn is_available<F>(&self, data: &[f64], offset: usize, filter: &F) -> bool
     where
         F: Fn(&P) -> bool,
     {
         let id = data[offset + OFFSET_ID] as usize;
 
         if data[offset + OFFSET_NUM] > 1.0 {
-            Ok(self
-                .iter_leaf_indices(id)?
-                .any(|index| filter(&self.points[index])))
+            self.cluster_leaf_indices(ClusterId(id))
+                .any(|index| filter(&self.points[index]))
         } else {
-            Ok(filter(&self.points[id]))
+            filter(&self.points[id])
         }
     }
 
-    /// Iterate over the indexes of the points of a cluster.
-    ///
-    /// # Arguments
-    ///
-    /// - `cluster_id`: The unique identifier of the cluster.
-    ///
-    /// # Returns
-    ///
-    /// The indexes of the points of the cluster, otherwise an error if there is no such cluster.
-    pub(crate) fn iter_leaf_indices(
+    /// Iterate over the indexes of the points of a cluster that the supercluster returned.
+    /// It panics only if the leaves of the supercluster are broken, because every cluster it
+    /// returns has its points indexed.
+    pub(crate) fn cluster_leaf_indices(
         &self,
-        cluster_id: usize,
-    ) -> Result<impl Iterator<Item = usize> + '_, SuperclusterError> {
-        let &(start, len) = self
-            .leaf_ranges
-            .get(&cluster_id)
-            .ok_or(SuperclusterError::ClusterNotFound)?;
-        let leaves = &self.leaves[start as usize..(start + len) as usize];
-
-        Ok(leaves.iter().map(|&index| index as usize))
+        cluster_id: ClusterId,
+    ) -> impl ExactSizeIterator<Item = usize> + '_ {
+        self.leaf_indices(self.leaf_ranges[&cluster_id.0])
     }
 
-    /// Get the coordinates of a point that was loaded, from the index of the supercluster.
-    ///
-    /// # Arguments
-    ///
-    /// - `index`: The index of the point in the list that was loaded.
-    ///
-    /// # Returns
-    ///
-    /// The coordinates in the coordinate system of the supercluster, or `None` if the point was left
-    /// out of the clustering.
+    /// Iterate over the indexes of the points in a range of the leaves, given as start and length.
+    fn leaf_indices(&self, (start, len): (u32, u32)) -> impl ExactSizeIterator<Item = usize> + '_ {
+        self.leaves[start as usize..(start + len) as usize]
+            .iter()
+            .map(|&index| index as usize)
+    }
+
+    /// Get the coordinates of the point at `index` in the list that was loaded, from the index of
+    /// the supercluster, or `None` if the point was left out of the clustering.
     pub(crate) fn get_point_coordinates(&self, index: usize) -> Option<[f64; 2]> {
         let data = &self.trees[self.options.max_zoom as usize + 1].data;
 
@@ -600,18 +518,11 @@ impl<P> Supercluster<P> {
         None
     }
 
-    /// Find the children of a cluster in the KD-tree they are in.
+    /// Find the children of a cluster in the KD-tree they are in. `stack` and `neighbor_ids` are
+    /// buffers for the neighbor search that the caller reuses between calls.
     ///
-    /// # Arguments
-    ///
-    /// - `cluster_id`: The unique identifier of the cluster.
-    /// - `stack`: A buffer for the neighbor search, reused between calls.
-    /// - `neighbor_ids`: A buffer for the neighbor search, reused between calls.
-    ///
-    /// # Returns
-    ///
-    /// The zoom level of the KD-tree, which is also the zoom level the cluster originates from,
-    /// and the offsets of the children in its data. It is an error if there is no such cluster.
+    /// Returns the zoom level of the KD-tree, which is the one the cluster originates from, and the
+    /// offsets of the children in its data. It is an error if there is no such cluster.
     fn find_children(
         &self,
         cluster_id: usize,
@@ -655,16 +566,7 @@ impl<P> Supercluster<P> {
         Ok((origin_zoom, offsets))
     }
 
-    /// Convert an entry of the data arrays into a cluster or a point.
-    ///
-    /// # Arguments
-    ///
-    /// - `data`: A reference to the flat numeric arrays representing point data.
-    /// - `offset`: The offset of the entry in the data.
-    ///
-    /// # Returns
-    ///
-    /// The cluster or point of the entry.
+    /// Convert the entry at `offset` in the data arrays into a cluster or a point.
     fn get_item(&self, data: &[f64], offset: usize) -> Item<'_, P> {
         let id = data[offset + OFFSET_ID] as usize;
 
@@ -672,7 +574,7 @@ impl<P> Supercluster<P> {
             let (x, y) = self.denormalize(data[offset], data[offset + 1]);
 
             Item::Cluster(Cluster {
-                id,
+                id: ClusterId(id),
                 point_count: data[offset + OFFSET_NUM] as usize,
                 x,
                 y,
@@ -685,16 +587,8 @@ impl<P> Supercluster<P> {
         }
     }
 
-    /// Populate a tile with items based on the specified point IDs, data, and tile parameters.
-    ///
-    /// # Arguments
-    ///
-    /// - `ids`: A list of point IDs used for populating the tile.
-    /// - `data`: A reference to the flat numeric arrays representing point data.
-    /// - `x`: The X coordinate of the tile.
-    /// - `y`: The Y coordinate of the tile.
-    /// - `z2`: The number of tiles per axis on the zoom level of the tile.
-    /// - `items`: A mutable reference to the list to add the items to.
+    /// Add the items with the IDs `ids` to a tile, positioned in the tile at `x`, `y`, where `z2` is
+    /// the number of tiles per axis.
     fn add_tile_items<'a>(
         &'a self,
         ids: &[usize],
@@ -716,19 +610,8 @@ impl<P> Supercluster<P> {
         }
     }
 
-    /// Get the position in a tile of a point that is normalized to the [0..1] range.
-    ///
-    /// # Arguments
-    ///
-    /// - `x`: The normalized X value of the point.
-    /// - `y`: The normalized Y value of the point.
-    /// - `z2`: The number of tiles per axis on the zoom level of the tile.
-    /// - `tile_x`: The X coordinate of the tile.
-    /// - `tile_y`: The Y coordinate of the tile.
-    ///
-    /// # Returns
-    ///
-    /// The X and Y position in the tile, in the units of the tile extent.
+    /// Get the position, in the units of the tile extent, of a point that is normalized to the
+    /// [0..1] range, in the tile at `tile_x`, `tile_y`, where `z2` is the number of tiles per axis.
     pub(crate) fn get_tile_position(
         &self,
         x: f64,
@@ -743,32 +626,8 @@ impl<P> Supercluster<P> {
         ]
     }
 
-    /// Get the highest zoom level to cluster on.
-    ///
-    /// # Arguments
-    ///
-    /// - `cluster_max_zoom`: Maximum zoom level to cluster on, `None` for the configured one.
-    ///
-    /// # Returns
-    ///
-    /// The lower of the configured `max_zoom` and the given zoom level.
-    fn cluster_max_zoom(&self, cluster_max_zoom: Option<u8>) -> u8 {
-        cluster_max_zoom.map_or(self.options.max_zoom, |zoom| {
-            zoom.min(self.options.max_zoom)
-        })
-    }
-
     /// Get the index of the KD-tree to query for a zoom level.
     /// Above the highest zoom level to cluster on, this is the KD-tree of the points that are not clustered.
-    ///
-    /// # Arguments
-    ///
-    /// - `zoom`: The requested zoom level.
-    /// - `cluster_max_zoom`: The highest zoom level to cluster on.
-    ///
-    /// # Returns
-    ///
-    /// The index of the KD-tree.
     fn tree_index(&self, zoom: u8, cluster_max_zoom: u8) -> usize {
         let unclustered = self.options.max_zoom as usize + 1;
 
@@ -780,14 +639,6 @@ impl<P> Supercluster<P> {
     }
 
     /// Convert input coordinates to the [0..1] range the KD-trees use.
-    ///
-    /// # Arguments
-    ///
-    /// - `coordinates`: The coordinates of a point in the configured coordinate system.
-    ///
-    /// # Returns
-    ///
-    /// The X and Y values in the [0..1] range.
     pub(crate) fn normalize(&self, coordinates: [f64; 2]) -> (f64, f64) {
         match &self.options.coordinate_system {
             CoordinateSystem::Cartesian { range } => (
@@ -802,15 +653,6 @@ impl<P> Supercluster<P> {
     }
 
     /// Convert values from the [0..1] range the KD-trees use to coordinates.
-    ///
-    /// # Arguments
-    ///
-    /// - `x`: The X value in the [0..1] range.
-    /// - `y`: The Y value in the [0..1] range.
-    ///
-    /// # Returns
-    ///
-    /// The X and Y coordinates in the configured coordinate system.
     fn denormalize(&self, x: f64, y: f64) -> (f64, f64) {
         match &self.options.coordinate_system {
             CoordinateSystem::Cartesian { range } => (range.denormalize(x), range.denormalize(y)),
@@ -821,16 +663,7 @@ impl<P> Supercluster<P> {
         }
     }
 
-    /// Create a KD-tree using the specified data, which is used for spatial indexing.
-    ///
-    /// # Arguments
-    ///
-    /// - `node_size`: The size of the KD-tree leaf node.
-    /// - `data`: A vector of flat numeric arrays representing point data for the KD-tree.
-    ///
-    /// # Returns
-    ///
-    /// `KDBush` instance with the specified data.
+    /// Create a KD-tree over the items of `data`, which the tree keeps.
     fn create_tree(node_size: usize, data: Vec<f64>) -> KDBush {
         let mut tree = KDBush::new(data.len() / STRIDE, node_size);
 
@@ -844,18 +677,10 @@ impl<P> Supercluster<P> {
         tree
     }
 
-    /// Cluster points on a given zoom level using a KD-tree and returns updated data arrays.
+    /// Cluster the items of `tree` on a zoom level. `data` is updated in place with the zoom level
+    /// and parent of every item.
     ///
-    /// # Arguments
-    ///
-    /// - `tree`: A reference to the KD-tree structure for spatial indexing.
-    /// - `data`: The flat numeric arrays of the points of the KD-tree, which are updated in place.
-    /// - `zoom`: The zoom level at which clustering is performed.
-    ///
-    /// # Returns
-    ///
-    /// A tuple of two vectors: the first one contains updated data arrays for the current zoom level,
-    /// and the second one contains data arrays for the next zoom level.
+    /// Returns the updated data and the data of the clusters and points on that zoom level.
     fn cluster(&self, tree: &KDBush, mut data: Vec<f64>, zoom: u8) -> (Vec<f64>, Vec<f64>) {
         let r = self.options.radius / (self.options.extent * (2.0_f64).powi(zoom as i32));
 
@@ -957,10 +782,6 @@ impl<P> Supercluster<P> {
 
     /// Index the points of every cluster, so they are found without walking the hierarchy of clusters.
     /// The points of a cluster are next to each other, and so are the points of the clusters in it.
-    ///
-    /// # Returns
-    ///
-    /// An error if the hierarchy of clusters is not consistent.
     fn index_leaves(&mut self) -> Result<(), SuperclusterError> {
         let mut leaves = vec![];
         let mut leaf_ranges = LeafRanges::default();
@@ -995,19 +816,9 @@ impl<P> Supercluster<P> {
         Ok(())
     }
 
-    /// Collect the points of a cluster and of the clusters in it.
-    ///
-    /// # Arguments
-    ///
-    /// - `cluster_id`: The unique identifier of the cluster.
-    /// - `leaves`: The list to add the indexes of the points to.
-    /// - `leaf_ranges`: The map to add the range of every cluster to.
-    /// - `stack`: A buffer for the neighbor search, reused between calls.
-    /// - `neighbor_ids`: A buffer for the neighbor search, reused between calls.
-    ///
-    /// # Returns
-    ///
-    /// An error if the cluster or a cluster in it cannot be found.
+    /// Collect the points of a cluster and of the clusters in it into `leaves`, and their range
+    /// into `leaf_ranges`. `stack` and `neighbor_ids` are buffers for the neighbor search that the
+    /// caller reuses between calls. It is an error if a cluster cannot be found.
     fn collect_leaves(
         &self,
         cluster_id: usize,
@@ -1034,47 +845,17 @@ impl<P> Supercluster<P> {
 
         Ok(())
     }
-    /// Load the points into the Supercluster instance, performing clustering at various zoom levels.
-    /// The input points are indexed into a KD-tree for spatial indexing.
-    /// The points are clustered on the maximum zoom level, and the results are clustered on previous zoom levels.
-    /// This results in a cluster hierarchy across zoom levels.
-    /// Points without coordinates, and points whose coordinates are not finite numbers, are not clustered.
-    /// Loading again replaces the points that were loaded before.
-    /// This is CPU-heavy and blocks the thread it runs on.
-    ///
-    /// # Arguments
-    ///
-    /// - `points`: A vector of points to be clustered.
-    /// - `get_coordinates`: A closure that takes a point and returns its coordinates in the
-    ///   coordinate system of the supercluster, the longitude and latitude for `LatLng`. A point
-    ///   that gets `None`, or coordinates that are not finite numbers, is left out of the
-    ///   clustering. It is called once for every point.
-    ///
-    /// # Returns
-    ///
-    /// Supercluster instance with the input points loaded and clustered, otherwise an error if there
-    /// are more than `u32::MAX` points.
-    pub fn load_with<F>(
-        &mut self,
-        points: Vec<P>,
-        get_coordinates: F,
-    ) -> Result<&mut Self, SuperclusterError>
+    /// Index the points that were moved into the supercluster: normalize them, then cluster them
+    /// from the maximum zoom level down to the minimum one. `get_coordinates` returns the
+    /// coordinates of a point, or `None` to leave it out. It is an error if the hierarchy of
+    /// clusters is not consistent.
+    fn index<F>(&mut self, mut get_coordinates: F) -> Result<(), SuperclusterError>
     where
-        F: Fn(&P) -> Option<[f64; 2]>,
+        F: FnMut(&P) -> Option<[f64; 2]>,
     {
-        if u32::try_from(points.len()).is_err() {
-            return Err(SuperclusterError::TooManyPoints);
-        }
-
         let min_zoom = self.options.min_zoom;
         let max_zoom = self.options.max_zoom;
         let node_size = self.options.node_size;
-
-        // Free what an earlier load built first, so it does not peak together with the new one
-        self.trees.fill_with(|| KDBush::new(0, node_size));
-        self.leaves = vec![];
-        self.leaf_ranges = LeafRanges::default();
-        self.points = points;
 
         // Generate a cluster object for each point and index input points into a KD-tree.
         // The room is for every point, so it is exact unless points are left out.
@@ -1144,16 +925,11 @@ impl<P> Supercluster<P> {
             "Loaded points into the supercluster"
         );
 
-        Ok(self)
+        Ok(())
     }
 
     /// Warn when points are left out of the clustering because their coordinates are missing or
     /// not finite numbers.
-    ///
-    /// # Arguments
-    ///
-    /// - `total`: The number of points that were given.
-    /// - `clustered`: The number of points that are not left out.
     #[cfg(feature = "tracing")]
     fn warn_left_out_points(total: usize, clustered: usize) {
         if clustered < total {
@@ -1166,41 +942,192 @@ impl<P> Supercluster<P> {
     }
 }
 
+/// A view of a supercluster whose queries cluster up to a lower zoom level than the `max_zoom` of
+/// its options. Above that zoom level, the queries return the individual points instead of
+/// clusters. Create one with `Supercluster::with_cluster_max_zoom`.
+#[derive(Debug)]
+pub struct SuperclusterView<'a, P> {
+    /// The supercluster to query.
+    pub(crate) supercluster: &'a Supercluster<P>,
+
+    /// The highest zoom level to cluster on, which is not above the `max_zoom` of the options.
+    cluster_max_zoom: u8,
+}
+
+// Written by hand, because a derive would also require the point type to be `Clone` and `Copy`,
+// and a view only holds a reference to the supercluster.
+impl<P> Clone for SuperclusterView<'_, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<P> Copy for SuperclusterView<'_, P> {}
+
+impl<'a, P> SuperclusterView<'a, P> {
+    /// Retrieve clustered items within the specified bounding box and zoom level, like
+    /// `Supercluster::clusters`.
+    pub fn clusters(&self, bbox: [f64; 4], zoom: u8) -> Vec<Item<'a, P>> {
+        let supercluster = self.supercluster;
+        let tree = &supercluster.trees[supercluster.tree_index(zoom, self.cluster_max_zoom)];
+
+        let ids = match &supercluster.options.coordinate_system {
+            CoordinateSystem::Cartesian { range } => tree.range(
+                range.normalize(bbox[0]),
+                range.normalize(bbox[1]),
+                range.normalize(bbox[2]),
+                range.normalize(bbox[3]),
+            ),
+            CoordinateSystem::LatLng => {
+                let mut min_lng = ((((bbox[0] + 180.0) % 360.0) + 360.0) % 360.0) - 180.0;
+                let min_lat = bbox[1].clamp(-90.0, 90.0);
+                let mut max_lng = if bbox[2] == 180.0 {
+                    180.0
+                } else {
+                    ((((bbox[2] + 180.0) % 360.0) + 360.0) % 360.0) - 180.0
+                };
+                let max_lat = bbox[3].clamp(-90.0, 90.0);
+
+                if bbox[2] - bbox[0] >= 360.0 {
+                    min_lng = -180.0;
+                    max_lng = 180.0;
+                } else if min_lng > max_lng {
+                    let mut eastern_hem = self.clusters([min_lng, min_lat, 180.0, max_lat], zoom);
+                    let western_hem = self.clusters([-180.0, min_lat, max_lng, max_lat], zoom);
+
+                    eastern_hem.extend(western_hem);
+
+                    return eastern_hem;
+                }
+
+                tree.range(
+                    convert_longitude_to_spherical_mercator(min_lng),
+                    convert_latitude_to_spherical_mercator(max_lat),
+                    convert_longitude_to_spherical_mercator(max_lng),
+                    convert_latitude_to_spherical_mercator(min_lat),
+                )
+            }
+        };
+
+        ids.into_iter()
+            .map(|id| supercluster.get_item(&tree.data, id * STRIDE))
+            .collect()
+    }
+
+    /// Retrieve the items of a tile, like `Supercluster::tile`.
+    pub fn tile(&self, z: u8, x: u32, y: u32) -> Tile<'a, P> {
+        let supercluster = self.supercluster;
+        let options = &supercluster.options;
+        let tree = &supercluster.trees[supercluster.tree_index(z, self.cluster_max_zoom)];
+        let (x, y) = (f64::from(x), f64::from(y));
+        let z2 = tiles_per_axis(z);
+        let p = options.radius / options.extent;
+        let top = (y - p) / z2;
+        let bottom = (y + 1.0 + p) / z2;
+
+        let mut items = vec![];
+
+        let ids = tree.range((x - p) / z2, top, (x + 1.0 + p) / z2, bottom);
+        supercluster.add_tile_items(&ids, &tree.data, x, y, z2, &mut items);
+
+        // For `LatLng`, the first and last tile also show the other edge.
+        // The two ends of a `Cartesian` range are not next to each other, so they do not wrap.
+        if options.coordinate_system == CoordinateSystem::LatLng {
+            if x == 0.0 {
+                let ids = tree.range(1.0 - p / z2, top, 1.0, bottom);
+                supercluster.add_tile_items(&ids, &tree.data, z2, y, z2, &mut items);
+            }
+
+            if x == z2 - 1.0 {
+                let ids = tree.range(0.0, top, p / z2, bottom);
+                supercluster.add_tile_items(&ids, &tree.data, -1.0, y, z2, &mut items);
+            }
+        }
+
+        Tile { items }
+    }
+
+    /// Determine the zoom level at which a cluster expands, like
+    /// `Supercluster::cluster_expansion_zoom`. Above the zoom level to cluster on, this is that
+    /// zoom level plus one.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
+    pub fn cluster_expansion_zoom(&self, cluster_id: ClusterId) -> Result<u8, SuperclusterError> {
+        self.cluster_expansion_zoom_filtered(cluster_id, |_| true)
+    }
+
+    /// Determine the zoom level at which a cluster expands, counting only the points that pass a
+    /// filter, like `Supercluster::cluster_expansion_zoom_filtered`. Above the zoom level to
+    /// cluster on, this is that zoom level plus one.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
+    pub fn cluster_expansion_zoom_filtered<F>(
+        &self,
+        cluster_id: ClusterId,
+        filter: F,
+    ) -> Result<u8, SuperclusterError>
+    where
+        F: Fn(&P) -> bool,
+    {
+        let supercluster = self.supercluster;
+        let mut cluster_id = cluster_id.0;
+
+        // Buffers for the neighbor search, reused for every zoom level the cluster ascends through
+        let mut stack = vec![];
+        let mut neighbor_ids = vec![];
+
+        loop {
+            let (origin_zoom, offsets) =
+                supercluster.find_children(cluster_id, &mut stack, &mut neighbor_ids)?;
+
+            // Above the maximum zoom level every cluster is split into its points.
+            if origin_zoom > self.cluster_max_zoom as usize {
+                return Ok(self.cluster_max_zoom + 1);
+            }
+
+            let data = &supercluster.trees[origin_zoom].data;
+
+            // Two available children are enough to know the cluster expands here
+            let mut first = None;
+            let mut second = None;
+
+            for offset in offsets {
+                if supercluster.is_available(data, offset, &filter) {
+                    if first.is_none() {
+                        first = Some(offset);
+                    } else {
+                        second = Some(offset);
+                        break;
+                    }
+                }
+            }
+
+            match (first, second) {
+                (Some(offset), None) if data[offset + OFFSET_NUM] > 1.0 => {
+                    cluster_id = data[offset + OFFSET_ID] as usize;
+                }
+                // The origin zoom is at most the maximum zoom level, which fits in a `u8`
+                _ => return Ok(origin_zoom as u8),
+            }
+        }
+    }
+}
+
 /// Get the number of tiles per axis at a zoom level.
-///
-/// # Arguments
-///
-/// - `z`: The zoom level.
-///
-/// # Returns
-///
-/// The number of tiles per axis, 2 to the power of `z`.
 pub(crate) fn tiles_per_axis(z: u8) -> f64 {
     2f64.powi(z as i32)
 }
 
 /// Convert longitude to spherical mercator in the [0..1] range.
-///
-/// # Arguments
-///
-/// - `lng`: The longitude value to be converted.
-///
-/// # Returns
-///
-/// The converted value in the [0..1] range.
 fn convert_longitude_to_spherical_mercator(lng: f64) -> f64 {
     lng / 360.0 + 0.5
 }
 
 /// Convert latitude to spherical mercator in the [0..1] range.
-///
-/// # Arguments
-///
-/// - `lat`: The latitude value to be converted.
-///
-/// # Returns
-///
-/// The converted value in the [0..1] range.
 fn convert_latitude_to_spherical_mercator(lat: f64) -> f64 {
     let sin = lat.to_radians().sin();
     let y = 0.5 - (0.25 * ((1.0 + sin) / (1.0 - sin)).ln()) / PI;
@@ -1209,27 +1136,11 @@ fn convert_latitude_to_spherical_mercator(lat: f64) -> f64 {
 }
 
 /// Convert spherical mercator to longitude.
-///
-/// # Arguments
-///
-/// - `x`: The spherical mercator value to be converted.
-///
-/// # Returns
-///
-/// The converted longitude value.
 fn convert_spherical_mercator_to_longitude(x: f64) -> f64 {
     (x - 0.5) * 360.0
 }
 
 /// Convert spherical mercator to latitude.
-///
-/// # Arguments
-///
-/// - `y`: The spherical mercator value to be converted.
-///
-/// # Returns
-///
-/// The converted latitude value.
 fn convert_spherical_mercator_to_latitude(y: f64) -> f64 {
     let y2 = ((180.0 - y * 360.0) * PI) / 180.0;
     (360.0 * y2.exp().atan()) / PI - 90.0
@@ -1238,8 +1149,6 @@ fn convert_spherical_mercator_to_latitude(y: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::SuperclusterBuilder;
 
     /// A point that tells whether a filter should keep it.
     #[derive(Clone, Debug, PartialEq)]
@@ -1272,22 +1181,34 @@ mod tests {
     /// Create a supercluster with the points loaded and the default options.
     /// A point is a longitude, a latitude and whether a filter keeps it.
     fn load(max_zoom: u8, points: &[(f64, f64, bool)]) -> Supercluster<TestPoint> {
-        let mut supercluster = Supercluster::new(
-            SuperclusterBuilder::new()
-                .max_zoom(max_zoom)
-                .build()
-                .unwrap(),
-        );
+        let options = SuperclusterOptions::builder()
+            .max_zoom(max_zoom)
+            .build()
+            .unwrap();
         let points: Vec<TestPoint> = points
             .iter()
             .map(|&(lng, lat, keep)| TestPoint::new(lng, lat, keep))
             .collect();
 
-        supercluster
-            .load_with(points, |point| point.coordinates)
-            .unwrap();
+        Supercluster::load(options, points, |point| point.coordinates).unwrap()
+    }
 
-        supercluster
+    /// Load test points with the default options.
+    fn load_points(points: Vec<TestPoint>) -> Supercluster<TestPoint> {
+        Supercluster::load(SuperclusterOptions::default(), points, |point| {
+            point.coordinates
+        })
+        .unwrap()
+    }
+
+    /// Load the points spread over the world with the default options.
+    fn load_spread_points(count: usize) -> Supercluster<[f64; 2]> {
+        Supercluster::load(
+            SuperclusterOptions::default(),
+            create_points(count),
+            |point| Some(*point),
+        )
+        .unwrap()
     }
 
     /// Get the tile that holds the point at 10, 50 (longitude, latitude).
@@ -1296,16 +1217,21 @@ mod tests {
         z: u8,
         cluster_max_zoom: Option<u8>,
     ) -> Tile<'_, TestPoint> {
-        let z2 = 2f64.powi(z as i32);
+        let z2 = tiles_per_axis(z);
         let x = (convert_longitude_to_spherical_mercator(10.0) * z2).floor() as u32;
         let y = (convert_latitude_to_spherical_mercator(50.0) * z2).floor() as u32;
 
-        supercluster.get_tile_with_cluster_max_zoom(z, x, y, cluster_max_zoom)
+        match cluster_max_zoom {
+            Some(cluster_max_zoom) => supercluster
+                .with_cluster_max_zoom(cluster_max_zoom)
+                .tile(z, x, y),
+            None => supercluster.tile(z, x, y),
+        }
     }
 
     /// Get the ID of the cluster that holds all the points at zoom level 0.
-    fn get_top_cluster_id(supercluster: &Supercluster<TestPoint>) -> usize {
-        match &supercluster.get_tile(0, 0, 0).items[0].item {
+    fn get_top_cluster_id(supercluster: &Supercluster<TestPoint>) -> ClusterId {
+        match &supercluster.tile(0, 0, 0).items[0].item {
             Item::Cluster(cluster) => cluster.id,
             Item::Point { .. } => panic!("expected a cluster"),
         }
@@ -1330,6 +1256,29 @@ mod tests {
     #[test]
     fn test_supercluster_is_send_and_sync() {
         assert_send_and_sync::<Supercluster<TestPoint>>();
+    }
+
+    #[test]
+    fn test_load_calls_get_coordinates_once_per_point_in_order() {
+        let mut seen = vec![];
+
+        Supercluster::load(SuperclusterOptions::default(), vec![1, 2, 3], |point| {
+            seen.push(*point);
+
+            Some([0.0, 0.0])
+        })
+        .unwrap();
+
+        assert_eq!(seen, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_cluster_id_conversions() {
+        let id = ClusterId::new(42);
+
+        assert_eq!(id.get(), 42);
+        assert_eq!(ClusterId::from(42), id);
+        assert_eq!(usize::from(id), 42);
     }
 
     #[test]
@@ -1367,17 +1316,13 @@ mod tests {
     }
 
     #[test]
-    fn test_get_clusters_counts_every_point_on_every_zoom_level() {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
-
-        supercluster
-            .load_with(create_points(500), |point| Some(*point))
-            .unwrap();
+    fn test_clusters_counts_every_point_on_every_zoom_level() {
+        let supercluster = load_spread_points(500);
 
         // The highest zoom level holds the points that are not clustered
         for zoom in 0..=17 {
             let count: usize = supercluster
-                .get_clusters([-180.0, -90.0, 180.0, 90.0], zoom)
+                .clusters([-180.0, -90.0, 180.0, 90.0], zoom)
                 .iter()
                 .map(get_point_count)
                 .sum();
@@ -1387,28 +1332,25 @@ mod tests {
     }
 
     #[test]
-    fn test_get_leaves_of_a_cluster_are_the_leaves_of_its_children() {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
-
-        supercluster
-            .load_with(create_points(500), |point| Some(*point))
-            .unwrap();
+    fn test_leaves_of_a_cluster_are_the_leaves_of_its_children() {
+        let supercluster = load_spread_points(500);
 
         let mut clusters = 0;
 
         for zoom in 0..=6 {
-            for item in supercluster.get_clusters([-180.0, -90.0, 180.0, 90.0], zoom) {
+            for item in supercluster.clusters([-180.0, -90.0, 180.0, 90.0], zoom) {
                 let Item::Cluster(cluster) = item else {
                     continue;
                 };
 
-                let leaves = supercluster.get_leaves(cluster.id, usize::MAX, 0).unwrap();
+                let leaves: Vec<&[f64; 2]> = supercluster.leaves(cluster.id).unwrap().collect();
                 let mut leaves_of_children: Vec<&[f64; 2]> = vec![];
 
-                for child in supercluster.get_children(cluster.id).unwrap() {
+                for child in supercluster.children(cluster.id).unwrap() {
                     match child {
-                        Item::Cluster(child) => leaves_of_children
-                            .extend(supercluster.get_leaves(child.id, usize::MAX, 0).unwrap()),
+                        Item::Cluster(child) => {
+                            leaves_of_children.extend(supercluster.leaves(child.id).unwrap())
+                        }
                         Item::Point { point, .. } => leaves_of_children.push(point),
                     }
                 }
@@ -1426,11 +1368,7 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_supercluster_round_trips_through_json() {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
-
-        supercluster
-            .load_with(create_points(300), |point| Some(*point))
-            .unwrap();
+        let supercluster = load_spread_points(300);
 
         let json = serde_json::to_string(&supercluster).unwrap();
         let restored: Supercluster<[f64; 2]> = serde_json::from_str(&json).unwrap();
@@ -1438,49 +1376,33 @@ mod tests {
 
         for zoom in [0, 4, 9, 17] {
             assert_eq!(
-                restored.get_clusters(bbox, zoom),
-                supercluster.get_clusters(bbox, zoom)
+                restored.clusters(bbox, zoom),
+                supercluster.clusters(bbox, zoom)
             );
         }
 
-        assert_eq!(restored.get_tile(2, 1, 1), supercluster.get_tile(2, 1, 1));
+        assert_eq!(restored.tile(2, 1, 1), supercluster.tile(2, 1, 1));
     }
 
     #[test]
     fn test_load_without_points() {
         let supercluster = load(16, &[]);
 
-        assert!(supercluster.get_tile(0, 0, 0).is_empty());
+        assert!(supercluster.tile(0, 0, 0).is_empty());
         assert!(supercluster
-            .get_clusters([-180.0, -90.0, 180.0, 90.0], 3)
+            .clusters([-180.0, -90.0, 180.0, 90.0], 3)
             .is_empty());
         assert_eq!(
-            supercluster.get_children(5).err(),
+            supercluster.children(ClusterId::new(5)).err(),
             Some(SuperclusterError::ClusterNotFound)
         );
-    }
-
-    #[test]
-    fn test_load_replaces_the_points() {
-        let mut supercluster = load(16, &[(10.0, 50.0, true), (12.0, 50.0, true)]);
-
-        supercluster
-            .load_with(vec![TestPoint::new(-20.0, 10.0, true)], |point| {
-                point.coordinates
-            })
-            .unwrap();
-
-        let items = supercluster.get_clusters([-180.0, -90.0, 180.0, 90.0], 0);
-
-        assert_eq!(items.len(), 1);
-        assert_eq!(supercluster.points().len(), 1);
     }
 
     /// Get the indexes of the points that are not clustered at the highest zoom level, which are
     /// the points that were not left out.
     fn get_point_indexes(supercluster: &Supercluster<TestPoint>) -> Vec<usize> {
         let mut indexes: Vec<usize> = supercluster
-            .get_clusters([-180.0, -90.0, 180.0, 90.0], 17)
+            .clusters([-180.0, -90.0, 180.0, 90.0], 17)
             .iter()
             .filter_map(|item| match item {
                 Item::Point { index, .. } => Some(*index),
@@ -1495,44 +1417,30 @@ mod tests {
 
     #[test]
     fn test_load_skips_points_without_coordinates() {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
-
-        supercluster
-            .load_with(
-                vec![
-                    TestPoint::new(10.0, 50.0, true),
-                    TestPoint::without_coordinates(),
-                    TestPoint::new(12.0, 50.0, true),
-                ],
-                |point| point.coordinates,
-            )
-            .unwrap();
+        let supercluster = load_points(vec![
+            TestPoint::new(10.0, 50.0, true),
+            TestPoint::without_coordinates(),
+            TestPoint::new(12.0, 50.0, true),
+        ]);
 
         assert_eq!(get_point_indexes(&supercluster), vec![0, 2]);
     }
 
     #[test]
     fn test_load_skips_points_with_coordinates_that_are_not_finite() {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
-
-        supercluster
-            .load_with(
-                vec![
-                    TestPoint::new(10.0, 50.0, true),
-                    TestPoint::new(f64::NAN, 50.0, true),
-                    TestPoint::new(10.0, f64::INFINITY, true),
-                    TestPoint::new(f64::NEG_INFINITY, 50.0, true),
-                    TestPoint::new(12.0, 50.0, true),
-                ],
-                |point| point.coordinates,
-            )
-            .unwrap();
+        let supercluster = load_points(vec![
+            TestPoint::new(10.0, 50.0, true),
+            TestPoint::new(f64::NAN, 50.0, true),
+            TestPoint::new(10.0, f64::INFINITY, true),
+            TestPoint::new(f64::NEG_INFINITY, 50.0, true),
+            TestPoint::new(12.0, 50.0, true),
+        ]);
 
         assert_eq!(get_point_indexes(&supercluster), vec![0, 4]);
     }
 
     #[test]
-    fn test_get_tile_without_cluster_max_zoom() {
+    fn test_tile_without_cluster_max_zoom() {
         let supercluster = load(16, &[(10.0, 50.0, true), (12.0, 50.0, true)]);
         let tile = get_tile_of_point(&supercluster, 1, None);
 
@@ -1541,14 +1449,14 @@ mod tests {
     }
 
     #[test]
-    fn test_get_tile_at_cluster_max_zoom() {
+    fn test_tile_at_cluster_max_zoom() {
         let supercluster = load(16, &[(10.0, 50.0, true), (12.0, 50.0, true)]);
 
         assert_eq!(get_tile_of_point(&supercluster, 1, Some(1)).items.len(), 1);
     }
 
     #[test]
-    fn test_get_tile_above_cluster_max_zoom() {
+    fn test_tile_above_cluster_max_zoom() {
         let supercluster = load(16, &[(10.0, 50.0, true), (12.0, 50.0, true)]);
         let tile = get_tile_of_point(&supercluster, 1, Some(0));
 
@@ -1560,7 +1468,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_tile_cluster_max_zoom_above_max_zoom() {
+    fn test_tile_cluster_max_zoom_above_max_zoom() {
         let supercluster = load(4, &[(10.0, 50.0, true), (12.0, 50.0, true)]);
 
         // The given zoom level cannot raise the maximum zoom level, so zoom level 6 reads the points that are not clustered.
@@ -1568,67 +1476,58 @@ mod tests {
     }
 
     #[test]
-    fn test_get_tile_with_cartesian_coordinates_does_not_wrap() {
-        let range = DataRange {
-            min_x: 0.0,
-            min_y: 0.0,
-            max_x: 100.0,
-            max_y: 100.0,
-            ..Default::default()
-        };
-        let options = SuperclusterBuilder::new()
+    fn test_tile_with_cartesian_coordinates_does_not_wrap() {
+        let range = DataRange::new(0.0, 0.0, 100.0, 100.0);
+        let options = SuperclusterOptions::builder()
             .coordinate_system(CoordinateSystem::Cartesian { range })
             .build()
             .unwrap();
-        let mut supercluster = Supercluster::new(options);
-
-        supercluster
-            .load_with(
-                vec![
-                    TestPoint::new(1.0, 1.0, true),
-                    TestPoint::new(99.0, 1.0, true),
-                ],
-                |point| point.coordinates,
-            )
-            .unwrap();
+        let supercluster = Supercluster::load(
+            options,
+            vec![
+                TestPoint::new(1.0, 1.0, true),
+                TestPoint::new(99.0, 1.0, true),
+            ],
+            |point| point.coordinates,
+        )
+        .unwrap();
 
         // The point at 99 is near the other end of the range, so tile 0 does not show it.
-        assert_eq!(supercluster.get_tile(1, 0, 0).items.len(), 1);
+        assert_eq!(supercluster.tile(1, 0, 0).items.len(), 1);
     }
 
     #[test]
-    fn test_get_tile_with_lat_lng_wraps_around_the_antimeridian() {
+    fn test_tile_with_lat_lng_wraps_around_the_antimeridian() {
         let supercluster = load(16, &[(1.0, 0.0, true), (179.0, 0.0, true)]);
 
         // Tile 0 also shows the point at 179, which sits left of the tile.
-        let tile = supercluster.get_tile(1, 0, 0);
+        let tile = supercluster.tile(1, 0, 0);
 
         assert_eq!(tile.items.len(), 2);
         assert!(tile.items.iter().any(|tile_item| tile_item.x < 0.0));
     }
 
     #[test]
-    fn test_get_tile_position_of_items() {
+    fn test_tile_position_of_items() {
         let supercluster = load(16, &[(0.0, 0.0, true)]);
-        let tile = supercluster.get_tile(0, 0, 0);
+        let tile = supercluster.tile(0, 0, 0);
 
         assert_eq!(tile.items.len(), 1);
         assert_eq!((tile.items[0].x, tile.items[0].y), (256.0, 256.0));
     }
 
     #[test]
-    fn test_get_tile_without_loaded_points() {
-        let supercluster =
-            Supercluster::<TestPoint>::new(SuperclusterBuilder::new().build().unwrap());
+    fn test_tile_without_loaded_points() {
+        let supercluster = load_points(vec![]);
 
-        assert!(supercluster.get_tile(0, 0, 0).is_empty());
+        assert!(supercluster.tile(0, 0, 0).is_empty());
     }
 
     #[test]
-    fn test_get_children() {
+    fn test_children() {
         let supercluster = load_nested_cluster();
         let mut point_counts: Vec<usize> = supercluster
-            .get_children(get_top_cluster_id(&supercluster))
+            .children(get_top_cluster_id(&supercluster))
             .unwrap()
             .iter()
             .map(|item| match item {
@@ -1643,29 +1542,29 @@ mod tests {
     }
 
     #[test]
-    fn test_get_children_of_unknown_cluster() {
+    fn test_children_of_unknown_cluster() {
         let supercluster = load_nested_cluster();
 
         // Smaller than the number of points, so it is a point and not a cluster.
         assert_eq!(
-            supercluster.get_children(1).err(),
+            supercluster.children(ClusterId::new(1)).err(),
             Some(SuperclusterError::ClusterNotFound)
         );
         // The zoom level in the ID does not exist.
         assert_eq!(
-            supercluster.get_children(100000).err(),
+            supercluster.children(ClusterId::new(100000)).err(),
             Some(SuperclusterError::ClusterNotFound)
         );
     }
 
     #[test]
-    fn test_get_leaves() {
+    fn test_leaves() {
         let supercluster = load_nested_cluster();
         let cluster_id = get_top_cluster_id(&supercluster);
 
-        let all = supercluster.get_leaves(cluster_id, usize::MAX, 0).unwrap();
+        let all: Vec<&TestPoint> = supercluster.leaves(cluster_id).unwrap().collect();
 
-        assert_eq!(all.len(), 3);
+        assert_eq!(supercluster.leaves(cluster_id).unwrap().len(), 3);
 
         // Every point is there exactly once.
         let mut keeps: Vec<bool> = all.iter().map(|point| point.keep).collect();
@@ -1674,28 +1573,27 @@ mod tests {
 
         assert_eq!(keeps, vec![false, true, true]);
 
-        // The limit and offset select a window of the same order.
-        assert_eq!(supercluster.get_leaves(cluster_id, 2, 0).unwrap(), all[..2]);
-        assert_eq!(supercluster.get_leaves(cluster_id, 2, 1).unwrap(), all[1..]);
-        assert_eq!(
-            supercluster.get_leaves(cluster_id, 10, 2).unwrap(),
-            all[2..]
-        );
-        assert!(supercluster
-            .get_leaves(cluster_id, 10, 3)
-            .unwrap()
-            .is_empty());
-        assert!(supercluster
-            .get_leaves(cluster_id, 0, 0)
-            .unwrap()
-            .is_empty());
+        // Skipping and taking select a window of the same order.
+        let page = |skip, take| -> Vec<&TestPoint> {
+            supercluster
+                .leaves(cluster_id)
+                .unwrap()
+                .skip(skip)
+                .take(take)
+                .collect()
+        };
+
+        assert_eq!(page(0, 2), all[..2]);
+        assert_eq!(page(1, 2), all[1..]);
+        assert_eq!(page(2, 10), all[2..]);
+        assert!(page(3, 10).is_empty());
     }
 
     #[test]
-    fn test_get_leaves_of_nested_cluster() {
+    fn test_leaves_of_nested_cluster() {
         let supercluster = load_nested_cluster();
         let nested_id = supercluster
-            .get_children(get_top_cluster_id(&supercluster))
+            .children(get_top_cluster_id(&supercluster))
             .unwrap()
             .iter()
             .find_map(|item| match item {
@@ -1704,126 +1602,146 @@ mod tests {
             })
             .unwrap();
 
-        let leaves = supercluster.get_leaves(nested_id, usize::MAX, 0).unwrap();
+        let leaves = supercluster.leaves(nested_id).unwrap();
 
         assert_eq!(leaves.len(), 2);
-        assert!(leaves.iter().all(|point| point.keep));
+        assert!(leaves.into_iter().all(|point| point.keep));
     }
 
     #[test]
-    fn test_get_leaves_of_unknown_cluster() {
+    fn test_leaves_of_unknown_cluster() {
         let supercluster = load_nested_cluster();
 
         assert_eq!(
-            supercluster.get_leaves(100000, 10, 0).err(),
+            supercluster.leaves(ClusterId::new(100000)).err(),
             Some(SuperclusterError::ClusterNotFound)
         );
     }
 
     #[test]
-    fn test_get_cluster_expansion_zoom() {
+    fn test_cluster_expansion_zoom() {
         let supercluster = load_nested_cluster();
         let cluster_id = get_top_cluster_id(&supercluster);
 
-        assert_eq!(supercluster.get_cluster_expansion_zoom(cluster_id), Ok(2));
+        assert_eq!(supercluster.cluster_expansion_zoom(cluster_id), Ok(2));
     }
 
     #[test]
-    fn test_get_cluster_expansion_zoom_of_unknown_cluster() {
+    fn test_cluster_expansion_zoom_of_unknown_cluster() {
         let supercluster = load_nested_cluster();
 
         assert_eq!(
-            supercluster.get_cluster_expansion_zoom(100000),
+            supercluster.cluster_expansion_zoom(ClusterId::new(100000)),
             Err(SuperclusterError::ClusterNotFound)
         );
     }
 
     #[test]
-    fn test_get_cluster_expansion_zoom_with_filter_accepting_all() {
+    fn test_cluster_expansion_zoom_filtered_accepting_all() {
         let supercluster = load_nested_cluster();
         let cluster_id = get_top_cluster_id(&supercluster);
 
         assert_eq!(
-            supercluster.get_cluster_expansion_zoom_with(cluster_id, None, |_| true),
+            supercluster.cluster_expansion_zoom_filtered(cluster_id, |_| true),
             Ok(2)
         );
     }
 
     #[test]
-    fn test_get_cluster_expansion_zoom_with_filter_rejecting_a_child() {
+    fn test_cluster_expansion_zoom_filtered_rejecting_a_child() {
         let supercluster = load_nested_cluster();
         let cluster_id = get_top_cluster_id(&supercluster);
 
         // Without the farther point the cluster looks the same until the close points split on zoom level 17.
         assert_eq!(
-            supercluster.get_cluster_expansion_zoom_with(cluster_id, None, |point| point.keep),
+            supercluster.cluster_expansion_zoom_filtered(cluster_id, |point| point.keep),
             Ok(17)
         );
     }
 
     #[test]
-    fn test_get_cluster_expansion_zoom_with_filter_rejecting_all() {
+    fn test_cluster_expansion_zoom_filtered_rejecting_all() {
         let supercluster = load_nested_cluster();
         let cluster_id = get_top_cluster_id(&supercluster);
 
         assert_eq!(
-            supercluster.get_cluster_expansion_zoom_with(cluster_id, None, |_| false),
+            supercluster.cluster_expansion_zoom_filtered(cluster_id, |_| false),
             Ok(2)
         );
     }
 
     #[test]
-    fn test_get_cluster_expansion_zoom_with_cluster_max_zoom() {
+    fn test_cluster_expansion_zoom_with_cluster_max_zoom() {
         let supercluster = load_nested_cluster();
         let cluster_id = get_top_cluster_id(&supercluster);
 
         // Above the zoom level to cluster on there is nothing left to expand.
         assert_eq!(
-            supercluster.get_cluster_expansion_zoom_with(cluster_id, Some(0), |_| true),
+            supercluster
+                .with_cluster_max_zoom(0)
+                .cluster_expansion_zoom_filtered(cluster_id, |_| true),
             Ok(1)
         );
         assert_eq!(
-            supercluster.get_cluster_expansion_zoom_with(cluster_id, Some(5), |_| true),
+            supercluster
+                .with_cluster_max_zoom(5)
+                .cluster_expansion_zoom_filtered(cluster_id, |_| true),
             Ok(2)
         );
         assert_eq!(
-            supercluster.get_cluster_expansion_zoom_with(cluster_id, Some(5), |point| point.keep),
+            supercluster
+                .with_cluster_max_zoom(5)
+                .cluster_expansion_zoom_filtered(cluster_id, |point| point.keep),
             Ok(6)
         );
         assert_eq!(
-            supercluster.get_cluster_expansion_zoom_with(cluster_id, Some(20), |point| point.keep),
+            supercluster
+                .with_cluster_max_zoom(20)
+                .cluster_expansion_zoom_filtered(cluster_id, |point| point.keep),
             Ok(17)
         );
     }
 
     #[test]
-    fn test_get_clusters_below_min_zoom() {
-        let options = SuperclusterBuilder::new().min_zoom(3).build().unwrap();
-        let mut supercluster = Supercluster::new(options);
-
-        supercluster
-            .load_with(
-                vec![
-                    TestPoint::new(10.0, 50.0, true),
-                    TestPoint::new(12.0, 50.0, true),
-                ],
-                |point| point.coordinates,
-            )
-            .unwrap();
+    fn test_clusters_below_min_zoom() {
+        let options = SuperclusterOptions::builder().min_zoom(3).build().unwrap();
+        let supercluster = Supercluster::load(
+            options,
+            vec![
+                TestPoint::new(10.0, 50.0, true),
+                TestPoint::new(12.0, 50.0, true),
+            ],
+            |point| point.coordinates,
+        )
+        .unwrap();
 
         let bbox = [-180.0, -90.0, 180.0, 90.0];
 
         // A zoom level below the minimum one reads the minimum one
         assert_eq!(
-            supercluster.get_clusters(bbox, 1),
-            supercluster.get_clusters(bbox, 3)
+            supercluster.clusters(bbox, 1),
+            supercluster.clusters(bbox, 3)
         );
     }
 
     #[test]
-    fn test_get_clusters_has_the_center_of_the_cluster() {
+    fn test_clusters_with_cluster_max_zoom() {
         let supercluster = load(16, &[(10.0, 50.0, true), (12.0, 50.0, true)]);
-        let items = supercluster.get_clusters([-180.0, -90.0, 180.0, 90.0], 0);
+        let bbox = [-180.0, -90.0, 180.0, 90.0];
+
+        assert_eq!(supercluster.clusters(bbox, 1).len(), 1);
+
+        // Above the zoom level to cluster on, the view returns the points
+        let items = supercluster.with_cluster_max_zoom(0).clusters(bbox, 1);
+
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|item| matches!(item, Item::Point { .. })));
+    }
+
+    #[test]
+    fn test_clusters_has_the_center_of_the_cluster() {
+        let supercluster = load(16, &[(10.0, 50.0, true), (12.0, 50.0, true)]);
+        let items = supercluster.clusters([-180.0, -90.0, 180.0, 90.0], 0);
 
         let [Item::Cluster(cluster)] = &items[..] else {
             panic!("expected a single cluster");
@@ -1837,7 +1755,7 @@ mod tests {
     fn test_point_count_abbreviated() {
         let abbreviate = |point_count| {
             Cluster {
-                id: 0,
+                id: ClusterId::new(0),
                 point_count,
                 x: 0.0,
                 y: 0.0,

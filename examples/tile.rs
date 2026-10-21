@@ -1,5 +1,5 @@
 use geojson::{Feature, Geometry};
-use supercluster::{CoordinateSystem, Supercluster, SuperclusterBuilder, SuperclusterError};
+use supercluster::{CoordinateSystem, Supercluster, SuperclusterError, SuperclusterOptions};
 
 fn main() -> Result<(), SuperclusterError> {
     // Create a few points as GeoJSON features
@@ -9,7 +9,7 @@ fn main() -> Result<(), SuperclusterError> {
         .collect();
 
     // Set the configuration settings
-    let options = SuperclusterBuilder::new()
+    let options = SuperclusterOptions::builder()
         .radius(40.0)
         .extent(512.0)
         .min_points(2)
@@ -17,14 +17,11 @@ fn main() -> Result<(), SuperclusterError> {
         .coordinate_system(CoordinateSystem::LatLng)
         .build()?;
 
-    // Create a new instance with the specified configuration settings
-    let mut supercluster = Supercluster::new(options);
+    // Load the features into a new supercluster
+    let supercluster = Supercluster::load_features(options, features)?;
 
-    // Load the features into the Supercluster instance
-    supercluster.load_features(features)?;
-
-    // Get a tile from the Supercluster instance
-    let tile = supercluster.get_tile(0, 0, 0);
+    // Get a tile
+    let tile = supercluster.tile(0, 0, 0);
 
     println!("Tile: {:?}", tile.to_feature_collection());
 

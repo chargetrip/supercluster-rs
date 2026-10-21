@@ -2,7 +2,7 @@
 //! An application that only uses the `log` crate sees the same as log records.
 
 use geojson::{Feature, Geometry};
-use supercluster::{CoordinateSystem, Supercluster, SuperclusterBuilder, SuperclusterError};
+use supercluster::{CoordinateSystem, Supercluster, SuperclusterError, SuperclusterOptions};
 
 fn main() -> Result<(), SuperclusterError> {
     // Print every event of the supercluster, down to the trace level
@@ -20,7 +20,7 @@ fn main() -> Result<(), SuperclusterError> {
     features.push(Feature::default());
 
     // Set the configuration settings
-    let options = SuperclusterBuilder::new()
+    let options = SuperclusterOptions::builder()
         .radius(40.0)
         .extent(512.0)
         .min_points(2)
@@ -28,14 +28,11 @@ fn main() -> Result<(), SuperclusterError> {
         .coordinate_system(CoordinateSystem::LatLng)
         .build()?;
 
-    // Create a new instance with the specified configuration settings
-    let mut supercluster = Supercluster::new(options);
-
-    // Load features into the Supercluster instance
-    supercluster.load_features(features)?;
+    // Load the features into a new supercluster
+    let supercluster = Supercluster::load_features(options, features)?;
 
     // Querying does not log anything
-    supercluster.get_tile(0, 0, 0);
+    supercluster.tile(0, 0, 0);
 
     Ok(())
 }

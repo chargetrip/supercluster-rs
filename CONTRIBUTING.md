@@ -95,7 +95,7 @@ whole suite:
 
 ```sh
 # A unit test, in src/**/mod tests
-cargo test --lib test_get_tile_without_loaded_points
+cargo test --lib test_tile_without_loaded_points
 
 # An integration test, in tests/<file>.rs
 cargo test --test test_supercluster test_cluster_expansion_zoom

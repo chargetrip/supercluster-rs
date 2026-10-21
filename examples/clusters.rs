@@ -1,5 +1,5 @@
 use geojson::{Feature, Geometry};
-use supercluster::{CoordinateSystem, Item, Supercluster, SuperclusterBuilder, SuperclusterError};
+use supercluster::{CoordinateSystem, Item, Supercluster, SuperclusterError, SuperclusterOptions};
 
 fn main() -> Result<(), SuperclusterError> {
     // Create a few points as GeoJSON features
@@ -9,7 +9,7 @@ fn main() -> Result<(), SuperclusterError> {
         .collect();
 
     // Set the configuration settings
-    let options = SuperclusterBuilder::new()
+    let options = SuperclusterOptions::builder()
         .radius(40.0)
         .extent(512.0)
         .min_points(2)
@@ -17,20 +17,20 @@ fn main() -> Result<(), SuperclusterError> {
         .coordinate_system(CoordinateSystem::LatLng)
         .build()?;
 
-    // Create a new instance with the specified configuration settings
-    let mut supercluster = Supercluster::new(options);
-
-    // Load the features into the Supercluster instance
-    supercluster.load_features(features)?;
+    // Load the features into a new supercluster
+    let supercluster = Supercluster::load_features(options, features)?;
 
     // Get clusters for a given bounding box and zoom level
-    let clusters = supercluster.get_clusters([101.0, 0.0, 105.0, 2.0], 2);
+    let clusters = supercluster.clusters([101.0, 0.0, 105.0, 2.0], 2);
 
     for item in &clusters {
         match item {
             Item::Cluster(cluster) => println!(
                 "Cluster {} with {} points at {}, {}",
-                cluster.id, cluster.point_count, cluster.x, cluster.y
+                cluster.id.get(),
+                cluster.point_count,
+                cluster.x,
+                cluster.y
             ),
             Item::Point { index, .. } => println!("Point {}", index),
         }

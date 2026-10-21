@@ -3,13 +3,11 @@ use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use geojson::{Feature, Geometry};
-use supercluster::{
-    CoordinateSystem, Item, Supercluster, SuperclusterBuilder, SuperclusterOptions,
-};
+use supercluster::{CoordinateSystem, Item, Supercluster, SuperclusterOptions};
 
 /// Create the options the benchmarks use.
 fn create_options() -> SuperclusterOptions {
-    SuperclusterBuilder::new()
+    SuperclusterOptions::builder()
         .radius(40.0)
         .extent(512.0)
         .min_points(2)
@@ -37,45 +35,49 @@ fn bench_supercluster(c: &mut Criterion) {
         .map(|point| Feature::from(Geometry::new_point(point)))
         .collect();
 
-    let mut supercluster = Supercluster::new(create_options());
+    let options = create_options();
 
     c.bench_function("load features", |b| {
-        b.iter(|| {
-            let _ = supercluster.load_features(black_box(features.clone()));
-        })
+        b.iter(|| Supercluster::load_features(options.clone(), black_box(features.clone())))
     });
+
+    let supercluster = Supercluster::load_features(options, features).unwrap();
 
     c.bench_function("get tile", |b| {
         b.iter(|| {
-            let _ = supercluster.get_tile(black_box(0), black_box(0), black_box(0));
+            let _ = supercluster.tile(black_box(0), black_box(0), black_box(0));
         })
     });
 
     c.bench_function("get clusters", |b| {
         b.iter(|| {
-            let _ = supercluster.get_clusters(black_box([101.0, 0.0, 105.0, 2.0]), black_box(2));
+            let _ = supercluster.clusters(black_box([101.0, 0.0, 105.0, 2.0]), black_box(2));
         })
     });
 }
 
 fn bench_many_points(c: &mut Criterion) {
     let points = create_points(10_000);
-    let mut supercluster = Supercluster::new(create_options());
+    let options = create_options();
 
     c.bench_function("load 10000 points", |b| {
         b.iter(|| {
-            let _ = supercluster.load_with(black_box(points.clone()), |point| Some(*point));
+            Supercluster::load(options.clone(), black_box(points.clone()), |point| {
+                Some(*point)
+            })
         })
     });
 
+    let supercluster = Supercluster::load(options, points, |point| Some(*point)).unwrap();
+
     c.bench_function("get tile of 10000 points", |b| {
         b.iter(|| {
-            let _ = supercluster.get_tile(black_box(3), black_box(4), black_box(3));
+            let _ = supercluster.tile(black_box(3), black_box(4), black_box(3));
         })
     });
 
     let cluster_id = supercluster
-        .get_clusters([-180.0, -90.0, 180.0, 90.0], 0)
+        .clusters([-180.0, -90.0, 180.0, 90.0], 0)
         .iter()
         .find_map(|item| match item {
             Item::Cluster(cluster) => Some(cluster.id),
@@ -85,13 +87,15 @@ fn bench_many_points(c: &mut Criterion) {
 
     c.bench_function("get leaves of a cluster of 10000 points", |b| {
         b.iter(|| {
-            let _ = supercluster.get_leaves(black_box(cluster_id), black_box(10), black_box(0));
+            supercluster
+                .leaves(black_box(cluster_id))
+                .map(|leaves| leaves.take(black_box(10)).collect::<Vec<_>>())
         })
     });
 
     c.bench_function("get cluster expansion zoom of 10000 points", |b| {
         b.iter(|| {
-            let _ = supercluster.get_cluster_expansion_zoom(black_box(cluster_id));
+            let _ = supercluster.cluster_expansion_zoom(black_box(cluster_id));
         })
     });
 }
@@ -104,7 +108,7 @@ fn bench_one_million_points(c: &mut Criterion) {
     }
 
     let points = create_points(1_000_000);
-    let mut supercluster = Supercluster::new(create_options());
+    let options = create_options();
     let mut group = c.benchmark_group("one million points");
 
     // Each load is slow, so the group uses the smallest sample size criterion allows, with a
@@ -114,13 +118,17 @@ fn bench_one_million_points(c: &mut Criterion) {
 
     group.bench_function("load", |b| {
         b.iter(|| {
-            let _ = supercluster.load_with(black_box(points.clone()), |point| Some(*point));
+            Supercluster::load(options.clone(), black_box(points.clone()), |point| {
+                Some(*point)
+            })
         })
     });
 
+    let supercluster = Supercluster::load(options, points, |point| Some(*point)).unwrap();
+
     group.bench_function("get tile", |b| {
         b.iter(|| {
-            let _ = supercluster.get_tile(black_box(6), black_box(32), black_box(21));
+            let _ = supercluster.tile(black_box(6), black_box(32), black_box(21));
         })
     });
 

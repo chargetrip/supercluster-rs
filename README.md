@@ -40,28 +40,26 @@ A `Supercluster` clusters any type and keeps the points as you load them, withou
 A closure tells where each point is, so you do not convert or wrap them, and shared data that changes stays shared.
 
 ```rust
-use supercluster::{Item, Supercluster, SuperclusterBuilder, SuperclusterError};
+use supercluster::{Item, Supercluster, SuperclusterError, SuperclusterOptions};
 
 fn main() -> Result<(), SuperclusterError> {
     // Set the configuration settings
-    let options = SuperclusterBuilder::new()
+    let options = SuperclusterOptions::builder()
         .radius(40.0)
         .extent(512.0)
         .min_points(2)
         .max_zoom(16)
         .build()?;
 
-    // Create a new instance with the specified configuration settings
-    let mut supercluster = Supercluster::new(options);
-
-    // Load the longitude and latitude of the points into the supercluster
-    supercluster.load_with(
+    // Load the longitude and latitude of the points into a new supercluster
+    let supercluster = Supercluster::load(
+        options,
         vec![[-77.032, 38.913], [-77.033, 38.913], [0.0, 0.0]],
         |point| Some(*point),
     )?;
 
     // Get the clusters and the points that are not clustered of a tile
-    let tile = supercluster.get_tile(0, 0, 0);
+    let tile = supercluster.tile(0, 0, 0);
 
     for tile_item in &tile.items {
         match &tile_item.item {
@@ -74,6 +72,8 @@ fn main() -> Result<(), SuperclusterError> {
 }
 ```
 
+`SuperclusterOptions::default()` gives the default options, and the builder checks every value it sets. A supercluster does not change once it is loaded. To cluster other points, load a new one.
+
 ### GeoJSON
 
 With the `geojson` feature a list of GeoJSON features is loaded as it is, with `load_features`, and what the supercluster returns converts back into GeoJSON.
@@ -85,7 +85,7 @@ supercluster = { version = "4.0.0", features = ["geojson"] }
 
 ```rust,ignore
 use geojson::{Feature, Geometry};
-use supercluster::{Supercluster, SuperclusterBuilder, SuperclusterError};
+use supercluster::{Supercluster, SuperclusterError, SuperclusterOptions};
 
 fn main() -> Result<(), SuperclusterError> {
     let features: Vec<Feature> = [[-77.032, 38.913], [-77.033, 38.913]]
@@ -93,11 +93,9 @@ fn main() -> Result<(), SuperclusterError> {
         .map(|point| Feature::from(Geometry::new_point(point)))
         .collect();
 
-    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build()?);
+    let supercluster = Supercluster::load_features(SuperclusterOptions::default(), features)?;
 
-    supercluster.load_features(features)?;
-
-    let tile = supercluster.get_tile(0, 0, 0).to_feature_collection();
+    let tile = supercluster.tile(0, 0, 0).to_feature_collection();
 
     println!("Tile: {:?}", tile);
 
@@ -110,7 +108,7 @@ fn main() -> Result<(), SuperclusterError> {
 Your own types work the same way. The closure returns `None` for a point that has no coordinates, which leaves it out. A point whose coordinates are not finite numbers is left out too.
 
 ```rust
-use supercluster::{Item, Supercluster, SuperclusterBuilder, SuperclusterError};
+use supercluster::{Item, Supercluster, SuperclusterError, SuperclusterOptions};
 
 struct Station {
     name: String,
@@ -119,9 +117,8 @@ struct Station {
 }
 
 fn main() -> Result<(), SuperclusterError> {
-    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build()?);
-
-    supercluster.load_with(
+    let supercluster = Supercluster::load(
+        SuperclusterOptions::default(),
         vec![
             Station { name: "A".to_string(), lng: 4.9, lat: 52.37 },
             Station { name: "B".to_string(), lng: 4.91, lat: 52.37 },
@@ -130,13 +127,13 @@ fn main() -> Result<(), SuperclusterError> {
     )?;
 
     // The two stations are close, so the tile holds a cluster of them
-    let tile = supercluster.get_tile(0, 0, 0);
+    let tile = supercluster.tile(0, 0, 0);
 
     for tile_item in &tile.items {
         if let Item::Cluster(cluster) = &tile_item.item {
-            // The stations of the cluster, as they were loaded
-            for station in supercluster.get_leaves(cluster.id, 10, 0)? {
-                println!("{} is in cluster {}", station.name, cluster.id);
+            // The stations of the cluster, as they were loaded, ten at most
+            for station in supercluster.leaves(cluster.id)?.take(10) {
+                println!("{} is in cluster {}", station.name, cluster.id.get());
             }
         }
     }
@@ -145,29 +142,68 @@ fn main() -> Result<(), SuperclusterError> {
 }
 ```
 
-### Filtering and mapping tiles
+A cluster ID is a `ClusterId`. Send its number to a client with `get()` or `usize::from`, and turn the number the client sends back into an ID with `ClusterId::new` or `ClusterId::from`.
 
-The `TileBuilder` trait builds the items of a tile while it filters the points inside the clusters, for example the ones that match a search, and maps every cluster or point to the type of your response.
-A cluster moves to the center of the points that are left after the filter.
-See the [`tile_builder`](https://github.com/chargetrip/supercluster-rs/blob/main/examples/tile_builder.rs) example.
+### Filtering tiles
+
+`tile_filtered` keeps only the points that pass a filter, for example the ones that match a search. A cluster without any point left is left out, and a cluster with a few points left moves to their center. Map the items to the type of your response with an iterator.
+
+```rust
+use supercluster::{Supercluster, SuperclusterError, SuperclusterOptions};
+
+struct Station {
+    lng: f64,
+    lat: f64,
+    available: bool,
+}
+
+fn main() -> Result<(), SuperclusterError> {
+    let supercluster = Supercluster::load(
+        SuperclusterOptions::default(),
+        vec![
+            Station { lng: 4.9, lat: 52.37, available: true },
+            Station { lng: 4.91, lat: 52.37, available: false },
+        ],
+        |station| Some([station.lng, station.lat]),
+    )?;
+
+    // The cluster holds the available station only, and moves onto it
+    let positions: Vec<[f64; 2]> = supercluster
+        .tile_filtered(0, 0, 0, |station| station.available)
+        .into_iter()
+        .map(|tile_item| [tile_item.x, tile_item.y])
+        .collect();
+
+    assert_eq!(positions.len(), 1);
+
+    Ok(())
+}
+```
+
+`cluster_expansion_zoom_filtered` finds the zoom level where a cluster expands, counting only the points that pass a filter. See the [`filtered_tile`](https://github.com/chargetrip/supercluster-rs/blob/main/examples/filtered_tile.rs) example.
 
 ### Lowering the zoom level to cluster on
 
-`get_tile_with_cluster_max_zoom` and `get_cluster_expansion_zoom_with` take a maximum zoom level to cluster on, which can lower the `max_zoom` of the supercluster for a single request but not raise it.
+`with_cluster_max_zoom` returns a view of the supercluster that clusters up to a lower zoom level, for a single request. It can lower the `max_zoom` of the options but not raise it. Above that zoom level, the view returns the points instead of clusters. The view has the same queries: `clusters`, `tile`, `tile_filtered`, `cluster_expansion_zoom` and `cluster_expansion_zoom_filtered`.
 
 ## Upgrading from 3.x
 
 Version 4 makes the supercluster generic over the type of the points.
 
-- `Supercluster` is now `Supercluster<P>`, and `load(features)` is `load_features(features)` with the `geojson` feature. `load_with(points, coordinates)` loads any other type. Create the options with `SuperclusterBuilder::new()`.
-- The `cluster_metadata` feature is gone, so remove it from your `Cargo.toml`. The GeoJSON features of clusters always have their `cluster`, `cluster_id`, `point_count` and `point_count_abbreviated` properties. The `geojson` feature holds all GeoJSON support and is not on by default anymore, so enable it with `supercluster = { version = "4.0.0", features = ["geojson"] }` if you use GeoJSON features.
+- `Supercluster` is now `Supercluster<P>`, and it is built in one step. `Supercluster::load(options, points, coordinates)` replaces `Supercluster::new(options)` followed by `load(features)`, and with the `geojson` feature `Supercluster::load_features(options, features)` loads GeoJSON features. A supercluster does not change once it is loaded, so load a new one to cluster other points.
+- Create the options with `SuperclusterOptions::builder()` instead of `Supercluster::builder()`, or use `SuperclusterOptions::default()`. `build()` returns a `Result`, so add a `?` after it. It gives an error for a `max_zoom` above 30, a `min_zoom` above the `max_zoom`, a radius or extent that is not a finite number above 0, a `node_size` of 0 and a `DataRange` that cannot scale the data. `SuperclusterOptions` and the builder cannot be built with a struct literal anymore, and deserializing the options with the `serde` feature checks the same values.
+- Create a `DataRange` with `DataRange::new(min_x, min_y, max_x, max_y)`. Its `offset` and `scale` fields are gone.
+- Import everything from the crate root, such as `supercluster::Supercluster`. The modules are not public anymore.
+- The queries lose their `get_` prefix, as the Rust API guidelines ask: `get_clusters`, `get_children`, `get_leaves`, `get_tile` and `get_cluster_expansion_zoom` are now `clusters`, `children`, `leaves`, `tile` and `cluster_expansion_zoom`.
 - The queries return `Item`s and a `Tile` instead of GeoJSON. Call `to_feature()` or `to_feature_collection()` to get GeoJSON features, whose tile geometry holds the position in the tile.
-- `get_tile` returns an empty `Tile` instead of the `TileNotFound` error. `SuperclusterError::TreeNotFound` and `TileNotFound` are gone, and unknown clusters give `ClusterNotFound` for `get_children`, `get_leaves` and `get_cluster_expansion_zoom`.
-- `get_tile`, `get_tile_with_cluster_max_zoom` and `TileCoordinates` take whole numbers (`u32`) for the tile coordinates instead of `f64`.
-- `get_tile` does not show items from the opposite edge of the data on the first and last tile for the `Cartesian` coordinate system, because the two ends of its range are not next to each other. `LatLng` still does.
-- `get_leaves` takes the points of a cluster from an index, so it does not walk the clusters anymore. A `limit` of 0 gives no points.
+- A cluster ID is a `ClusterId` instead of a `usize`. `children`, `leaves` and `cluster_expansion_zoom` take one. `ClusterId::new` or `ClusterId::from` turns a number into an ID, and `get()` or `usize::from` turns it back.
+- `leaves` returns an iterator over the points of a cluster instead of taking a `limit` and an `offset`. Use `skip(offset)` and `take(limit)` on it.
+- `cluster_expansion_zoom` returns a `Result` with a `u8`, like the other zoom levels, instead of a `usize`.
+- The `cluster_metadata` feature is gone, so remove it from your `Cargo.toml`. The GeoJSON features of clusters always have their `cluster`, `cluster_id`, `point_count` and `point_count_abbreviated` properties. The `geojson` feature holds all GeoJSON support and is not on by default anymore, so enable it with `supercluster = { version = "4.0.0", features = ["geojson"] }` if you use GeoJSON features.
+- `tile` returns an empty `Tile` instead of the `TileNotFound` error. `SuperclusterError::TreeNotFound` and `TileNotFound` are gone, and unknown clusters give `ClusterNotFound` for `children`, `leaves` and `cluster_expansion_zoom`.
+- `tile` takes whole numbers (`u32`) for the tile coordinates instead of `f64`.
+- `tile` does not show items from the opposite edge of the data on the first and last tile for the `Cartesian` coordinate system, because the two ends of its range are not next to each other. `LatLng` still does.
 - The fields of `Supercluster` are private. Use `options()` and `points()`. You cannot build `Cluster`, `Tile` or `TileItem` yourself, so we can add fields to them without breaking your code.
-- `SuperclusterBuilder::build()` returns a `Result` and gives an error for a `max_zoom` above 30, a `min_zoom` above the `max_zoom` or a `node_size` of 0, so add a `?` after it. `SuperclusterOptions` cannot be built with a struct literal anymore, and deserializing it with the `serde` feature checks the same values. `load_with` only returns an error for more than `u32::MAX` points.
 - `FeatureBuilder` is gone. Plain coordinates can be loaded as they are, and `geojson` builds a feature with `Feature::from(Geometry::new_point([lng, lat]))`.
 - `KDBush` is not public anymore.
 - Points without coordinates, such as GeoJSON features that are not points, and points whose coordinates are not finite numbers are left out instead of causing a panic.

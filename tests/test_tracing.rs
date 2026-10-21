@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use supercluster::{Supercluster, SuperclusterBuilder};
+use supercluster::{ClusterId, Supercluster, SuperclusterOptions};
 use tracing::Level;
 use tracing_subscriber::fmt::MakeWriter;
 
@@ -67,15 +67,13 @@ fn test_load_reports_points_without_coordinates() {
     let buffer = Buffer::default();
 
     with_subscriber(&buffer, || {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
-
         // A point that is `None` has no coordinates
-        supercluster
-            .load_with(
-                vec![Some([10.0, 50.0]), Some([10.0001, 50.0]), None],
-                |point| *point,
-            )
-            .unwrap();
+        Supercluster::load(
+            SuperclusterOptions::default(),
+            vec![Some([10.0, 50.0]), Some([10.0001, 50.0]), None],
+            |point| *point,
+        )
+        .unwrap();
     });
 
     let output = buffer.output();
@@ -91,14 +89,12 @@ fn test_load_reports_points_with_coordinates_that_are_not_finite() {
     let buffer = Buffer::default();
 
     with_subscriber(&buffer, || {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
-
-        supercluster
-            .load_with(
-                vec![[10.0, 50.0], [f64::NAN, 50.0], [10.0, f64::INFINITY]],
-                |point| Some(*point),
-            )
-            .unwrap();
+        Supercluster::load(
+            SuperclusterOptions::default(),
+            vec![[10.0, 50.0], [f64::NAN, 50.0], [10.0, f64::INFINITY]],
+            |point| Some(*point),
+        )
+        .unwrap();
     });
 
     let output = buffer.output();
@@ -113,11 +109,12 @@ fn test_load_does_not_warn_when_every_point_has_coordinates() {
     let buffer = Buffer::default();
 
     with_subscriber(&buffer, || {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
-
-        supercluster
-            .load_with(vec![[10.0, 50.0], [10.0001, 50.0]], |point| Some(*point))
-            .unwrap();
+        Supercluster::load(
+            SuperclusterOptions::default(),
+            vec![[10.0, 50.0], [10.0001, 50.0]],
+            |point| Some(*point),
+        )
+        .unwrap();
     });
 
     assert!(!buffer.output().contains("WARN"));
@@ -128,11 +125,12 @@ fn test_load_logs_a_summary() {
     let buffer = Buffer::default();
 
     with_subscriber(&buffer, || {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
-
-        supercluster
-            .load_with(vec![[10.0, 50.0], [10.0001, 50.0]], |point| Some(*point))
-            .unwrap();
+        Supercluster::load(
+            SuperclusterOptions::default(),
+            vec![[10.0, 50.0], [10.0001, 50.0]],
+            |point| Some(*point),
+        )
+        .unwrap();
     });
 
     let output = buffer.output();
@@ -150,11 +148,12 @@ fn test_load_traces_every_zoom_level() {
     let buffer = Buffer::default();
 
     with_subscriber(&buffer, || {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
-
-        supercluster
-            .load_with(vec![[10.0, 50.0], [10.0001, 50.0]], |point| Some(*point))
-            .unwrap();
+        Supercluster::load(
+            SuperclusterOptions::default(),
+            vec![[10.0, 50.0], [10.0001, 50.0]],
+            |point| Some(*point),
+        )
+        .unwrap();
     });
 
     let output = buffer.output();
@@ -174,11 +173,12 @@ fn test_load_traces_every_zoom_level() {
 /// A server queries all the time, so a query must not report anything.
 fn get_output_of_query(query: impl FnOnce(&Supercluster<[f64; 2]>)) -> String {
     let buffer = Buffer::default();
-    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
-
-    supercluster
-        .load_with(vec![[10.0, 50.0], [10.0001, 50.0]], |point| Some(*point))
-        .unwrap();
+    let supercluster = Supercluster::load(
+        SuperclusterOptions::default(),
+        vec![[10.0, 50.0], [10.0001, 50.0]],
+        |point| Some(*point),
+    )
+    .unwrap();
 
     with_subscriber(&buffer, || query(&supercluster));
 
@@ -186,50 +186,50 @@ fn get_output_of_query(query: impl FnOnce(&Supercluster<[f64; 2]>)) -> String {
 }
 
 #[test]
-fn test_get_tile_traces_nothing() {
+fn test_tile_traces_nothing() {
     assert_eq!(
         get_output_of_query(|supercluster| {
-            supercluster.get_tile(0, 0, 0);
+            supercluster.tile(0, 0, 0);
         }),
         ""
     );
 }
 
 #[test]
-fn test_get_clusters_traces_nothing() {
+fn test_clusters_traces_nothing() {
     assert_eq!(
         get_output_of_query(|supercluster| {
-            supercluster.get_clusters([-180.0, -90.0, 180.0, 90.0], 3);
+            supercluster.clusters([-180.0, -90.0, 180.0, 90.0], 3);
         }),
         ""
     );
 }
 
 #[test]
-fn test_get_children_traces_nothing() {
+fn test_children_traces_nothing() {
     assert_eq!(
         get_output_of_query(|supercluster| {
-            let _ = supercluster.get_children(5);
+            let _ = supercluster.children(ClusterId::new(5));
         }),
         ""
     );
 }
 
 #[test]
-fn test_get_leaves_traces_nothing() {
+fn test_leaves_traces_nothing() {
     assert_eq!(
         get_output_of_query(|supercluster| {
-            let _ = supercluster.get_leaves(5, 10, 0);
+            let _ = supercluster.leaves(ClusterId::new(5));
         }),
         ""
     );
 }
 
 #[test]
-fn test_get_cluster_expansion_zoom_traces_nothing() {
+fn test_cluster_expansion_zoom_traces_nothing() {
     assert_eq!(
         get_output_of_query(|supercluster| {
-            let _ = supercluster.get_cluster_expansion_zoom(5);
+            let _ = supercluster.cluster_expansion_zoom(ClusterId::new(5));
         }),
         ""
     );

@@ -23,6 +23,20 @@ pub enum SuperclusterError {
     #[error("The minimum zoom level cannot be above the maximum zoom level.")]
     InvalidMinZoom,
 
+    /// The cluster radius is not a finite number above 0.
+    #[error("The radius must be a finite number above 0.")]
+    InvalidRadius,
+
+    /// The tile extent is not a finite number above 0.
+    #[error("The extent must be a finite number above 0.")]
+    InvalidExtent,
+
+    /// The data range of the `Cartesian` coordinate system cannot normalize coordinates.
+    #[error(
+        "The data range must have finite bounds, no maximum below its minimum and more than one value."
+    )]
+    InvalidDataRange,
+
     /// The node size of the KD-tree is 0.
     #[error("The node size cannot be 0.")]
     InvalidNodeSize,
@@ -49,6 +63,30 @@ mod tests {
         assert_eq!(
             SuperclusterError::InvalidMinZoom.to_string(),
             "The minimum zoom level cannot be above the maximum zoom level."
+        );
+    }
+
+    #[test]
+    fn test_invalid_radius_message() {
+        assert_eq!(
+            SuperclusterError::InvalidRadius.to_string(),
+            "The radius must be a finite number above 0."
+        );
+    }
+
+    #[test]
+    fn test_invalid_extent_message() {
+        assert_eq!(
+            SuperclusterError::InvalidExtent.to_string(),
+            "The extent must be a finite number above 0."
+        );
+    }
+
+    #[test]
+    fn test_invalid_data_range_message() {
+        assert_eq!(
+            SuperclusterError::InvalidDataRange.to_string(),
+            "The data range must have finite bounds, no maximum below its minimum and more than one value."
         );
     }
 

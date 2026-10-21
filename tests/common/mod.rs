@@ -23,13 +23,7 @@ pub fn get_data_range(data: &[Feature]) -> Option<DataRange> {
     }
 
     if min_x.is_finite() && min_y.is_finite() && max_x.is_finite() && max_y.is_finite() {
-        Some(DataRange {
-            min_x,
-            max_x,
-            min_y,
-            max_y,
-            ..Default::default()
-        })
+        Some(DataRange::new(min_x, min_y, max_x, max_y))
     } else {
         None
     }

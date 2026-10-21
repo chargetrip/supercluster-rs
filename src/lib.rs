@@ -5,17 +5,17 @@
 
 /// Supercluster builder module.
 /// This module contains the builder pattern for the supercluster configuration settings.
-pub mod builder;
+mod builder;
 
 /// Supercluster error module.
 /// This module contains the error types for the supercluster crate.
-pub mod error;
+mod error;
 
 /// GeoJSON feature module.
 /// This module contains the GeoJSON support of the supercluster crate.
 /// It is available with the `geojson` feature.
 #[cfg(feature = "geojson")]
-pub mod feature;
+mod feature;
 
 /// KDBush module.
 /// This module contains the KDBush implementation the supercluster uses to find points.
@@ -23,18 +23,18 @@ mod kdbush;
 
 /// Range module.
 /// This module contains the range implementation for the supercluster crate.
-pub mod range;
+mod range;
 
 /// Supercluster module.
 /// This module contains the supercluster implementation for the supercluster crate.
-pub mod supercluster;
+mod supercluster;
 
-/// Tile builder module.
-/// This module contains the tile builder, which filters and maps the items of a tile.
-pub mod tile_builder;
+/// Filtered tile module.
+/// This module contains the query that builds a tile from the points that pass a filter.
+mod filtered_tile;
 
 pub use builder::*;
 pub use error::*;
+pub use filtered_tile::*;
 pub use range::*;
 pub use supercluster::*;
-pub use tile_builder::*;

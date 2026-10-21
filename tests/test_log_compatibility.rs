@@ -6,7 +6,7 @@
 use std::sync::Mutex;
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
-use supercluster::{Supercluster, SuperclusterBuilder};
+use supercluster::{Supercluster, SuperclusterOptions};
 
 /// Keeps the log records in memory.
 struct MemoryLogger {
@@ -39,15 +39,13 @@ fn test_load_is_logged_without_a_tracing_subscriber() {
     log::set_logger(&LOGGER).unwrap();
     log::set_max_level(LevelFilter::Debug);
 
-    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
-
-    supercluster
-        // A point that is `None` has no coordinates
-        .load_with(
-            vec![Some([10.0, 50.0]), Some([10.0001, 50.0]), None],
-            |point| *point,
-        )
-        .unwrap();
+    // A point that is `None` has no coordinates
+    Supercluster::load(
+        SuperclusterOptions::default(),
+        vec![Some([10.0, 50.0]), Some([10.0001, 50.0]), None],
+        |point| *point,
+    )
+    .unwrap();
 
     let records = LOGGER.records.lock().unwrap();
 

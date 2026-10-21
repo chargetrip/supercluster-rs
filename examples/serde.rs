@@ -23,14 +23,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         }"#,
     )?;
 
-    // Create a new instance with the specified configuration settings
-    let mut supercluster = Supercluster::new(options);
+    // Load the features into a new supercluster
+    let supercluster = Supercluster::load_features(options, features)?;
 
-    // Load features into the Supercluster instance
-    supercluster.load_features(features)?;
-
-    // Get a tile from the Supercluster instance
-    let tile = supercluster.get_tile(0, 0, 0).to_feature_collection();
+    // Get a tile
+    let tile = supercluster.tile(0, 0, 0).to_feature_collection();
 
     println!("tile: {}", serde_json::to_string(&tile)?);
 

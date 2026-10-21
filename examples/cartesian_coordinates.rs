@@ -1,6 +1,6 @@
 use geojson::{Feature, Geometry};
 use supercluster::{
-    CoordinateSystem, DataRange, Supercluster, SuperclusterBuilder, SuperclusterError,
+    CoordinateSystem, DataRange, Supercluster, SuperclusterError, SuperclusterOptions,
 };
 
 fn main() -> Result<(), SuperclusterError> {
@@ -11,30 +11,21 @@ fn main() -> Result<(), SuperclusterError> {
         .collect();
 
     // Set the configuration settings for Cartesian coordinates
-    let options = SuperclusterBuilder::new()
+    let options = SuperclusterOptions::builder()
         .radius(40.0)
         .extent(512.0)
         .min_points(2)
         .max_zoom(16)
         .coordinate_system(CoordinateSystem::Cartesian {
-            range: DataRange {
-                min_x: 0.0,
-                max_x: 2.0,
-                min_y: 0.0,
-                max_y: 2.0,
-                ..Default::default()
-            },
+            range: DataRange::new(0.0, 0.0, 2.0, 2.0),
         })
         .build()?;
 
-    // Create a new instance with the specified configuration settings
-    let mut supercluster = Supercluster::new(options);
+    // Load the features into a new supercluster
+    let supercluster = Supercluster::load_features(options, features)?;
 
-    // Load the features into the Supercluster instance
-    supercluster.load_features(features)?;
-
-    // Get a tile from the Supercluster instance
-    let tile = supercluster.get_tile(0, 0, 0);
+    // Get a tile
+    let tile = supercluster.tile(0, 0, 0);
 
     println!("Tile: {:?}", tile.to_feature_collection());
 

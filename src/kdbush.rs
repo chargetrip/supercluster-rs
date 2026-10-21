@@ -30,16 +30,8 @@ pub struct KDBush {
 }
 
 impl KDBush {
-    /// Create a new KDBush index with the specified node size and room for the points that will be added.
-    ///
-    /// # Arguments
-    ///
-    /// - `size`: The number of points that will be added to the index.
-    /// - `node_size`: The maximum number of points in a leaf node of the KD-tree.
-    ///
-    /// # Returns
-    ///
-    /// A new `KDBush` instance with the given configuration.
+    /// Create an empty index with room for `size` points, whose leaf nodes hold up to `node_size`
+    /// points.
     pub fn new(size: usize, node_size: usize) -> Self {
         KDBush {
             node_size,
@@ -50,11 +42,6 @@ impl KDBush {
     }
 
     /// Add a 2D point to the KDBush index.
-    ///
-    /// # Arguments
-    ///
-    /// - `x`: The X-coordinate of the point (longitude).
-    /// - `y`: The Y-coordinate of the point (latitude).
     pub fn add_point(&mut self, x: f64, y: f64) {
         self.coords.push(x);
         self.coords.push(y);
@@ -75,18 +62,7 @@ impl KDBush {
         tracing::trace!(points = self.ids.len(), "Built a KDBush index");
     }
 
-    /// Find all point indices within the specified bounding box defined by minimum and maximum coordinates.
-    ///
-    /// # Arguments
-    ///
-    /// - `min_x`: The minimum X-coordinate (longitude) of the bounding box.
-    /// - `min_y`: The minimum Y-coordinate (latitude) of the bounding box.
-    /// - `max_x`: The maximum X-coordinate (longitude) of the bounding box.
-    /// - `max_y`: The maximum Y-coordinate (latitude) of the bounding box.
-    ///
-    /// # Returns
-    ///
-    /// A vector of point indices that fall within the specified bounding box.
+    /// Find the indices of the points in a bounding box, edges included.
     pub fn range(&self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<usize> {
         if self.ids.is_empty() {
             return Vec::new();
@@ -132,18 +108,9 @@ impl KDBush {
         result
     }
 
-    /// Find all point indices within a given radius from a query point, writing them into buffers
-    /// that the caller reuses between queries. This avoids allocating two vectors for every query,
-    /// which adds up when you query every point of a large index.
-    ///
-    /// # Arguments
-    ///
-    /// - `qx`: The X-coordinate (longitude) of the query point.
-    /// - `qy`: The Y-coordinate (latitude) of the query point.
-    /// - `radius`: The radius around the query point.
-    /// - `stack`: The buffer the search works in. The search clears it first.
-    /// - `result`: The buffer that receives the point indices within the specified radius. The
-    ///   search clears it first.
+    /// Find the indices of the points within `radius` of the point `qx`, `qy` and write them into
+    /// `result`. The search works in `stack`. The caller reuses both buffers between queries, which
+    /// avoids allocating two vectors for every query, and the search clears them first.
     pub fn within_into(
         &self,
         qx: f64,
@@ -198,15 +165,8 @@ impl KDBush {
         }
     }
 
-    /// Sort points in the KD-tree along a specified axis.
-    ///
-    /// This method sorts the points in the KD-tree along a specified axis (0 for X or 1 for Y).
-    ///
-    /// # Arguments
-    ///
-    /// - `left`: The left index for the range of points to be sorted.
-    /// - `right`: The right index for the range of points to be sorted.
-    /// - `axis`: The axis along which the points should be sorted (0 for X or 1 for Y).
+    /// Sort the points from `left` to `right`, both included, into a KD-tree that splits first along
+    /// `axis` (0 for X or 1 for Y).
     fn sort(&mut self, left: usize, right: usize, axis: usize) {
         if right - left <= self.node_size {
             return;
@@ -220,17 +180,8 @@ impl KDBush {
         self.sort(m + 1, right, 1 - axis);
     }
 
-    /// Select the k-th element along a specified axis within a range of indices.
-    ///
-    /// This method selects the k-th element along the specified axis (0 for X or 1 for Y)
-    /// within the given range of indices.
-    ///
-    /// # Arguments
-    ///
-    /// - `k`: The index of the element to be selected.
-    /// - `left`: The left index for the range of points.
-    /// - `right`: The right index for the range of points.
-    /// - `axis`: The axis along which the selection should be performed (0 for X or 1 for Y).
+    /// Move the points from `left` to `right`, both included, so the `k`-th one along `axis` (0 for X
+    /// or 1 for Y) is in place, with smaller values before it and larger ones after it.
     fn select(&mut self, k: usize, left: usize, right: usize, axis: usize) {
         let mut left = left;
         let mut right = right;
@@ -302,15 +253,6 @@ impl KDBush {
     }
 
     /// Return the maximum of two values.
-    ///
-    /// # Arguments
-    ///
-    /// - `a`: The first value.
-    /// - `b`: The second value.
-    ///
-    /// # Returns
-    ///
-    /// The maximum of the two values.
     fn get_max(a: usize, b: usize) -> usize {
         if a > b {
             a
@@ -320,15 +262,6 @@ impl KDBush {
     }
 
     /// Return the minimum of two values.
-    ///
-    /// # Arguments
-    ///
-    /// - `a`: The first value.
-    /// - `b`: The second value.
-    ///
-    /// # Returns
-    ///
-    /// The minimum of the two values.
     fn get_min(a: usize, b: usize) -> usize {
         if a < b {
             a
@@ -338,11 +271,6 @@ impl KDBush {
     }
 
     /// Swap the elements at two specified indices in the KD-tree data structures.
-    ///
-    /// # Arguments
-    ///
-    /// - `i`: The index of the first element.
-    /// - `j`: The index of the second element.
     fn swap_item(&mut self, i: usize, j: usize) {
         self.ids.swap(i, j);
 
@@ -351,17 +279,6 @@ impl KDBush {
     }
 
     /// Compute the square of the Euclidean distance between two points in a 2D space.
-    ///
-    /// # Arguments
-    ///
-    /// - `ax`: The x-coordinate of the first point.
-    /// - `ay`: The y-coordinate of the first point.
-    /// - `bx`: The x-coordinate of the second point.
-    /// - `by`: The y-coordinate of the second point.
-    ///
-    /// # Returns
-    ///
-    /// The square of the Euclidean distance between the two points.
     fn sq_dist(ax: f64, ay: f64, bx: f64, by: f64) -> f64 {
         let dx = ax - bx;
         let dy = ay - by;

@@ -68,8 +68,8 @@ name = "custom_point"
 path = "examples/custom_point.rs"
 
 [[example]]
-name = "tile_builder"
-path = "examples/tile_builder.rs"
+name = "filtered_tile"
+path = "examples/filtered_tile.rs"
 
 [[example]]
 name = "tracing"
