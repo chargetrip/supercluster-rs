@@ -8,7 +8,7 @@ struct Station {
 }
 
 fn main() -> Result<(), SuperclusterError> {
-    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build()?);
 
     // The stations are kept as they are, nothing is converted or copied. The closure tells where
     // a station is.

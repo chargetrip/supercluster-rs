@@ -132,29 +132,9 @@ impl KDBush {
         result
     }
 
-    /// Find all point indices within a given radius from a query point specified by coordinates.
-    ///
-    /// # Arguments
-    ///
-    /// - `qx`: The X-coordinate (longitude) of the query point.
-    /// - `qy`: The Y-coordinate (latitude) of the query point.
-    /// - `radius`: The radius around the query point.
-    ///
-    /// # Returns
-    ///
-    /// A vector of point indices that fall within the specified radius from the query point.
-    pub fn within(&self, qx: f64, qy: f64, radius: f64) -> Vec<usize> {
-        let mut stack = vec![];
-        let mut result = vec![];
-
-        self.within_into(qx, qy, radius, &mut stack, &mut result);
-
-        result
-    }
-
-    /// Find all point indices within a given radius from a query point, like `within`, but write
-    /// them into buffers that the caller reuses between queries. This avoids allocating two
-    /// vectors for every query, which adds up when you query every point of a large index.
+    /// Find all point indices within a given radius from a query point, writing them into buffers
+    /// that the caller reuses between queries. This avoids allocating two vectors for every query,
+    /// which adds up when you query every point of a large index.
     ///
     /// # Arguments
     ///
@@ -162,8 +142,8 @@ impl KDBush {
     /// - `qy`: The Y-coordinate (latitude) of the query point.
     /// - `radius`: The radius around the query point.
     /// - `stack`: The buffer the search works in. The search clears it first.
-    /// - `result`: The buffer that receives the point indices within the specified radius, in the
-    ///   order `within` returns them. The search clears it first.
+    /// - `result`: The buffer that receives the point indices within the specified radius. The
+    ///   search clears it first.
     pub fn within_into(
         &self,
         qx: f64,
@@ -557,11 +537,38 @@ mod tests {
 
         index.within_into(50.0, 50.0, 20.0, &mut stack, &mut result);
 
-        assert_eq!(result, index.within(50.0, 50.0, 20.0));
+        let expected_ids = vec![60, 6, 25, 92, 42, 20, 45, 3, 71, 44, 18, 96];
 
+        assert_eq!(result, expected_ids);
+
+        let r2 = 20.0 * 20.0;
+
+        for &i in &result {
+            let p = POINTS[i];
+
+            if KDBush::sq_dist(p[0], p[1], 50.0, 50.0) > r2 {
+                panic!();
+            }
+        }
+
+        for (i, p) in POINTS.iter().enumerate() {
+            if !result.contains(&i) && KDBush::sq_dist(p[0], p[1], 50.0, 50.0) <= r2 {
+                panic!();
+            }
+        }
+
+        // A second query with the same buffers gets the second query's result, not a mix of both
         index.within_into(10.0, 10.0, 5.0, &mut stack, &mut result);
 
-        assert_eq!(result, index.within(10.0, 10.0, 5.0));
+        let r2 = 5.0 * 5.0;
+
+        for &i in &result {
+            let p = POINTS[i];
+
+            if KDBush::sq_dist(p[0], p[1], 10.0, 10.0) > r2 {
+                panic!();
+            }
+        }
     }
 
     #[test]
@@ -570,7 +577,12 @@ mod tests {
 
         index.build_index();
 
-        assert!(index.within(50.0, 50.0, 100.0).is_empty());
+        let mut stack = vec![];
+        let mut result = vec![];
+
+        index.within_into(50.0, 50.0, 100.0, &mut stack, &mut result);
+
+        assert!(result.is_empty());
     }
 
     #[test]
@@ -620,38 +632,6 @@ mod tests {
 
         for (i, p) in POINTS.iter().enumerate() {
             if !(result.contains(&i) || p[0] < 20.0 || p[0] > 50.0 || p[1] < 30.0 || p[1] > 70.0) {
-                panic!();
-            }
-        }
-    }
-
-    #[test]
-    fn test_within() {
-        let mut index = KDBush::new(POINTS.len(), 10);
-
-        for point in POINTS.iter() {
-            index.add_point(point[0], point[1]);
-        }
-
-        index.build_index();
-
-        let result = index.within(50.0, 50.0, 20.0);
-        let expected_ids = vec![60, 6, 25, 92, 42, 20, 45, 3, 71, 44, 18, 96];
-
-        assert_eq!(result, expected_ids);
-
-        let r2 = 20.0 * 20.0;
-
-        for &i in &result {
-            let p = POINTS[i];
-
-            if KDBush::sq_dist(p[0], p[1], 50.0, 50.0) > r2 {
-                panic!();
-            }
-        }
-
-        for (i, p) in POINTS.iter().enumerate() {
-            if !result.contains(&i) && KDBush::sq_dist(p[0], p[1], 50.0, 50.0) <= r2 {
                 panic!();
             }
         }

@@ -3,7 +3,9 @@
 //! Contains the `TileBuilder` trait, which builds the items of a tile while filtering the points
 //! inside clusters and mapping every cluster or point to a type of the caller's choice.
 
-use crate::{Cluster, Item, Supercluster, SuperclusterError, TileItem};
+use crate::{
+    supercluster::tiles_per_axis, Cluster, Item, Supercluster, SuperclusterError, TileItem,
+};
 
 /// The number of points below which a filtered cluster is moved to the center of the points that
 /// are left.
@@ -83,7 +85,8 @@ pub trait TileBuilder<P, U> {
     ///
     /// The mapped items of the tile, which are none when the tile is empty.
     fn build(&self, supercluster: &Supercluster<P>) -> Result<Vec<U>, SuperclusterError> {
-        let TileCoordinates { x, y, z } = self.get_tile_coordinates();
+        let tile_coordinates = self.get_tile_coordinates();
+        let TileCoordinates { x, y, z } = tile_coordinates;
         let tile = supercluster.get_tile_with_cluster_max_zoom(
             z,
             x,
@@ -93,7 +96,9 @@ pub trait TileBuilder<P, U> {
 
         tile.items
             .iter()
-            .filter_map(|tile_item| reduce_item(self, supercluster, tile_item).transpose())
+            .filter_map(|tile_item| {
+                reduce_item(self, supercluster, tile_coordinates, tile_item).transpose()
+            })
             .collect()
     }
 }
@@ -104,6 +109,7 @@ pub trait TileBuilder<P, U> {
 ///
 /// - `builder`: The builder with the filter and the map.
 /// - `supercluster`: The supercluster the tile is built from.
+/// - `tile_coordinates`: The coordinates of the tile, as `build` already read them from `builder`.
 /// - `tile_item`: The item of the tile, a cluster or a point.
 ///
 /// # Returns
@@ -112,28 +118,29 @@ pub trait TileBuilder<P, U> {
 fn reduce_item<P, U, B>(
     builder: &B,
     supercluster: &Supercluster<P>,
+    tile_coordinates: TileCoordinates,
     tile_item: &TileItem<'_, P>,
 ) -> Result<Option<U>, SuperclusterError>
 where
     B: TileBuilder<P, U> + ?Sized,
 {
-    let indexes: Vec<usize> = match &tile_item.item {
+    let (indexes, points): (Vec<usize>, Vec<&P>) = match &tile_item.item {
         Item::Cluster(cluster) => supercluster
             .iter_leaf_indices(cluster.id)?
-            .filter(|&index| builder.filter(&supercluster.points()[index]))
-            .collect(),
-        Item::Point { index, point } if builder.filter(point) => vec![*index],
-        Item::Point { .. } => vec![],
+            .filter_map(|index| {
+                let point = &supercluster.points()[index];
+
+                builder.filter(point).then_some((index, point))
+            })
+            .unzip(),
+        Item::Point { index, point } if builder.filter(point) => (vec![*index], vec![*point]),
+        Item::Point { .. } => (vec![], vec![]),
     };
 
     if indexes.is_empty() {
         return Ok(None);
     }
 
-    let points: Vec<&P> = indexes
-        .iter()
-        .map(|&index| &supercluster.points()[index])
-        .collect();
     let mut coordinates = [tile_item.x, tile_item.y];
 
     if let Item::Cluster(cluster) = &tile_item.item {
@@ -146,13 +153,8 @@ where
         };
 
         if let Some(center) = center {
-            coordinates = get_center_position(
-                supercluster,
-                builder.get_tile_coordinates(),
-                tile_item,
-                cluster,
-                center,
-            );
+            coordinates =
+                get_center_position(supercluster, tile_coordinates, tile_item, cluster, center);
         }
     }
 
@@ -182,7 +184,7 @@ fn get_center_position<P>(
     cluster: &Cluster,
     center: [f64; 2],
 ) -> [f64; 2] {
-    let z2 = 2f64.powi(tile.z as i32);
+    let z2 = tiles_per_axis(tile.z);
     let (x, y) = supercluster.normalize(center);
     let (cluster_x, _) = supercluster.normalize([cluster.x, cluster.y]);
     let shown_x = (tile_item.x / supercluster.options().extent + f64::from(tile.x)) / z2;
@@ -330,7 +332,8 @@ mod tests {
         tile: TileCoordinates,
         cluster_max_zoom_override: Option<u8>,
     ) -> Vec<Mapped> {
-        let mut supercluster = Supercluster::<TestPoint>::new(SuperclusterBuilder::new().build());
+        let mut supercluster =
+            Supercluster::<TestPoint>::new(SuperclusterBuilder::new().build().unwrap());
 
         supercluster
             .load_with(
@@ -460,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_build_without_loaded_points() {
-        let supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+        let supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
         let builder = TestBuilder {
             tile: WORLD_TILE,
             cluster_max_zoom_override: None,
@@ -476,7 +479,7 @@ mod tests {
 
     #[test]
     fn test_find_center_without_coordinates() {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
 
         supercluster
             .load_with(

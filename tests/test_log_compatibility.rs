@@ -39,7 +39,7 @@ fn test_load_is_logged_without_a_tracing_subscriber() {
     log::set_logger(&LOGGER).unwrap();
     log::set_max_level(LevelFilter::Debug);
 
-    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
 
     supercluster
         // A point that is `None` has no coordinates

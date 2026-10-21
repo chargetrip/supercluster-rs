@@ -49,7 +49,7 @@ fn main() -> Result<(), SuperclusterError> {
         .extent(512.0)
         .min_points(2)
         .max_zoom(16)
-        .build();
+        .build()?;
 
     // Create a new instance with the specified configuration settings
     let mut supercluster = Supercluster::new(options);
@@ -93,7 +93,7 @@ fn main() -> Result<(), SuperclusterError> {
         .map(|point| Feature::from(Geometry::new_point(point)))
         .collect();
 
-    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build()?);
 
     supercluster.load_features(features)?;
 
@@ -119,7 +119,7 @@ struct Station {
 }
 
 fn main() -> Result<(), SuperclusterError> {
-    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build()?);
 
     supercluster.load_with(
         vec![
@@ -164,9 +164,10 @@ Version 4 makes the supercluster generic over the type of the points.
 - The queries return `Item`s and a `Tile` instead of GeoJSON. Call `to_feature()` or `to_feature_collection()` to get GeoJSON features, whose tile geometry holds the position in the tile.
 - `get_tile` returns an empty `Tile` instead of the `TileNotFound` error. `SuperclusterError::TreeNotFound` and `TileNotFound` are gone, and unknown clusters give `ClusterNotFound` for `get_children`, `get_leaves` and `get_cluster_expansion_zoom`.
 - `get_tile`, `get_tile_with_cluster_max_zoom` and `TileCoordinates` take whole numbers (`u32`) for the tile coordinates instead of `f64`.
+- `get_tile` does not show items from the opposite edge of the data on the first and last tile for the `Cartesian` coordinate system, because the two ends of its range are not next to each other. `LatLng` still does.
 - `get_leaves` takes the points of a cluster from an index, so it does not walk the clusters anymore. A `limit` of 0 gives no points.
 - The fields of `Supercluster` are private. Use `options()` and `points()`. You cannot build `Cluster`, `Tile` or `TileItem` yourself, so we can add fields to them without breaking your code.
-- `load_with` returns an error for a `max_zoom` above 30 or a `node_size` of 0.
+- `SuperclusterBuilder::build()` returns a `Result` and gives an error for a `max_zoom` above 30, a `min_zoom` above the `max_zoom` or a `node_size` of 0, so add a `?` after it. `SuperclusterOptions` cannot be built with a struct literal anymore, and deserializing it with the `serde` feature checks the same values. `load_with` only returns an error for more than `u32::MAX` points.
 - `FeatureBuilder` is gone. Plain coordinates can be loaded as they are, and `geojson` builds a feature with `Feature::from(Geometry::new_point([lng, lat]))`.
 - `KDBush` is not public anymore.
 - Points without coordinates, such as GeoJSON features that are not points, and points whose coordinates are not finite numbers are left out instead of causing a panic.

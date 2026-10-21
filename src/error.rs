@@ -19,6 +19,10 @@ pub enum SuperclusterError {
     #[error("The maximum zoom level cannot be above {}.", MAX_ZOOM_LIMIT)]
     InvalidMaxZoom,
 
+    /// The minimum zoom level is above the maximum zoom level.
+    #[error("The minimum zoom level cannot be above the maximum zoom level.")]
+    InvalidMinZoom,
+
     /// The node size of the KD-tree is 0.
     #[error("The node size cannot be 0.")]
     InvalidNodeSize,
@@ -37,6 +41,14 @@ mod tests {
         assert_eq!(
             SuperclusterError::InvalidMaxZoom.to_string(),
             format!("The maximum zoom level cannot be above {}.", MAX_ZOOM_LIMIT)
+        );
+    }
+
+    #[test]
+    fn test_invalid_min_zoom_message() {
+        assert_eq!(
+            SuperclusterError::InvalidMinZoom.to_string(),
+            "The minimum zoom level cannot be above the maximum zoom level."
         );
     }
 

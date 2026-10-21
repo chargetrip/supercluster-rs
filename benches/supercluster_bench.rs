@@ -16,6 +16,7 @@ fn create_options() -> SuperclusterOptions {
         .max_zoom(16)
         .coordinate_system(CoordinateSystem::LatLng)
         .build()
+        .unwrap()
 }
 
 /// Create points spread over the world with a fixed formula, so every run uses the same points.

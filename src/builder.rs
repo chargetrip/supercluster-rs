@@ -5,11 +5,18 @@
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::CoordinateSystem;
+use crate::{CoordinateSystem, SuperclusterError, MAX_ZOOM_LIMIT};
 
 /// Supercluster configuration options.
+/// The options are valid by construction: only `SuperclusterBuilder::build` and, with the `serde`
+/// feature, deserialization create them, and both check the values.
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize),
+    serde(try_from = "SuperclusterBuilder")
+)]
+#[non_exhaustive]
 pub struct SuperclusterOptions {
     /// Minimal zoom level to generate clusters on.
     /// The default value is 0.
@@ -185,9 +192,11 @@ impl SuperclusterBuilder {
     ///
     /// # Returns
     ///
-    /// The supercluster options.
-    pub fn build(self) -> SuperclusterOptions {
-        SuperclusterOptions {
+    /// The supercluster options, otherwise an error if the maximum zoom level is above
+    /// `MAX_ZOOM_LIMIT`, the minimum zoom level is above the maximum zoom level or the node size is
+    /// 0.
+    pub fn build(self) -> Result<SuperclusterOptions, SuperclusterError> {
+        let options = SuperclusterOptions {
             min_zoom: self.min_zoom.unwrap_or(0),
             max_zoom: self.max_zoom.unwrap_or(16),
             min_points: self.min_points.unwrap_or(2),
@@ -195,7 +204,30 @@ impl SuperclusterBuilder {
             extent: self.extent.unwrap_or(512.0),
             node_size: self.node_size.unwrap_or(64),
             coordinate_system: self.coordinate_system.unwrap_or(CoordinateSystem::LatLng),
+        };
+
+        if options.max_zoom > MAX_ZOOM_LIMIT {
+            return Err(SuperclusterError::InvalidMaxZoom);
         }
+
+        if options.min_zoom > options.max_zoom {
+            return Err(SuperclusterError::InvalidMinZoom);
+        }
+
+        if options.node_size == 0 {
+            return Err(SuperclusterError::InvalidNodeSize);
+        }
+
+        Ok(options)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<SuperclusterBuilder> for SuperclusterOptions {
+    type Error = SuperclusterError;
+
+    fn try_from(builder: SuperclusterBuilder) -> Result<Self, Self::Error> {
+        builder.build()
     }
 }
 
@@ -205,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_supercluster_builder_default() {
-        let options = SuperclusterBuilder::default().build();
+        let options = SuperclusterBuilder::default().build().unwrap();
 
         assert_eq!(options.min_zoom, 0);
         assert_eq!(options.max_zoom, 16);
@@ -226,7 +258,8 @@ mod tests {
             .extent(1024.0)
             .node_size(128)
             .coordinate_system(CoordinateSystem::LatLng)
-            .build();
+            .build()
+            .unwrap();
 
         assert_eq!(options.min_zoom, 1);
         assert_eq!(options.max_zoom, 10);
@@ -235,6 +268,45 @@ mod tests {
         assert_eq!(options.extent, 1024.0);
         assert_eq!(options.node_size, 128);
         assert_eq!(options.coordinate_system, CoordinateSystem::LatLng);
+    }
+
+    #[test]
+    fn test_supercluster_builder_with_invalid_max_zoom() {
+        assert_eq!(
+            SuperclusterBuilder::new().max_zoom(u8::MAX).build().err(),
+            Some(SuperclusterError::InvalidMaxZoom)
+        );
+    }
+
+    #[test]
+    fn test_supercluster_builder_with_invalid_min_zoom() {
+        assert_eq!(
+            SuperclusterBuilder::new()
+                .min_zoom(10)
+                .max_zoom(5)
+                .build()
+                .err(),
+            Some(SuperclusterError::InvalidMinZoom)
+        );
+    }
+
+    #[test]
+    fn test_supercluster_builder_with_invalid_node_size() {
+        assert_eq!(
+            SuperclusterBuilder::new().node_size(0).build().err(),
+            Some(SuperclusterError::InvalidNodeSize)
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_options_from_json_with_invalid_node_size() {
+        let options = serde_json::from_str::<SuperclusterOptions>(r#"{ "node_size": 0 }"#);
+
+        assert!(options
+            .unwrap_err()
+            .to_string()
+            .contains("The node size cannot be 0."));
     }
 
     #[test]

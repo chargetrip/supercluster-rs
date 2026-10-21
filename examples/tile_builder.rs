@@ -47,7 +47,7 @@ impl TileBuilder<Station, String> for AvailableStations {
 }
 
 fn main() -> Result<(), SuperclusterError> {
-    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build()?);
 
     supercluster.load_with(
         vec![

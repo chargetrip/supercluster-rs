@@ -20,6 +20,7 @@ fn create_options() -> SuperclusterOptions {
         .max_zoom(16)
         .coordinate_system(CoordinateSystem::LatLng)
         .build()
+        .unwrap()
 }
 
 /// Create the options of the tests with a low maximum zoom.
@@ -31,6 +32,7 @@ fn create_options_with_low_max_zoom() -> SuperclusterOptions {
         .max_zoom(4)
         .coordinate_system(CoordinateSystem::LatLng)
         .build()
+        .unwrap()
 }
 
 /// Load the places with the options.
@@ -105,7 +107,8 @@ fn test_generate_clusters_with_min_points() {
         .min_points(5)
         .max_zoom(16)
         .coordinate_system(CoordinateSystem::LatLng)
-        .build();
+        .build()
+        .unwrap();
     let supercluster = load_supercluster(options);
     let tile = supercluster.get_tile(0, 0, 0).to_feature_collection();
 
@@ -363,7 +366,8 @@ fn test_cartesian_coordinates() {
         .min_points(2)
         .max_zoom(16)
         .coordinate_system(CoordinateSystem::Cartesian { range })
-        .build();
+        .build()
+        .unwrap();
     let mut supercluster = Supercluster::new(options);
 
     supercluster.load_features(data).unwrap();

@@ -14,7 +14,7 @@
 //!     .map(|point| Feature::from(Geometry::new_point(point)))
 //!     .collect();
 //!
-//! let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+//! let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build()?);
 //!
 //! supercluster.load_features(features)?;
 //!
@@ -129,20 +129,20 @@ impl TileItem<'_, Feature> {
     /// The feature of a cluster, or a copy of the feature that is not clustered, in both cases
     /// with the position in the tile.
     pub fn to_feature(&self) -> Feature {
-        let (id, properties) = match &self.item {
-            Item::Cluster(cluster) => (
-                Some(Id::String(cluster.id.to_string())),
-                Some(cluster.get_properties()),
-            ),
-            Item::Point { point, .. } => (point.id.clone(), point.properties.clone()),
-        };
+        let geometry = Some(Geometry::new_point([self.x, self.y]));
 
-        Feature {
-            id,
-            bbox: None,
-            geometry: Some(Geometry::new_point([self.x, self.y])),
-            properties,
-            foreign_members: None,
+        match &self.item {
+            Item::Cluster(cluster) => Feature {
+                geometry,
+                ..cluster.to_feature()
+            },
+            Item::Point { point, .. } => Feature {
+                id: point.id.clone(),
+                bbox: None,
+                geometry,
+                properties: point.properties.clone(),
+                foreign_members: None,
+            },
         }
     }
 }
@@ -185,7 +185,7 @@ mod tests {
 
     /// Create a supercluster with two close features, which form a cluster on the first zoom levels.
     fn load_features() -> Supercluster<Feature> {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
 
         supercluster
             .load_features(vec![
@@ -200,7 +200,7 @@ mod tests {
     /// Load the features and get the indexes of the ones that are not clustered at the highest zoom
     /// level, which are the features that were not left out.
     fn load_and_get_indexes(features: Vec<Feature>) -> Vec<usize> {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
 
         supercluster.load_features(features).unwrap();
 

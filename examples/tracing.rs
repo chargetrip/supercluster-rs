@@ -26,7 +26,7 @@ fn main() -> Result<(), SuperclusterError> {
         .min_points(2)
         .max_zoom(16)
         .coordinate_system(CoordinateSystem::LatLng)
-        .build();
+        .build()?;
 
     // Create a new instance with the specified configuration settings
     let mut supercluster = Supercluster::new(options);

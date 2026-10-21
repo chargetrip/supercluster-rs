@@ -67,7 +67,7 @@ fn test_load_reports_points_without_coordinates() {
     let buffer = Buffer::default();
 
     with_subscriber(&buffer, || {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
 
         // A point that is `None` has no coordinates
         supercluster
@@ -91,7 +91,7 @@ fn test_load_reports_points_with_coordinates_that_are_not_finite() {
     let buffer = Buffer::default();
 
     with_subscriber(&buffer, || {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
 
         supercluster
             .load_with(
@@ -113,7 +113,7 @@ fn test_load_does_not_warn_when_every_point_has_coordinates() {
     let buffer = Buffer::default();
 
     with_subscriber(&buffer, || {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
 
         supercluster
             .load_with(vec![[10.0, 50.0], [10.0001, 50.0]], |point| Some(*point))
@@ -128,7 +128,7 @@ fn test_load_logs_a_summary() {
     let buffer = Buffer::default();
 
     with_subscriber(&buffer, || {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
 
         supercluster
             .load_with(vec![[10.0, 50.0], [10.0001, 50.0]], |point| Some(*point))
@@ -150,7 +150,7 @@ fn test_load_traces_every_zoom_level() {
     let buffer = Buffer::default();
 
     with_subscriber(&buffer, || {
-        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+        let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
 
         supercluster
             .load_with(vec![[10.0, 50.0], [10.0001, 50.0]], |point| Some(*point))
@@ -174,7 +174,7 @@ fn test_load_traces_every_zoom_level() {
 /// A server queries all the time, so a query must not report anything.
 fn get_output_of_query(query: impl FnOnce(&Supercluster<[f64; 2]>)) -> String {
     let buffer = Buffer::default();
-    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build());
+    let mut supercluster = Supercluster::new(SuperclusterBuilder::new().build().unwrap());
 
     supercluster
         .load_with(vec![[10.0, 50.0], [10.0001, 50.0]], |point| Some(*point))

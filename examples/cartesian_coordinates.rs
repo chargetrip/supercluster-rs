@@ -25,7 +25,7 @@ fn main() -> Result<(), SuperclusterError> {
                 ..Default::default()
             },
         })
-        .build();
+        .build()?;
 
     // Create a new instance with the specified configuration settings
     let mut supercluster = Supercluster::new(options);
