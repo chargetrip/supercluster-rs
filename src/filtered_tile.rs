@@ -349,6 +349,30 @@ mod tests {
     }
 
     #[test]
+    fn test_tile_filtered_with_a_point_that_is_not_clustered() {
+        // The two points are far apart, so the filter rejects one of them on its own
+        let points = [(10.0, 50.0, false), (-100.0, -30.0, true)];
+        let tile = tile_filtered(&points, WORLD_TILE);
+
+        assert_eq!(tile.len(), 1);
+
+        // The point that is left has its index
+        assert_eq!((tile[0].0, tile[0].1), (1, 1));
+    }
+
+    #[test]
+    fn test_clone_of_a_filtered_tile_item_without_a_clone_point() {
+        let supercluster = load(&[(10.0, 50.0, true), (12.0, 50.0, true)]);
+        let items = supercluster.tile_filtered(0, 0, 0, |point| point.keep);
+        let copy = items[0].clone();
+
+        assert_eq!(
+            summarize(std::slice::from_ref(&copy)),
+            summarize(&items[..1])
+        );
+    }
+
+    #[test]
     fn test_tile_filtered_without_points_left() {
         let points = [(10.0, 50.0, false), (12.0, 50.0, false)];
 

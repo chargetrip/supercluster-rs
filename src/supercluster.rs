@@ -1250,6 +1250,26 @@ mod tests {
         )
     }
 
+    /// A point type that does not implement `Clone`, which the items and the view must not require.
+    #[derive(Debug, PartialEq)]
+    struct Unclonable([f64; 2]);
+
+    /// Load two close points that do not implement `Clone`.
+    fn load_unclonable_points() -> Supercluster<Unclonable> {
+        Supercluster::load(
+            SuperclusterOptions::default(),
+            vec![Unclonable([10.0, 50.0]), Unclonable([12.0, 50.0])],
+            |point| Some(point.0),
+        )
+        .unwrap()
+    }
+
+    /// Clone a value through the `Clone` trait. A call on a `Copy` type would make clippy ask for a
+    /// copy instead, and these tests check the `Clone` impls that the types write by hand.
+    fn clone_of<T: Clone>(value: &T) -> T {
+        value.clone()
+    }
+
     /// Check at compile time that a type can be sent to and shared between threads.
     fn assert_send_and_sync<T: Send + Sync>() {}
 
@@ -1279,6 +1299,37 @@ mod tests {
         assert_eq!(id.get(), 42);
         assert_eq!(ClusterId::from(42), id);
         assert_eq!(usize::from(id), 42);
+    }
+
+    #[test]
+    fn test_clone_of_a_tile_and_its_items_without_a_clone_point() {
+        let supercluster = load_unclonable_points();
+        let tile = supercluster.tile(0, 0, 0);
+
+        assert_eq!(tile.items.len(), 1);
+        assert_eq!(tile.clone(), tile);
+        assert_eq!(clone_of(&tile.items[0]), tile.items[0]);
+        assert_eq!(clone_of(&tile.items[0].item), tile.items[0].item);
+    }
+
+    #[test]
+    fn test_clone_of_a_view_without_a_clone_point() {
+        let supercluster = load_unclonable_points();
+        let view = supercluster.with_cluster_max_zoom(0);
+
+        assert_eq!(clone_of(&view).tile(1, 1, 0), view.tile(1, 1, 0));
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn test_load_with_too_many_points() {
+        // A vector of a zero-sized type has a length without taking any memory
+        let points = vec![(); u32::MAX as usize + 1];
+
+        assert_eq!(
+            Supercluster::load(SuperclusterOptions::default(), points, |_| None).err(),
+            Some(SuperclusterError::TooManyPoints)
+        );
     }
 
     #[test]

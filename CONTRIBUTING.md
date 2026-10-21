@@ -144,11 +144,13 @@ locally, install it once:
 cargo install --locked cargo-tarpaulin
 ```
 
-Then run the same check CI runs:
+Then run the same check CI runs. It leaves the benchmarks out, because tests cannot run them:
 
 ```sh
-cargo tarpaulin --tests --bins --all-targets --all-features --locked
+cargo tarpaulin --tests --bins --all-targets --all-features --locked --exclude-files "benches/*"
 ```
+
+Where the default engine does not run, for example on ARM Linux, add `--engine llvm`.
 
 ### Benchmarks
 

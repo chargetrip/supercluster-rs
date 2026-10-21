@@ -63,7 +63,8 @@ jobs:
       env:
         RUSTDOCFLAGS: -D warnings
     - name: Run coverage
-      run: cargo tarpaulin --tests --bins --all-targets --all-features --locked --out xml
+      # The benchmarks are left out, because tests cannot run them
+      run: cargo tarpaulin --tests --bins --all-targets --all-features --locked --exclude-files "benches/*" --out xml
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v6
       env:
