@@ -93,6 +93,23 @@ fn bench_many_points(c: &mut Criterion) {
         })
     });
 
+    // About one point in three passes, so most clusters lose some of their points
+    let filter = |point: &[f64; 2]| (point[0] * 1e6) as i64 % 3 == 0;
+
+    c.bench_function(
+        "get filtered tile with expansion zooms of 10000 points",
+        |b| {
+            b.iter(|| {
+                supercluster
+                    .tile_filtered(black_box(3), black_box(4), black_box(3), filter)
+                    .iter()
+                    .filter_map(|tile_item| tile_item.expansion_zoom())
+                    .map(u32::from)
+                    .sum::<u32>()
+            })
+        },
+    );
+
     c.bench_function("get cluster expansion zoom of 10000 points", |b| {
         b.iter(|| {
             let _ = supercluster.cluster_expansion_zoom(black_box(cluster_id));
@@ -125,6 +142,20 @@ fn bench_one_million_points(c: &mut Criterion) {
     });
 
     let supercluster = Supercluster::load(options, points, |point| Some(*point)).unwrap();
+
+    // The world tile holds the largest clusters, where filtering and expanding cost the most
+    group.bench_function("get filtered tile with expansion zooms", |b| {
+        b.iter(|| {
+            supercluster
+                .tile_filtered(black_box(0), black_box(0), black_box(0), |point| {
+                    (point[0] * 1e6) as i64 % 3 == 0
+                })
+                .iter()
+                .filter_map(|tile_item| tile_item.expansion_zoom())
+                .map(u32::from)
+                .sum::<u32>()
+        })
+    });
 
     group.bench_function("get tile", |b| {
         b.iter(|| {

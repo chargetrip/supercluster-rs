@@ -148,6 +148,8 @@ A cluster ID is a `ClusterId`. Send its number to a client with `get()` or `usiz
 
 `tile_filtered` keeps only the points that pass a filter, for example the ones that match a search. A cluster without any point left is left out, and a cluster with a few points left moves to their center. Map the items to the type of your response with an iterator.
 
+Each item has `count()` and `points()` for the points that pass, `coordinates` for its position in your coordinate system, and `expansion_zoom()` for the zoom level where a cluster splits, counting only the points that pass. The filter runs once for every point of every item, and `expansion_zoom()` reuses those results, so an expensive filter does not run twice.
+
 ```rust
 use supercluster::{Supercluster, SuperclusterError, SuperclusterOptions};
 
@@ -168,19 +170,20 @@ fn main() -> Result<(), SuperclusterError> {
     )?;
 
     // The cluster holds the available station only, and moves onto it
-    let positions: Vec<[f64; 2]> = supercluster
-        .tile_filtered(0, 0, 0, |station| station.available)
-        .into_iter()
-        .map(|tile_item| [tile_item.x, tile_item.y])
-        .collect();
+    let items = supercluster.tile_filtered(0, 0, 0, |station| station.available);
 
-    assert_eq!(positions.len(), 1);
+    for item in &items {
+        println!("{:?}: {} station(s), zoom in to {:?}", item.coordinates, item.count(), item.expansion_zoom());
+    }
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].count(), 1);
 
     Ok(())
 }
 ```
 
-`cluster_expansion_zoom_filtered` finds the zoom level where a cluster expands, counting only the points that pass a filter. See the [`filtered_tile`](https://github.com/chargetrip/supercluster-rs/blob/main/examples/filtered_tile.rs) example.
+For a cluster outside a tile request, such as a click, `cluster_expansion_zoom_filtered` finds the same zoom level and runs the filter again. See the [`filtered_tile`](https://github.com/chargetrip/supercluster-rs/blob/main/examples/filtered_tile.rs) example.
 
 ### Lowering the zoom level to cluster on
 

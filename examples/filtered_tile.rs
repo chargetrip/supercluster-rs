@@ -45,25 +45,25 @@ fn main() -> Result<(), SuperclusterError> {
         .tile_filtered(0, 0, 0, |station| station.available)
         .into_iter()
         .map(|tile_item| {
-            let names: Vec<_> = tile_item
-                .points
-                .iter()
-                .map(|station| station.name)
-                .collect();
+            let names: Vec<_> = tile_item.points().map(|station| station.name).collect();
+            let [lng, lat] = tile_item.coordinates;
 
             match tile_item.item {
-                Item::Cluster(cluster) => format!(
-                    "cluster {} with {} of {} stations {:?} at {}, {}",
-                    cluster.id.get(),
-                    names.len(),
-                    cluster.point_count,
-                    names,
-                    tile_item.x,
-                    tile_item.y
-                ),
-                Item::Point { .. } => {
-                    format!("station {:?} at {}, {}", names, tile_item.x, tile_item.y)
+                Item::Cluster(cluster) => {
+                    // The zoom level a map zooms in to, counting the available stations only
+                    let expansion = tile_item.expansion_zoom().map_or(String::new(), |zoom| {
+                        format!(", expands on zoom level {zoom}")
+                    });
+
+                    format!(
+                        "cluster {} with {} of {} stations {:?} at {lng}, {lat}{expansion}",
+                        cluster.id.get(),
+                        tile_item.count(),
+                        cluster.point_count,
+                        names,
+                    )
                 }
+                Item::Point { .. } => format!("station {names:?} at {lng}, {lat}"),
             }
         });
 

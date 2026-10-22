@@ -13,7 +13,9 @@
 //! The `CoordinateSystem` enum has two variants: `LatLng` for latitude and longitude coordinates and
 //! `Cartesian` for Cartesian coordinates.
 
-use std::{cmp::Ordering, collections::HashMap, f64::consts::PI, hash::BuildHasherDefault};
+use std::{
+    cmp::Ordering, collections::HashMap, f64::consts::PI, hash::BuildHasherDefault, ops::Range,
+};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -397,7 +399,10 @@ impl<P> Supercluster<P> {
             .get(&cluster_id.0)
             .ok_or(SuperclusterError::ClusterNotFound)?;
 
-        Ok(self.leaf_indices(range).map(|index| &self.points[index]))
+        Ok(self
+            .leaf_slice(range)
+            .iter()
+            .map(|&index| &self.points[index as usize]))
     }
 
     /// Retrieve the items of the tile at zoom level `z`, `x` tiles from the left and `y` tiles from
@@ -467,28 +472,90 @@ impl<P> Supercluster<P> {
         let id = data[offset + OFFSET_ID] as usize;
 
         if data[offset + OFFSET_NUM] > 1.0 {
-            self.cluster_leaf_indices(ClusterId(id))
-                .any(|index| filter(&self.points[index]))
+            self.cluster_leaves(ClusterId(id))
+                .iter()
+                .any(|&index| filter(&self.points[index as usize]))
         } else {
             filter(&self.points[id])
         }
     }
 
-    /// Iterate over the indexes of the points of a cluster that the supercluster returned.
-    /// It panics only if the leaves of the supercluster are broken, because every cluster it
-    /// returns has its points indexed.
-    pub(crate) fn cluster_leaf_indices(
-        &self,
-        cluster_id: ClusterId,
-    ) -> impl ExactSizeIterator<Item = usize> + '_ {
-        self.leaf_indices(self.leaf_ranges[&cluster_id.0])
+    /// Get the indexes of the points of a cluster that the supercluster returned, in the order of
+    /// its children. It panics only if the leaves of the supercluster are broken, because every
+    /// cluster it returns has its points indexed.
+    pub(crate) fn cluster_leaves(&self, cluster_id: ClusterId) -> &[u32] {
+        self.leaf_slice(self.leaf_ranges[&cluster_id.0])
     }
 
-    /// Iterate over the indexes of the points in a range of the leaves, given as start and length.
-    fn leaf_indices(&self, (start, len): (u32, u32)) -> impl ExactSizeIterator<Item = usize> + '_ {
-        self.leaves[start as usize..(start + len) as usize]
-            .iter()
-            .map(|&index| index as usize)
+    /// Get the indexes of the points in a range of the leaves, given as start and length.
+    fn leaf_slice(&self, (start, len): (u32, u32)) -> &[u32] {
+        &self.leaves[start as usize..(start + len) as usize]
+    }
+
+    /// Determine the zoom level at which a cluster expands, up to `cluster_max_zoom`, counting only
+    /// the children for which `has_match` returns `true`.
+    ///
+    /// `has_match` gets the data of the children, the offset of a child in it, and the positions of
+    /// the child's points among the points of the cluster that the search starts from. Those
+    /// positions follow from the order of the leaves: the points of a cluster sit in the order of
+    /// its children, so every child's points are a range inside its parent's. It is an error if
+    /// there is no such cluster.
+    pub(crate) fn expansion_zoom_where<F>(
+        &self,
+        cluster_id: ClusterId,
+        cluster_max_zoom: u8,
+        has_match: F,
+    ) -> Result<u8, SuperclusterError>
+    where
+        F: Fn(&[f64], usize, Range<usize>) -> bool,
+    {
+        let mut cluster_id = cluster_id.0;
+        let mut start = 0;
+
+        // Buffers for the neighbor search, reused for every zoom level the cluster ascends through
+        let mut stack = vec![];
+        let mut neighbor_ids = vec![];
+
+        loop {
+            let (origin_zoom, offsets) =
+                self.find_children(cluster_id, &mut stack, &mut neighbor_ids)?;
+
+            // Above the maximum zoom level every cluster is split into its points.
+            if origin_zoom > cluster_max_zoom as usize {
+                return Ok(cluster_max_zoom + 1);
+            }
+
+            let data = &self.trees[origin_zoom].data;
+            let mut position = start;
+
+            // Two children with a match are enough to know the cluster expands here
+            let mut first = None;
+            let mut second = None;
+
+            for offset in offsets {
+                let size = data[offset + OFFSET_NUM] as usize;
+
+                if has_match(data, offset, position..position + size) {
+                    if first.is_none() {
+                        first = Some((offset, position));
+                    } else {
+                        second = Some(offset);
+                        break;
+                    }
+                }
+
+                position += size;
+            }
+
+            match (first, second) {
+                (Some((offset, position)), None) if data[offset + OFFSET_NUM] > 1.0 => {
+                    cluster_id = data[offset + OFFSET_ID] as usize;
+                    start = position;
+                }
+                // The origin zoom is at most the maximum zoom level, which fits in a `u8`
+                _ => return Ok(origin_zoom as u8),
+            }
+        }
     }
 
     /// Get the coordinates of the point at `index` in the list that was loaded, from the index of
@@ -951,7 +1018,7 @@ pub struct SuperclusterView<'a, P> {
     pub(crate) supercluster: &'a Supercluster<P>,
 
     /// The highest zoom level to cluster on, which is not above the `max_zoom` of the options.
-    cluster_max_zoom: u8,
+    pub(crate) cluster_max_zoom: u8,
 }
 
 // Written by hand, because a derive would also require the point type to be `Clone` and `Copy`,
@@ -1074,46 +1141,10 @@ impl<'a, P> SuperclusterView<'a, P> {
         F: Fn(&P) -> bool,
     {
         let supercluster = self.supercluster;
-        let mut cluster_id = cluster_id.0;
 
-        // Buffers for the neighbor search, reused for every zoom level the cluster ascends through
-        let mut stack = vec![];
-        let mut neighbor_ids = vec![];
-
-        loop {
-            let (origin_zoom, offsets) =
-                supercluster.find_children(cluster_id, &mut stack, &mut neighbor_ids)?;
-
-            // Above the maximum zoom level every cluster is split into its points.
-            if origin_zoom > self.cluster_max_zoom as usize {
-                return Ok(self.cluster_max_zoom + 1);
-            }
-
-            let data = &supercluster.trees[origin_zoom].data;
-
-            // Two available children are enough to know the cluster expands here
-            let mut first = None;
-            let mut second = None;
-
-            for offset in offsets {
-                if supercluster.is_available(data, offset, &filter) {
-                    if first.is_none() {
-                        first = Some(offset);
-                    } else {
-                        second = Some(offset);
-                        break;
-                    }
-                }
-            }
-
-            match (first, second) {
-                (Some(offset), None) if data[offset + OFFSET_NUM] > 1.0 => {
-                    cluster_id = data[offset + OFFSET_ID] as usize;
-                }
-                // The origin zoom is at most the maximum zoom level, which fits in a `u8`
-                _ => return Ok(origin_zoom as u8),
-            }
-        }
+        supercluster.expansion_zoom_where(cluster_id, self.cluster_max_zoom, |data, offset, _| {
+            supercluster.is_available(data, offset, &filter)
+        })
     }
 }
 
