@@ -268,27 +268,33 @@ fn test_leaves_of_unknown_cluster() {
 }
 
 #[test]
-fn test_leaves_matches_point_count() {
+fn test_leaves_matches_point_count_and_children() {
     let supercluster = load_supercluster(create_options());
 
     let mut clusters = 0;
 
-    for zoom in 0..=5 {
+    // Every zoom level that clusters, so every cluster is checked
+    for zoom in 0..=16 {
         for item in supercluster.clusters([-180.0, -90.0, 180.0, 90.0], zoom) {
             if let Item::Cluster(cluster) = item {
-                let leaves = supercluster.leaves(cluster.id).unwrap();
+                let leaves: Vec<&Feature> = supercluster.leaves(cluster.id).unwrap().collect();
 
                 assert_eq!(leaves.len(), cluster.point_count);
 
-                // The leaves are the points of the children, in the order of the children
-                let children_leaves: usize = supercluster
+                // The leaves are the points of the children, in the order of the children.
+                // Loading indexes the leaves from the children it records, and `children` searches
+                // the KD-tree, so this also checks that both find the children in the same order.
+                let children_leaves: Vec<&Feature> = supercluster
                     .children(cluster.id)
                     .unwrap()
-                    .iter()
-                    .map(get_point_count)
-                    .sum();
+                    .into_iter()
+                    .flat_map(|child| match child {
+                        Item::Cluster(child) => supercluster.leaves(child.id).unwrap().collect(),
+                        Item::Point { point, .. } => vec![point],
+                    })
+                    .collect();
 
-                assert_eq!(children_leaves, cluster.point_count);
+                assert_eq!(leaves, children_leaves);
 
                 clusters += 1;
             }

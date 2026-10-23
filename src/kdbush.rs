@@ -70,25 +70,20 @@ impl KDBush {
 
         let mut stack = vec![(0, self.ids.len() - 1, 0)];
         let mut result: Vec<usize> = Vec::new();
-        let mut x: f64;
-        let mut y: f64;
 
         while let Some((axis, right, left)) = stack.pop() {
             if right - left <= self.node_size {
-                for i in left..=right {
-                    x = self.coords[i * 2];
-                    y = self.coords[i * 2 + 1];
-
+                for ([x, y], id) in self.leaf(left, right) {
                     if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
-                        result.push(self.ids[i] as usize);
+                        result.push(id as usize);
                     }
                 }
                 continue;
             }
 
             let m = (left + right) >> 1;
-            x = self.coords[m * 2];
-            y = self.coords[m * 2 + 1];
+            let x = self.coords[m * 2];
+            let y = self.coords[m * 2 + 1];
 
             if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
                 result.push(self.ids[m] as usize);
@@ -132,13 +127,9 @@ impl KDBush {
 
         while let Some((axis, right, left)) = stack.pop() {
             if right - left <= self.node_size {
-                for i in left..=right {
-                    let x = self.coords[i * 2];
-                    let y = self.coords[i * 2 + 1];
-                    let dst = KDBush::sq_dist(x, y, qx, qy);
-
-                    if dst <= r2 {
-                        result.push(self.ids[i] as usize);
+                for ([x, y], id) in self.leaf(left, right) {
+                    if KDBush::sq_dist(x, y, qx, qy) <= r2 {
+                        result.push(id as usize);
                     }
                 }
 
@@ -163,6 +154,18 @@ impl KDBush {
                 stack.push((next_axis, right, m + 1));
             }
         }
+    }
+
+    /// Iterate over the coordinates and IDs of the points from `left` to `right`, both included,
+    /// which make up a leaf of the KD-tree. Every query scans whole leaves, and slicing a leaf once
+    /// saves checking the bounds of every point in it.
+    fn leaf(&self, left: usize, right: usize) -> impl Iterator<Item = ([f64; 2], u32)> + '_ {
+        let (coords, _) = self.coords[left * 2..=right * 2 + 1].as_chunks::<2>();
+
+        coords
+            .iter()
+            .copied()
+            .zip(self.ids[left..=right].iter().copied())
     }
 
     /// Sort the points from `left` to `right`, both included, into a KD-tree that splits first along
