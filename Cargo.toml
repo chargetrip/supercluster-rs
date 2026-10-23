@@ -1,8 +1,9 @@
 [package]
 name = "supercluster"
 description = "Geospatial and non-geospatial point clustering."
-version = "3.0.9"
+version = "4.0.0-alpha.3"
 edition = "2021"
+rust-version = "1.96"
 license = "MIT"
 readme = "README.md"
 authors = ["Chargetrip <dev@chargetrip.com>"]
@@ -12,26 +13,43 @@ homepage = "https://chargetrip.com"
 documentation = "https://docs.rs/supercluster"
 repository = "https://github.com/chargetrip/supercluster-rs"
 
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
-geojson = "1.0.0"
-log = { version = "0.4.31", optional = true }
+geojson = { version = "1.0.0", optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
-serde_json = { version = "1.0.150", optional = true }
 thiserror = "2.0.18"
+tracing = { version = "0.1.41", default-features = false, features = ["std", "log"], optional = true }
 twox-hash = "2.1.2"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
-env_logger = "0.11.6"
-serde_json = "1.0.150"
+log = "0.4.31"
+# Without float_roundtrip, reading a supercluster back from JSON changes some of its numbers
+serde_json = { version = "1.0.150", features = ["float_roundtrip"] }
+# Version 3.0.8, the last release of version 3, which the v3 comparison benchmark measures against,
+# and the version of geojson it takes features of. With `cluster_metadata`, its clusters have the
+# same properties as the ones of version 4, so both versions return the same GeoJSON
+geojson_v3 = { package = "geojson", version = "0.24.2" }
+supercluster_v3 = { package = "supercluster", version = "=3.0.8", features = ["cluster_metadata"] }
+tracing-subscriber = { version = "0.3.19", default-features = false, features = ["fmt", "std"] }
 
 [features]
-cluster_metadata = ["serde_json"]
+geojson = ["dep:geojson"]
+tracing = ["dep:tracing"]
 
 [[bench]]
 name = "supercluster_bench"
 harness = false
-required-features = ["cluster_metadata", "log", "serde"]
+required-features = ["geojson"]
+
+# Slow, and only needed to compare versions, so `cargo bench` runs it only when `--bench` names it
+[[bench]]
+name = "v3_comparison_bench"
+harness = false
+bench = false
+required-features = ["geojson"]
 
 [lib]
 name = "supercluster"
@@ -40,37 +58,37 @@ path = "src/lib.rs"
 [[example]]
 name = "basic"
 path = "examples/basic.rs"
-required-features = ["cluster_metadata"]
-
-[[example]]
-name = "feature_builder"
-path = "examples/feature_builder.rs"
+required-features = ["geojson"]
 
 [[example]]
 name = "clusters"
 path = "examples/clusters.rs"
-required-features = ["cluster_metadata"]
+required-features = ["geojson"]
 
 [[example]]
 name = "tile"
 path = "examples/tile.rs"
+required-features = ["geojson"]
 
 [[example]]
 name = "cartesian_coordinates"
 path = "examples/cartesian_coordinates.rs"
-required-features = ["cluster_metadata"]
+required-features = ["geojson"]
 
 [[example]]
-name = "log"
-path = "examples/log.rs"
-required-features = ["log"]
+name = "custom_point"
+path = "examples/custom_point.rs"
+
+[[example]]
+name = "filtered_tile"
+path = "examples/filtered_tile.rs"
+
+[[example]]
+name = "tracing"
+path = "examples/tracing.rs"
+required-features = ["geojson", "tracing"]
 
 [[example]]
 name = "serde"
 path = "examples/serde.rs"
-required-features = ["serde"]
-
-[[example]]
-name = "without_cluster_metadata"
-path = "examples/without_cluster_metadata.rs"
-required-features = ["serde"]
+required-features = ["geojson", "serde"]

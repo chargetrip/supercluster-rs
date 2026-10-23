@@ -64,16 +64,41 @@ cargo build
 
 ### Testing the project
 
-To run the tests with all features, use:
+To run the tests with all features, including the README examples as doc tests, use:
 
 ```sh
 cargo test --all-features
 ```
 
+To run the tests without any feature, use:
+
+```sh
+cargo test
+```
+
 To run the tests with a specific feature, use:
 
 ```sh
-cargo test --features cluster_metadata
+cargo test --features geojson
+```
+
+The crate must also build with every combination of features, which CI checks with:
+
+```sh
+for features in geojson serde tracing "geojson serde tracing"; do
+  cargo check --locked --all-targets --no-default-features --features "$features"
+done
+```
+
+To run a single unit test or integration test while you work, filter by name instead of running the
+whole suite:
+
+```sh
+# A unit test, in src/**/mod tests
+cargo test --lib test_tile_without_loaded_points
+
+# An integration test, in tests/<file>.rs
+cargo test --test test_supercluster test_cluster_expansion_zoom
 ```
 
 ### Code Quality Checks
@@ -90,13 +115,42 @@ Run [rustfmt](https://github.com/rust-lang/rustfmt) to format the code:
 cargo fmt
 ```
 
+Check formatting without changing any files, as CI does:
+
+```sh
+cargo fmt -- --check
+```
+
 ### Documentation
 
-Generate documentation in HTML format:
+Generate the documentation in HTML format, including the items behind features:
 
 ```bash
-cargo doc --open
+cargo doc --all-features --open
 ```
+
+CI also fails the build on any rustdoc warning, such as a missing doc comment:
+
+```sh
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features
+```
+
+### Coverage
+
+CI measures test coverage with [`cargo-tarpaulin`](https://github.com/xd009642/tarpaulin). To run it
+locally, install it once:
+
+```sh
+cargo install --locked cargo-tarpaulin
+```
+
+Then run the same check CI runs. It leaves the benchmarks out, because tests cannot run them:
+
+```sh
+cargo tarpaulin --tests --bins --all-targets --all-features --locked --exclude-files "benches/*"
+```
+
+Where the default engine does not run, for example on ARM Linux, add `--engine llvm`.
 
 ### Benchmarks
 
@@ -106,13 +160,17 @@ The project uses [`criterion`](https://bheisler.github.io/criterion.rs/book/inde
 To run a benchmark against the changes you have made, for example, you can run;
 
 ```sh
-cd benches
-
-# Run all benchmarks
-cargo bench
+# Run all benchmarks, which need the `geojson` feature
+cargo bench --features geojson
 
 # Run all tests in the `benches/supercluster_bench.rs` file
-cargo bench --bench supercluster_bench
+cargo bench --features geojson --bench supercluster_bench
+
+# Run only the benchmarks with a million points, which are slow
+cargo bench --features geojson --bench supercluster_bench -- "one million points"
+
+# Compare with version 3.0.8, which `cargo bench` runs only when `--bench` names it, because it is slow
+cargo bench --features geojson --bench v3_comparison_bench
 
 # After running benches, you can check the statistics under `target/criterion`
 ```
