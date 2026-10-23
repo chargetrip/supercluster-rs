@@ -169,6 +169,9 @@ cargo bench --features geojson --bench supercluster_bench
 # Run only the benchmarks with a million points, which are slow
 cargo bench --features geojson --bench supercluster_bench -- "one million points"
 
+# Compare with version 3.0.8, which `cargo bench` runs only when `--bench` names it, because it is slow
+cargo bench --features geojson --bench v3_comparison_bench
+
 # After running benches, you can check the statistics under `target/criterion`
 ```
 

@@ -28,6 +28,11 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 log = "0.4.31"
 # Without float_roundtrip, reading a supercluster back from JSON changes some of its numbers
 serde_json = { version = "1.0.150", features = ["float_roundtrip"] }
+# Version 3.0.8, the last release of version 3, which the v3 comparison benchmark measures against,
+# and the version of geojson it takes features of. With `cluster_metadata`, its clusters have the
+# same properties as the ones of version 4, so both versions return the same GeoJSON
+geojson_v3 = { package = "geojson", version = "0.24.2" }
+supercluster_v3 = { package = "supercluster", version = "=3.0.8", features = ["cluster_metadata"] }
 tracing-subscriber = { version = "0.3.19", default-features = false, features = ["fmt", "std"] }
 
 [features]
@@ -37,6 +42,13 @@ tracing = ["dep:tracing"]
 [[bench]]
 name = "supercluster_bench"
 harness = false
+required-features = ["geojson"]
+
+# Slow, and only needed to compare versions, so `cargo bench` runs it only when `--bench` names it
+[[bench]]
+name = "v3_comparison_bench"
+harness = false
+bench = false
 required-features = ["geojson"]
 
 [lib]

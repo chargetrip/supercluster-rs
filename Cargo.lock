@@ -230,6 +230,19 @@ dependencies = [
 
 [[package]]
 name = "geojson"
+version = "0.24.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e26f3c45b36fccc9cf2805e61d4da6bc4bbd5a3a9589b01afa3a40eff703bd79"
+dependencies = [
+ "geo-types",
+ "log",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "geojson"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "510c094bfc76ea34d02eee00833254945b70491d79a9c0b050abed6eaa799ffb"
@@ -571,13 +584,27 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "supercluster"
+version = "3.0.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e50a9957334452435631002367eabde8cb703766e7496c1645f56c86eb13f27"
+dependencies = [
+ "geojson 0.24.2",
+ "serde_json",
+ "thiserror",
+ "twox-hash",
+]
+
+[[package]]
+name = "supercluster"
 version = "4.0.0-alpha.2"
 dependencies = [
  "criterion",
- "geojson",
+ "geojson 0.24.2",
+ "geojson 1.0.0",
  "log",
  "serde",
  "serde_json",
+ "supercluster 3.0.8",
  "thiserror",
  "tracing",
  "tracing-subscriber",

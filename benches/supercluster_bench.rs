@@ -3,31 +3,11 @@ use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use geojson::{Feature, Geometry};
-use supercluster::{CoordinateSystem, Item, Supercluster, SuperclusterOptions};
+use supercluster::{Item, Supercluster};
 
-/// Create the options the benchmarks use.
-fn create_options() -> SuperclusterOptions {
-    SuperclusterOptions::builder()
-        .radius(40.0)
-        .extent(512.0)
-        .min_points(2)
-        .max_zoom(16)
-        .coordinate_system(CoordinateSystem::LatLng)
-        .build()
-        .unwrap()
-}
+mod common;
 
-/// Create points spread over the world with a fixed formula, so every run uses the same points.
-fn create_points(count: usize) -> Vec<[f64; 2]> {
-    (0..count)
-        .map(|i| {
-            let lng = (i as f64 * 0.618_033_988_749_895) % 1.0;
-            let lat = (i as f64 * 0.754_877_666_246_693) % 1.0;
-
-            [-180.0 + 360.0 * lng, -80.0 + 160.0 * lat]
-        })
-        .collect()
-}
+use common::{create_options, create_points, runs_under_cargo_bench};
 
 fn bench_supercluster(c: &mut Criterion) {
     let features: Vec<Feature> = [[102.0, 0.5], [103.0, 1.0], [104.0, 0.0]]
@@ -118,9 +98,7 @@ fn bench_many_points(c: &mut Criterion) {
 }
 
 fn bench_one_million_points(c: &mut Criterion) {
-    // `cargo test` runs each benchmark once as a check, which could take a long time and a lot of
-    // memory here, so only `cargo bench` runs this group
-    if !std::env::args().any(|argument| argument == "--bench") {
+    if !runs_under_cargo_bench() {
         return;
     }
 

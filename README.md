@@ -319,6 +319,7 @@ We have several benchmark scenarios to test different aspects of supercluster:
 - **Getting Clusters**: Tests the performance of retrieving clusters for a given bounding box and zoom level.
 - **Loading Points**: Tests the performance of loading points into the `Supercluster`.
 - **One Million Points**: Tests loading a million points and getting a tile from them.
+- **Comparison with version 3**: Compares loading and the queries with version 3.0.8, on the same points.
 
 For more detailed benchmark scenarios, please refer to the [`benches`](https://github.com/chargetrip/supercluster-rs/tree/main/benches) directory in the repository.
 
