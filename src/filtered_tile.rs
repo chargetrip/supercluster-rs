@@ -6,7 +6,8 @@
 //! coordinates come from the supercluster, which got them when the points were loaded.
 //!
 //! The filter is a closure that runs on the points of the tile, or a `Selection` that ran it on
-//! every point once.
+//! every point once, or a combination of selections that the query evaluates on the points of the
+//! tile.
 
 use std::{
     fmt::{self, Debug, Formatter},
@@ -15,48 +16,14 @@ use std::{
 };
 
 use crate::{
-    selection::{filter_bits, SetPositions},
+    selection::{filter_bits, Matches, Scratch},
     supercluster::tiles_per_axis,
-    ClusterId, Item, Selection, Supercluster, SuperclusterError, SuperclusterView,
+    ClusterId, Item, Select, Selection, Supercluster, SuperclusterError, SuperclusterView,
 };
 
 /// The number of points below which a filtered cluster is moved to the center of the points that
 /// are left.
 const RECENTER_LIMIT: u32 = 20;
-
-/// Which points of a filtered item pass the filter.
-#[derive(Clone)]
-enum Matches<'a> {
-    /// Every point of the item passes.
-    All,
-
-    /// One bit per point of the cluster, in the order of its leaves, set when the point passes.
-    Bits(Vec<u64>),
-
-    /// The points of the selection pass.
-    Selection(&'a Selection),
-}
-
-impl Matches<'_> {
-    /// Iterate over the positions in `leaves` of the points that pass, where `start` is the
-    /// position of the first point of the item.
-    fn passing(&self, start: usize, leaves: Range<usize>) -> SetPositions<'_> {
-        match self {
-            Matches::All => SetPositions::new(None, 0, leaves),
-            Matches::Bits(words) => SetPositions::new(Some(words), start, leaves),
-            Matches::Selection(selection) => SetPositions::new(Some(selection.words()), 0, leaves),
-        }
-    }
-
-    /// Check whether a point in `leaves` passes, where `start` is the position of the first point
-    /// of the item.
-    fn any(&self, start: usize, leaves: Range<usize>) -> bool {
-        match self {
-            Matches::Selection(selection) => selection.count(leaves) > 0,
-            _ => self.passing(start, leaves).next().is_some(),
-        }
-    }
-}
 
 /// An item of a filtered tile: a cluster or a point with at least one point that passes the filter.
 #[non_exhaustive]
@@ -105,10 +72,9 @@ impl<'a, P> FilteredTileItem<'a, P> {
     /// `points().next()`.
     pub fn points(&self) -> impl Iterator<Item = &'a P> + '_ {
         let points = self.supercluster.points();
-        let leaves = self.leaves();
 
         self.matches
-            .passing(leaves.start, leaves)
+            .passing(self.leaves())
             .map(move |leaf| &points[leaf])
     }
 
@@ -123,12 +89,10 @@ impl<'a, P> FilteredTileItem<'a, P> {
             return None;
         };
 
-        let start = self.leaves().start;
-
         // The cluster comes from the supercluster, so finding its children does not fail
         self.supercluster
             .expansion_zoom_where(cluster.id, self.cluster_max_zoom, |leaves| {
-                self.matches.any(start, leaves)
+                self.matches.any(leaves)
             })
             .ok()
     }
@@ -173,8 +137,9 @@ impl<P: Debug> Debug for FilteredTileItem<'_, P> {
 
 impl<P> Supercluster<P> {
     /// Run a filter once on every point that was clustered, and keep which ones pass, for
-    /// `tile_selected` and `cluster_expansion_zoom_selected` to reuse. Run it again when what the
-    /// filter reads changes, for example the availability of the points.
+    /// `tile_selected` and `cluster_expansion_zoom_selected` to reuse. The points do not change
+    /// after `load`, so run it again only when the filter reads data that changes, outside the
+    /// points or shared through them.
     ///
     /// It scans the points in the order they are stored, and does not branch on what the filter
     /// returns, so it runs the filter about as fast as the filter itself allows.
@@ -246,10 +211,14 @@ impl<P> Supercluster<P> {
     }
 
     /// Retrieve the items of a tile, like `tile_filtered`, but keep only the points of a
-    /// selection that `select` made. It counts the points of a cluster that pass in constant time,
-    /// so its cost grows with the items of the tile, not with the points in them.
+    /// `Selection` that `select` made, or of a `Combination` of selections.
     ///
-    /// The selection must come from this supercluster, or the items mean nothing.
+    /// A selection counts the points of a cluster that pass in constant time, so the cost of the
+    /// tile grows with its items, not with the points in them. The query evaluates a combination on
+    /// the points of the tile only, and keeps nothing for the next query, so its cost grows with the
+    /// points of the tile, not with all the points.
+    ///
+    /// The selections must come from this supercluster, or the items mean nothing.
     ///
     /// # Examples
     ///
@@ -273,27 +242,27 @@ impl<P> Supercluster<P> {
     /// assert!((lng - 10.001).abs() < 1e-9 && (lat - 50.0).abs() < 1e-9);
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
-    pub fn tile_selected<'s>(
+    pub fn tile_selected<'s, S: Select>(
         &'s self,
         z: u8,
         x: u32,
         y: u32,
-        selection: &'s Selection,
+        selection: &'s S,
     ) -> Vec<FilteredTileItem<'s, P>> {
         self.view().tile_selected(z, x, y, selection)
     }
 
     /// Determine the zoom level at which a cluster expands, like
-    /// `cluster_expansion_zoom_filtered`, but count only the points of a selection that `select`
-    /// made, without running a filter.
+    /// `cluster_expansion_zoom_filtered`, but count only the points of a `Selection` that `select`
+    /// made, or of a `Combination` of selections, without running a filter.
     ///
     /// # Errors
     ///
     /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
-    pub fn cluster_expansion_zoom_selected(
+    pub fn cluster_expansion_zoom_selected<S: Select>(
         &self,
         cluster_id: ClusterId,
-        selection: &Selection,
+        selection: &S,
     ) -> Result<u8, SuperclusterError> {
         self.view()
             .cluster_expansion_zoom_selected(cluster_id, selection)
@@ -313,19 +282,25 @@ impl<'a, P> SuperclusterView<'a, P> {
         // points fail, so a cluster whose points all pass allocates nothing
         let mut bits = vec![];
 
-        filter_tile(*self, (z, x, y), |leaves| match &points[leaves] {
-            // A point needs no bits
-            [point] => (u32::from(filter(point)), Matches::All),
-            points => {
-                bits.clear();
-                bits.extend(filter_bits(points, &filter));
+        filter_tile(*self, (z, x, y), |leaves| {
+            let first = leaves.start;
 
-                let count = bits.iter().map(|word| word.count_ones()).sum();
+            match &points[leaves] {
+                // A point needs no bits
+                [point] => (u32::from(filter(point)), Matches::All),
+                points => {
+                    bits.clear();
+                    bits.extend(filter_bits(points, &filter));
 
-                if count as usize == points.len() {
-                    (count, Matches::All)
-                } else {
-                    (count, Matches::Bits(mem::take(&mut bits)))
+                    let count = bits.iter().map(|word| word.count_ones()).sum();
+
+                    if count as usize == points.len() {
+                        (count, Matches::All)
+                    } else {
+                        let words = mem::take(&mut bits);
+
+                        (count, Matches::Local { words, first })
+                    }
                 }
             }
         })
@@ -333,26 +308,21 @@ impl<'a, P> SuperclusterView<'a, P> {
 
     /// Retrieve the items of a tile that have a point of a selection, like
     /// `Supercluster::tile_selected`.
-    pub fn tile_selected<'s>(
+    pub fn tile_selected<'s, S: Select>(
         &self,
         z: u8,
         x: u32,
         y: u32,
-        selection: &'s Selection,
+        selection: &'s S,
     ) -> Vec<FilteredTileItem<'s, P>>
     where
         'a: 's,
     {
         let view: SuperclusterView<'s, P> = *self;
+        let mut scratch = Scratch::default();
 
         filter_tile(view, (z, x, y), |leaves| {
-            let count = selection.count(leaves.clone());
-
-            if count as usize == leaves.len() {
-                (count, Matches::All)
-            } else {
-                (count, Matches::Selection(selection))
-            }
+            selection.matches(leaves, &mut scratch)
         })
     }
 
@@ -362,14 +332,16 @@ impl<'a, P> SuperclusterView<'a, P> {
     /// # Errors
     ///
     /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
-    pub fn cluster_expansion_zoom_selected(
+    pub fn cluster_expansion_zoom_selected<S: Select>(
         &self,
         cluster_id: ClusterId,
-        selection: &Selection,
+        selection: &S,
     ) -> Result<u8, SuperclusterError> {
+        let mut scratch = Scratch::default();
+
         self.supercluster
             .expansion_zoom_where(cluster_id, self.cluster_max_zoom, |leaves| {
-                selection.count(leaves) > 0
+                selection.any(leaves, &mut scratch)
             })
     }
 }
@@ -402,7 +374,7 @@ fn filter_tile<'a, P>(
             && count < RECENTER_LIMIT;
 
         let ([x, y], coordinates) = if recenter {
-            let center = find_center(supercluster, matches.passing(leaves.start, leaves.clone()));
+            let center = find_center(supercluster, matches.passing(leaves.clone()));
 
             // The copy of the world the item is in: -1 left of it, 1 right of it, or 0
             let world = (tile_x - origin_x) / z2;

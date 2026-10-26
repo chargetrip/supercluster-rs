@@ -1,114 +1,67 @@
 # Supercluster
 
-A high-performance Rust crate for geospatial and non-geospatial point clustering.
+[![Test status](https://github.com/chargetrip/supercluster-rs/actions/workflows/test.yml/badge.svg)](https://github.com/chargetrip/supercluster-rs/actions/workflows/test.yml)
+[![Documentation on docs.rs](https://docs.rs/supercluster/badge.svg)](https://docs.rs/supercluster)
+[![Latest version on crates.io](https://img.shields.io/crates/v/supercluster.svg)](https://crates.io/crates/supercluster)
+![Downloads from crates.io](https://img.shields.io/crates/d/supercluster)
+![License](https://img.shields.io/github/license/chargetrip/supercluster-rs)
+[![Test coverage on Codecov](https://codecov.io/gh/chargetrip/supercluster-rs/graph/badge.svg?token=0S31CZY2ZJ)](https://codecov.io/gh/chargetrip/supercluster-rs)
 
-## Reference implementation
+A high-performance Rust crate for geospatial and non-geospatial point clustering. It groups nearby points into clusters on every zoom level, so a map can show millions of points as a few clusters.
 
-[![test](https://github.com/chargetrip/supercluster-rs/actions/workflows/test.yml/badge.svg)](https://github.com/chargetrip/supercluster-rs/actions/workflows/test.yml)
-[![docs](https://docs.rs/supercluster/badge.svg)](https://docs.rs/supercluster)
-[![crate](https://img.shields.io/crates/v/supercluster.svg)](https://crates.io/crates/supercluster)
-![downloads](https://img.shields.io/crates/d/supercluster)
-![GitHub](https://img.shields.io/github/license/chargetrip/supercluster-rs)
-[![codecov](https://codecov.io/gh/chargetrip/supercluster-rs/graph/badge.svg?token=0S31CZY2ZJ)](https://codecov.io/gh/chargetrip/supercluster-rs)
+This README is for Rust developers who show many points on a map or a chart. For every type and method, read the [API documentation on docs.rs](https://docs.rs/supercluster). If you encounter any issues or have questions that are not addressed in the documentation, feel free to [submit an issue on GitHub](https://github.com/chargetrip/supercluster-rs/issues).
 
-![Features](https://cloud.githubusercontent.com/assets/25395/11857351/43407b46-a40c-11e5-8662-e99ab1cd2cb7.gif)
+![Clusters of points on a map, changing as the map zooms](https://cloud.githubusercontent.com/assets/25395/11857351/43407b46-a40c-11e5-8662-e99ab1cd2cb7.gif)
 
-## Documentation
+## Contents
 
-For more in-depth details, please refer to the full [documentation](https://docs.rs/supercluster).
+- [Overview](#overview)
+- [Install](#install)
+- [Cluster your points](#cluster-your-points)
+- [Filter what a tile shows](#filter-what-a-tile-shows)
+- [More ways to use it](#more-ways-to-use-it)
+- [API overview](#api-overview)
+- [Upgrading from 3.x](#upgrading-from-3x)
+- [Benchmarks](#benchmarks)
+- [Safety](#safety)
+- [Contributing](#contributing)
+- [Sponsors](#sponsors)
 
-If you encounter any issues or have questions that are not addressed in the documentation, feel free to [submit an issue](https://github.com/chargetrip/supercluster-rs/issues).
+## Overview
 
-This crate was initially inspired by Mapbox's supercluster [blog post](https://blog.mapbox.com/clustering-millions-of-points-on-a-map-with-supercluster-272046ec5c97).
+- **Load once.** `Supercluster::load` clusters your points on every zoom level and keeps the result as an index. A supercluster does not change once it is loaded. To cluster other points, load a new one.
+- **Query many times.** Tiles, bounding boxes and clusters are answered from that index, without running your code again.
+- **Keep your own type.** A closure tells where each point is, so you do not convert or wrap your points, and the supercluster never clones them.
+- **Filter tiles.** Keep only the points that pass a filter, with a closure, or with selections that you prepare in advance and combine per request.
+- **Use GeoJSON when you need it.** The `geojson` feature loads GeoJSON features, and turns what the supercluster returns back into GeoJSON.
 
-## Usage
+This crate was initially inspired by Mapbox's supercluster [blog post about clustering millions of points](https://blog.mapbox.com/clustering-millions-of-points-on-a-map-with-supercluster-272046ec5c97).
 
-To use the `supercluster` crate in your project, add it to your `Cargo.toml`:
+## Install
+
+Add the crate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
 supercluster = "4.0.0"
 ```
 
-No feature is on by default, so the crate only has what clustering needs. You can turn features on:
-
-- `geojson`: support for [GeoJSON](https://docs.rs/geojson) features.
-- `serde`: serialization of the options and of a loaded supercluster. To read a supercluster back with `serde_json`, enable its `float_roundtrip` feature, or some numbers come back with a tiny difference. The data is not checked when it is read, so only read what a supercluster wrote.
-- `tracing`: reports through the [`tracing`](https://docs.rs/tracing) crate. A load reports a summary at the `debug` level, one event per zoom level at the `trace` level, and a warning for points left out because their coordinates are missing or not finite. The events have fields, such as the number of points. Queries report nothing. Applications that only use the `log` crate get the same events as `log` records.
-
-A `Supercluster` clusters any type and keeps the points you load, without cloning them.
-A closure tells where each point is, so you do not convert or wrap them, and shared data that changes stays shared.
-Loading moves the points into an order where the points of every cluster are next to each other, which makes the points of a cluster a slice and filtering fast.
-
-```rust
-use supercluster::{Item, Supercluster, SuperclusterError, SuperclusterOptions};
-
-fn main() -> Result<(), SuperclusterError> {
-    // Set the configuration settings
-    let options = SuperclusterOptions::builder()
-        .radius(40.0)
-        .extent(512.0)
-        .min_points(2)
-        .max_zoom(16)
-        .build()?;
-
-    // Load the longitude and latitude of the points into a new supercluster
-    let supercluster = Supercluster::load(
-        options,
-        vec![[-77.032, 38.913], [-77.033, 38.913], [0.0, 0.0]],
-        |point| Some(*point),
-    )?;
-
-    // Get the clusters and the points that are not clustered of a tile
-    let tile = supercluster.tile(0, 0, 0);
-
-    for tile_item in &tile.items {
-        match &tile_item.item {
-            Item::Cluster(cluster) => println!("{} points at {}, {}", cluster.point_count, tile_item.x, tile_item.y),
-            Item::Point { index, .. } => println!("point {} at {}, {}", index, tile_item.x, tile_item.y),
-        }
-    }
-
-    Ok(())
-}
-```
-
-`SuperclusterOptions::default()` gives the default options, and the builder checks every value it sets. A supercluster does not change once it is loaded. To cluster other points, load a new one.
-
-### GeoJSON
-
-With the `geojson` feature a list of GeoJSON features is loaded as it is, with `load_features`, and what the supercluster returns converts back into GeoJSON.
+No feature is on by default, so the crate only has what clustering needs. Turn on the ones you use:
 
 ```toml
 [dependencies]
 supercluster = { version = "4.0.0", features = ["geojson"] }
 ```
 
-```rust,ignore
-use geojson::{Feature, Geometry};
-use supercluster::{Supercluster, SuperclusterError, SuperclusterOptions};
+| Feature | What it adds |
+| --- | --- |
+| `geojson` | Support for [GeoJSON features](https://docs.rs/geojson): loading them with `load_features`, and turning tiles, clusters and points back into GeoJSON. |
+| `serde` | Serialization of the options and of a loaded supercluster. To read a supercluster back with `serde_json`, enable its `float_roundtrip` feature, or some numbers come back with a tiny difference. The data is not checked when it is read, so only read what a supercluster wrote. |
+| `tracing` | Reports through the [`tracing` crate](https://docs.rs/tracing). A load reports a summary at the `debug` level, one event per zoom level at the `trace` level, and a warning for points left out because their coordinates are missing or not finite. The events have fields, such as the number of points. Queries report nothing. Applications that only use the `log` crate get the same events as `log` records. |
 
-fn main() -> Result<(), SuperclusterError> {
-    let features: Vec<Feature> = [[-77.032, 38.913], [-77.033, 38.913]]
-        .into_iter()
-        .map(|point| Feature::from(Geometry::new_point(point)))
-        .collect();
+## Cluster your points
 
-    let supercluster = Supercluster::load_features(SuperclusterOptions::default(), features)?;
-
-    let tile = supercluster.tile(0, 0, 0).to_feature_collection();
-
-    println!("Tile: {:?}", tile);
-
-    Ok(())
-}
-```
-
-To send a tile as GeoJSON, serialize `tile.as_feature_collection()`, for example with `serde_json::to_writer`. It writes the same JSON as `to_feature_collection()` but borrows the properties of the features instead of copying them.
-
-### Your own points
-
-Your own types work the same way. The closure returns `None` for a point that has no coordinates, which leaves it out. A point whose coordinates are not finite numbers is left out too.
+Load your points with a closure that returns the longitude and latitude of each one, then ask for the tiles of your map.
 
 ```rust
 use supercluster::{Item, Supercluster, SuperclusterError, SuperclusterOptions};
@@ -125,18 +78,22 @@ fn main() -> Result<(), SuperclusterError> {
         vec![
             Station { name: "A".to_string(), lng: 4.9, lat: 52.37 },
             Station { name: "B".to_string(), lng: 4.91, lat: 52.37 },
+            Station { name: "C".to_string(), lng: -77.03, lat: 38.91 },
         ],
         |station| Some([station.lng, station.lat]),
     )?;
 
-    // The two stations are close, so the tile holds a cluster of them
-    let tile = supercluster.tile(0, 0, 0);
-
-    for tile_item in &tile.items {
-        if let Item::Cluster(cluster) = &tile_item.item {
-            // The stations of the cluster, ten at most
-            for station in supercluster.leaves(cluster.id)?.iter().take(10) {
-                println!("{} is in cluster {}", station.name, cluster.id.get());
+    // The tile of the whole world: a cluster of the two close stations, and the one far away
+    for tile_item in &supercluster.tile(0, 0, 0).items {
+        match &tile_item.item {
+            Item::Cluster(cluster) => {
+                // The stations of the cluster, ten at most
+                for station in supercluster.leaves(cluster.id)?.iter().take(10) {
+                    println!("{} is in cluster {}", station.name, cluster.id.get());
+                }
+            }
+            Item::Point { index, point } => {
+                println!("{} at {}, {} in the tile, loaded at {index}", point.name, tile_item.x, tile_item.y);
             }
         }
     }
@@ -145,15 +102,63 @@ fn main() -> Result<(), SuperclusterError> {
 }
 ```
 
-A cluster ID is a `ClusterId`. Send its number to a client with `get()` or `u32::from`, and turn the number the client sends back into an ID with `ClusterId::new` or `ClusterId::from`.
+- **Points without coordinates are left out.** The closure returns `None` for a point that has no coordinates, which leaves it out. A point whose coordinates are not finite numbers is left out too.
+- **Points move into cluster order.** `points()` returns the points in the order of the clusters, not the order you loaded them in, because loading keeps the points of every cluster next to each other. `Item::Point` has the `index` of a point in the list you loaded.
+- **Cluster IDs go to clients as numbers.** A cluster ID is a `ClusterId`. Send its number to a client with `get()` or `u32::from`, and turn the number the client sends back into an ID with `ClusterId::new` or `ClusterId::from`. The numbers change from one load to the next.
 
-`points()` returns the points in the order of the clusters, not the order you loaded them in. `Item::Point` has the `index` of a point in the list you loaded.
+### Set the options
 
-### Filtering tiles
+`SuperclusterOptions::default()` gives these values, and `SuperclusterOptions::builder()` changes the ones you set. `build()` checks every value and returns an error for one it cannot use.
 
-`tile_filtered` keeps only the points that pass a filter, for example the ones that match a search. A cluster without any point left is left out, and a cluster with a few points left moves to their center. Map the items to the type of your response with an iterator.
+| Option | Default | What it sets |
+| --- | --- | --- |
+| `radius` | `40.0` | The cluster radius, in pixels. |
+| `extent` | `512.0` | The size of a tile, in pixels, which the radius is relative to. |
+| `min_points` | `2` | The fewest points that form a cluster. |
+| `min_zoom` | `0` | The lowest zoom level to cluster on. |
+| `max_zoom` | `16` | The highest zoom level to cluster on, up to `30`. Above it, a tile shows the points instead of clusters. |
+| `node_size` | `64` | The number of points in a leaf of the KD-tree, which affects speed. |
+| `coordinate_system` | `LatLng` | `LatLng` for longitudes and latitudes, or `Cartesian` for other 2D data. See [Cluster data that is not on a map](#cluster-data-that-is-not-on-a-map). |
 
-Each item has `count()` and `points()` for the points that pass, `coordinates` for its position in your coordinate system, and `expansion_zoom()` for the zoom level where a cluster splits, counting only the points that pass. The filter runs once for every point of every item, and `expansion_zoom()` reuses those results, so an expensive filter does not run twice.
+```rust
+use supercluster::{SuperclusterError, SuperclusterOptions};
+
+fn main() -> Result<(), SuperclusterError> {
+    let options = SuperclusterOptions::builder()
+        .radius(60.0)
+        .max_zoom(14)
+        .build()?;
+
+    // The values that are not set keep their default
+    assert_eq!(options.extent, 512.0);
+
+    Ok(())
+}
+```
+
+## Filter what a tile shows
+
+A filtered tile keeps only the points that pass a filter, for example the ones that match a search. A cluster without any point left is left out, and a cluster with a few points left moves to their center.
+
+Each item has `count()` and `points()` for the points that pass, `coordinates` for its position in your coordinate system, and `expansion_zoom()` for the zoom level where a cluster splits, counting only the points that pass. Map the items to the type of your response with an iterator.
+
+### Choose a closure or selections
+
+`tile_filtered` runs the filter on every point under the tile. That is cheap for a zoomed-in tile, but the tile of the whole world runs it on every point. A `Selection` runs a filter once, with `select`, and `tile_selected` and `cluster_expansion_zoom_selected` reuse it, so no filter runs per request.
+
+| Use | What every query does | When to use it | What to keep in mind |
+| --- | --- | --- | --- |
+| `tile_filtered` with a closure | Runs the filter on every point under the tile. Nothing is cached, so the next query runs it again. | The filter cannot be prepared in advance, for example because it depends on the user, or you serve zoomed-in tiles only, where it costs about as much as a selection. It needs no preparation, so start with this one. | Nothing to prepare or refresh. |
+| `tile_selected` with a combination of selections, such as `a.or(&b).and(&c)` | Evaluates the combination on the bits of the points under the tile, without running a filter. Nothing is cached, so it always reads the current selections. | The filter is made of several conditions that you can prepare in advance with `select`, one selection per condition. Its cost grows with the points of the tile, not with all the points. | Nothing to refresh: it reads the selections it combines when the query runs. The items borrow the combination, so to keep the items after the statement that makes them, keep the combination in a variable. |
+| `tile_selected` with a selection, from `select` or from `compute` | Counts the points of every cluster in constant time, whatever the tile. | The filter is a single condition, or a combination that zoomed-out tiles use heavily. A combination costs the most there, because those tiles cover the most points, so compute it once with `compute` and cache it. | A selection is a snapshot (cached) of what the filter returned. If the filter only reads the points, it stays valid, because points do not change after `load`. If the filter reads other data that changes, run `select` or `compute` again when it changes. |
+
+A selection belongs to the supercluster that made it. Keep them together, for example in the same `Arc`, and replace both when you load new points. With a selection of another supercluster, a query does not panic, but its results mean nothing.
+
+Your results depend on your points, your filters and your machine, so measure your own case before you choose.
+
+### Filter with a closure
+
+The filter runs once for every point of every item, and `expansion_zoom()` reuses those results, so an expensive filter does not run twice. For a cluster outside a tile request, such as a click, `cluster_expansion_zoom_filtered` finds the same zoom level and runs the filter again.
 
 ```rust
 use supercluster::{Supercluster, SuperclusterError, SuperclusterOptions};
@@ -188,28 +193,11 @@ fn main() -> Result<(), SuperclusterError> {
 }
 ```
 
-For a cluster outside a tile request, such as a click, `cluster_expansion_zoom_filtered` finds the same zoom level and runs the filter again. See the [`filtered_tile`](https://github.com/chargetrip/supercluster-rs/blob/main/examples/filtered_tile.rs) example.
+The [`filtered_tile` example](https://github.com/chargetrip/supercluster-rs/blob/main/examples/filtered_tile.rs) shows both ways side by side.
 
-### Filtering many tiles the same way
+### Filter with selections
 
-`tile_filtered` runs the filter on every point under the tile. That is cheap for a tile of a city, but the tile of the whole world runs it on every point. A `Selection` runs the filter once, with `select`, and `tile_selected` and `cluster_expansion_zoom_selected` reuse it. It counts the points of a cluster that pass in constant time, so the cost of a tile grows with its items, not with the points in them.
-
-A selection only pays off when it serves many tiles, because `select` runs the filter on every point:
-
-| Use | When |
-| --- | --- |
-| `tile_filtered` with a closure | The filter changes with every request, or the tile is zoomed in. Start with this one. |
-| `select`, then `tile_selected` | The same filter serves many tiles, for example zoomed-out tiles, or a map that most users see with the same filter. |
-
-To use selections well:
-
-- **Select once per attribute.** Keep one selection per filter that requests combine, such as a category, a range of values or a status. Combine them for each request with `and`, `or` and `and_not`, which work on the bits instead of the points, so they cost much less than a new `select`.
-- **Refresh them on a schedule.** A selection is a snapshot. Run `select` again when what the filter reads changes, for example every 30 seconds for data that changes often, and share the latest selections between threads in an `Arc`.
-- **Cache the combinations that many requests share,** keyed by the filters they combine, and refresh them with their parts.
-- **Keep a selection while you use its items.** The items borrow the selection, so store a combined selection in a variable instead of passing `&a.and(&b)` to the query.
-- **Rebuild them after loading new points.** A selection belongs to the supercluster that made it. A selection of another supercluster does not make a query panic, but the results mean nothing.
-
-Both queries return the same items, so a request can choose per tile. Here, selections serve the zoomed-out tiles and the closure serves the others:
+Make one selection per condition with `select`, and combine them per request with `and`, `or` and `and_not`. A combination borrows the selections and computes nothing, and the query evaluates it on the points of its tile only. `compute` turns a combination into a selection of its own, which you can cache.
 
 ```rust
 use supercluster::{Supercluster, SuperclusterError, SuperclusterOptions};
@@ -232,22 +220,13 @@ fn main() -> Result<(), SuperclusterError> {
         |station| Some([station.lng, station.lat]),
     )?;
 
-    // One selection per attribute, which a refresh replaces on a schedule
+    // One selection per condition, made once and reused by every request
     let fast = supercluster.select(|station| station.power_kw >= 50);
     let available = supercluster.select(|station| station.available);
 
-    // A request for the tile of the whole world, with the fast chargers that are available
-    let (z, x, y) = (0, 0, 0);
-    let fast_and_available;
-
-    let items = if z <= 2 {
-        // Zoomed out, the tile holds many stations, so combine the selections
-        fast_and_available = fast.and(&available);
-        supercluster.tile_selected(z, x, y, &fast_and_available)
-    } else {
-        // Zoomed in, the filter runs on the few stations of the tile only
-        supercluster.tile_filtered(z, x, y, |station| station.power_kw >= 50 && station.available)
-    };
+    // Per request: combine what the request asks for, which the query evaluates on its tile only
+    let fast_and_available = fast.and(&available);
+    let items = supercluster.tile_selected(0, 0, 0, &fast_and_available);
 
     // The cluster holds the one fast charger that is available
     assert_eq!(items[0].count(), 1);
@@ -256,9 +235,106 @@ fn main() -> Result<(), SuperclusterError> {
 }
 ```
 
-### Lowering the zoom level to cluster on
+## More ways to use it
+
+### Send tiles as GeoJSON
+
+With the `geojson` feature, a list of GeoJSON features is loaded as it is, with `load_features`. A feature without a point geometry is left out. What the supercluster returns converts back into GeoJSON.
+
+```rust,ignore
+use geojson::{Feature, Geometry};
+use supercluster::{Supercluster, SuperclusterError, SuperclusterOptions};
+
+fn main() -> Result<(), SuperclusterError> {
+    let features: Vec<Feature> = [[-77.032, 38.913], [-77.033, 38.913]]
+        .into_iter()
+        .map(|point| Feature::from(Geometry::new_point(point)))
+        .collect();
+
+    let supercluster = Supercluster::load_features(SuperclusterOptions::default(), features)?;
+
+    let tile = supercluster.tile(0, 0, 0).to_feature_collection();
+
+    println!("Tile: {:?}", tile);
+
+    Ok(())
+}
+```
+
+To send a tile as GeoJSON, serialize `tile.as_feature_collection()`, for example with `serde_json::to_writer`. It writes the same JSON as `to_feature_collection()` but borrows the properties of the features instead of copying them.
+
+### Cluster data that is not on a map
+
+For data in its own units, such as the pixels of an image, use the `Cartesian` coordinate system with a `DataRange` that holds the bounds of the data. Both axes are scaled by the same factor, so the data keeps its proportions. A `Cartesian` tile does not wrap around at its edges, the way a map wraps at the antimeridian.
+
+```rust
+use supercluster::{CoordinateSystem, DataRange, Supercluster, SuperclusterError, SuperclusterOptions};
+
+fn main() -> Result<(), SuperclusterError> {
+    // A microscope image of 2048 by 1024 pixels
+    let range = DataRange::new(0.0, 0.0, 2048.0, 1024.0);
+    let options = SuperclusterOptions::builder()
+        .coordinate_system(CoordinateSystem::Cartesian { range })
+        .build()?;
+
+    let cells = vec![[100.0, 200.0], [101.0, 200.0], [1900.0, 900.0]];
+    let supercluster = Supercluster::load(options, cells, |cell| Some(*cell))?;
+
+    // The two close cells form a cluster in the tile of the whole image
+    assert_eq!(supercluster.tile(0, 0, 0).items.len(), 2);
+
+    Ok(())
+}
+```
+
+### Lower the zoom level for one request
 
 `with_cluster_max_zoom` returns a view of the supercluster that clusters up to a lower zoom level, for a single request. It can lower the `max_zoom` of the options but not raise it. Above that zoom level, the view returns the points instead of clusters. The view has the same queries: `clusters`, `tile`, `tile_filtered`, `tile_selected`, `cluster_expansion_zoom`, `cluster_expansion_zoom_filtered` and `cluster_expansion_zoom_selected`.
+
+## API overview
+
+The [API documentation on docs.rs](https://docs.rs/supercluster) describes every item in full.
+
+| Load | Returns | What it does |
+| --- | --- | --- |
+| `Supercluster::load(options, points, get_coordinates)` | `Result<Supercluster<P>, _>` | Clusters points of any type, with a closure that returns their coordinates. |
+| `Supercluster::load_features(options, features)` | `Result<Supercluster<Feature>, _>` | Clusters GeoJSON features, with the `geojson` feature. |
+| `SuperclusterOptions::default()` | `SuperclusterOptions` | The default options. |
+| `SuperclusterOptions::builder()` | `SuperclusterOptionsBuilder` | Options that `build()` checks. |
+| `DataRange::new(min_x, min_y, max_x, max_y)` | `DataRange` | The bounds of data in the `Cartesian` coordinate system. |
+
+| Query | Returns | What it does |
+| --- | --- | --- |
+| `tile(z, x, y)` | `Tile` | The clusters and points of a map tile, with their positions in the tile. |
+| `clusters(bbox, zoom)` | `Vec<Item>` | The clusters and points in a bounding box, at a zoom level. |
+| `children(cluster_id)` | `Result<impl Iterator<Item = Item>, _>` | The clusters and points that a cluster splits into, on the next zoom level. |
+| `leaves(cluster_id)` | `Result<&[P], _>` | All the points of a cluster. |
+| `cluster_expansion_zoom(cluster_id)` | `Result<u8, _>` | The zoom level where a cluster splits. |
+| `points()` | `&[P]` | The points that were loaded, in the order of the clusters. |
+| `options()` | `&SuperclusterOptions` | The options of the supercluster. |
+| `with_cluster_max_zoom(zoom)` | `SuperclusterView` | A view that clusters up to a lower zoom level, with the same tile, cluster and expansion zoom queries. |
+
+| Filter | Returns | What it does |
+| --- | --- | --- |
+| `tile_filtered(z, x, y, filter)` | `Vec<FilteredTileItem>` | The items of a tile that keep a point for which the closure returns `true`. |
+| `cluster_expansion_zoom_filtered(cluster_id, filter)` | `Result<u8, _>` | The zoom level where a cluster splits, counting only the points that pass the closure. |
+| `select(filter)` | `Selection` | The points that pass the closure, found once for many queries. |
+| `selection.and(&other)`, `or`, `and_not` | `Combination` | Selections combined without computing anything, for a query to evaluate. |
+| `combination.compute()` | `Selection` | The combination computed for every point, to cache. |
+| `tile_selected(z, x, y, &selection)` | `Vec<FilteredTileItem>` | The items of a tile that keep a point of a selection or a combination. |
+| `cluster_expansion_zoom_selected(cluster_id, &selection)` | `Result<u8, _>` | The zoom level where a cluster splits, counting only the points of a selection or a combination. |
+
+| Result | What it holds |
+| --- | --- |
+| `Tile` | `items`, a list of `TileItem`, and `is_empty()`. |
+| `TileItem` | `x` and `y`, the position in the tile, and `item`. |
+| `Item` | `Item::Cluster(Cluster)`, or `Item::Point { index, point }`, a point with its index in the list that was loaded. |
+| `Cluster` | `id`, `point_count`, `coordinates()` for its center, and `point_count_abbreviated()`, such as `1.5k`. |
+| `ClusterId` | The ID of a cluster: `ClusterId::new(number)` and `get()` turn it from and into a `u32`. |
+| `FilteredTileItem` | `x`, `y`, `coordinates` and `item`, with `count()` and `points()` for the points that pass, and `expansion_zoom()`. |
+| `SuperclusterError` | The error of a query or a load: an unknown cluster, options that `build()` rejects, or too many points. |
+
+With the `geojson` feature, `Tile::to_feature_collection()`, `Item::to_feature()`, `TileItem::to_feature()` and `Cluster::to_feature()` return GeoJSON, and `Tile::as_feature_collection()` serializes a tile without copying its features.
 
 ## Upgrading from 3.x
 
@@ -301,7 +377,7 @@ A supercluster is built in one step and does not change once it is loaded, so lo
 +let features = vec![Feature::from(Geometry::new_point([4.9, 52.37]))];
 +let supercluster = Supercluster::load_features(options, features)?;
 +
-+// Or your own type, kept as it is loaded
++// Or your own type, without converting it
 +let supercluster = Supercluster::load(options, stations, |station| Some([station.lng, station.lat]))?;
 ```
 
@@ -379,24 +455,26 @@ The `tracing` feature reports one summary per load, with fields such as the numb
 
 ### New in version 4
 
-`tile_filtered` and `cluster_expansion_zoom_filtered` keep only the points that pass a filter, `select` runs a filter once for many tiles and its selections combine with `and`, `or` and `and_not`, and `with_cluster_max_zoom` lowers the zoom level to cluster on for a single request. See [Filtering tiles](#filtering-tiles), [Filtering many tiles the same way](#filtering-many-tiles-the-same-way) and [Lowering the zoom level to cluster on](#lowering-the-zoom-level-to-cluster-on).
+`tile_filtered` and `cluster_expansion_zoom_filtered` keep only the points that pass a filter, `select` runs a filter once for many tiles and its selections combine with `and`, `or` and `and_not`, and `with_cluster_max_zoom` lowers the zoom level to cluster on for a single request. See [Filter what a tile shows](#filter-what-a-tile-shows) and [Lower the zoom level for one request](#lower-the-zoom-level-for-one-request).
 
 ## Benchmarks
 
-We use the `criterion` crate to benchmark the performance of the `supercluster` crate.
+We use the [`criterion` crate](https://docs.rs/criterion) to measure the speed of the crate. Run the benchmarks with:
 
-Benchmarks help us understand the performance characteristics of supercluster and identify areas for optimization.
+```sh
+cargo bench --features geojson
+```
 
-We have several benchmark scenarios to test different aspects of supercluster:
+They measure:
 
-- **Getting a Tile**: Tests the performance of retrieving a tile from the `Supercluster`.
-- **Getting Clusters**: Tests the performance of retrieving clusters for a given bounding box and zoom level.
-- **Loading Points**: Tests the performance of loading points into the `Supercluster`.
-- **Filtering Tiles**: Tests filtering a tile with a closure, and with a selection that `select` made.
-- **One Million Points**: Tests loading a million points, and getting and filtering tiles from them.
-- **Comparison with version 3**: Compares loading and the queries with version 3.0.8, on the same points.
+- **Getting a tile:** retrieving a tile from a supercluster.
+- **Getting clusters:** retrieving clusters for a given bounding box and zoom level.
+- **Loading points:** loading points into a supercluster.
+- **Filtering tiles:** filtering a tile with a closure, with a selection that `select` made, and with a combination of selections.
+- **One million points:** loading a million points, and getting and filtering tiles from them.
+- **Comparison with version 3:** loading and the queries of version 3.0.8, on the same points. It runs only when you name it: `cargo bench --features geojson --bench v3_comparison_bench`.
 
-For more detailed benchmark scenarios, please refer to the [`benches`](https://github.com/chargetrip/supercluster-rs/tree/main/benches) directory in the repository.
+For more detailed benchmark scenarios, please refer to the [`benches` directory](https://github.com/chargetrip/supercluster-rs/tree/main/benches) in the repository.
 
 ## Safety
 

@@ -43,5 +43,5 @@ pub use error::*;
 pub use feature::*;
 pub use filtered_tile::*;
 pub use range::*;
-pub use selection::Selection;
+pub use selection::{Combination, Select, Selection};
 pub use supercluster::*;

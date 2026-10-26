@@ -677,10 +677,10 @@ impl<P> Supercluster<P> {
         &self,
         cluster_id: ClusterId,
         cluster_max_zoom: u8,
-        has_match: F,
+        mut has_match: F,
     ) -> Result<u8, SuperclusterError>
     where
-        F: Fn(Range<usize>) -> bool,
+        F: FnMut(Range<usize>) -> bool,
     {
         let mut cluster = self.cluster_index(cluster_id)?;
 

@@ -198,9 +198,26 @@ fn bench_one_million_points(c: &mut Criterion) {
     // Selections made once per attribute, combined for every request
     let north = supercluster.select(|point| point[1] > 0.0);
 
-    group.bench_function("combine two selections", |b| {
-        b.iter(|| selection.and(black_box(&north)))
+    group.bench_function("compute the combination of two selections", |b| {
+        b.iter(|| selection.and(black_box(&north)).compute())
     });
+
+    // The query evaluates the combination on the points of the tile, all of them for the world
+    let combination = selection.and(&north);
+
+    group.bench_function(
+        "get tile selected by a combination with expansion zooms",
+        |b| {
+            b.iter(|| {
+                supercluster
+                    .tile_selected(black_box(0), black_box(0), black_box(0), &combination)
+                    .iter()
+                    .filter_map(|tile_item| tile_item.expansion_zoom())
+                    .map(u32::from)
+                    .sum::<u32>()
+            })
+        },
+    );
 
     group.finish();
 }
