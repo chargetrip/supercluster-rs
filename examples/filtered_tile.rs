@@ -71,5 +71,17 @@ fn main() -> Result<(), SuperclusterError> {
         println!("{description}");
     }
 
+    // To filter many tiles the same way, run the filter once and reuse it until the availability
+    // changes. The tiles then cost the same however many stations they hold.
+    let available = supercluster.select(|station| station.available);
+
+    for tile_item in supercluster.tile_selected(0, 0, 0, &available) {
+        println!(
+            "{} available station(s), zoom in to {:?}",
+            tile_item.count(),
+            tile_item.expansion_zoom()
+        );
+    }
+
     Ok(())
 }

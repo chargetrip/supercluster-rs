@@ -26,10 +26,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Load the features into a new supercluster
     let supercluster = Supercluster::load_features(options, features)?;
 
-    // Get a tile
-    let tile = supercluster.tile(0, 0, 0).to_feature_collection();
+    // Get a tile, and write it as GeoJSON without copying the features
+    let tile = supercluster.tile(0, 0, 0);
 
-    println!("tile: {}", serde_json::to_string(&tile)?);
+    println!(
+        "tile: {}",
+        serde_json::to_string(&tile.as_feature_collection())?
+    );
 
     Ok(())
 }

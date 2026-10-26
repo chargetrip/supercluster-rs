@@ -3,11 +3,18 @@
 //! Contains the GeoJSON support of the supercluster crate, which the `geojson` feature enables.
 //!
 //! A list of GeoJSON features is loaded into a supercluster as it is, with `load_features`. The
-//! clusters and tiles it returns convert back into GeoJSON features.
+//! clusters and tiles it returns convert back into GeoJSON features, or serialize as GeoJSON
+//! without copying the features.
 
-use crate::{Cluster, Item, Supercluster, SuperclusterError, SuperclusterOptions, Tile, TileItem};
 use geojson::{
     feature::Id, Feature, FeatureCollection, Geometry, GeometryValue, JsonObject, JsonValue,
+};
+use serde::{ser::SerializeMap, Serialize, Serializer};
+use std::fmt::Display;
+
+use crate::{
+    supercluster::AbbreviatedCount, Cluster, Item, Supercluster, SuperclusterError,
+    SuperclusterOptions, Tile, TileItem,
 };
 
 impl Supercluster<Feature> {
@@ -19,7 +26,7 @@ impl Supercluster<Feature> {
     ///
     /// # Errors
     ///
-    /// Returns `SuperclusterError::TooManyPoints` if there are more than `u32::MAX` features.
+    /// Returns `SuperclusterError::TooManyPoints` if there are more than `MAX_POINTS` features.
     ///
     /// # Examples
     ///
@@ -57,7 +64,7 @@ fn get_coordinates(feature: &Feature) -> Option<[f64; 2]> {
     }
 }
 
-impl Cluster {
+impl Cluster<'_> {
     /// Get the GeoJSON properties of the cluster: `cluster`, `cluster_id`, `point_count` and
     /// `point_count_abbreviated`.
     fn get_properties(&self) -> JsonObject {
@@ -76,10 +83,16 @@ impl Cluster {
 
     /// Convert the cluster into a GeoJSON feature, with its center as the geometry.
     pub fn to_feature(&self) -> Feature {
+        self.feature_at(Geometry::new_point(self.coordinates()))
+    }
+
+    /// Convert the cluster into a GeoJSON feature with the geometry, so a tile does not compute
+    /// a center it replaces with the position in the tile.
+    fn feature_at(&self, geometry: Geometry) -> Feature {
         Feature {
             id: Some(Id::String(self.id.get().to_string())),
             bbox: None,
-            geometry: Some(Geometry::new_point([self.x, self.y])),
+            geometry: Some(geometry),
             properties: Some(self.get_properties()),
             foreign_members: None,
         }
@@ -99,17 +112,14 @@ impl Item<'_, Feature> {
 impl TileItem<'_, Feature> {
     /// Convert the item into a GeoJSON feature, with its position in the tile as the geometry.
     pub fn to_feature(&self) -> Feature {
-        let geometry = Some(Geometry::new_point([self.x, self.y]));
+        let geometry = Geometry::new_point([self.x, self.y]);
 
         match &self.item {
-            Item::Cluster(cluster) => Feature {
-                geometry,
-                ..cluster.to_feature()
-            },
+            Item::Cluster(cluster) => cluster.feature_at(geometry),
             Item::Point { point, .. } => Feature {
                 id: point.id.clone(),
                 bbox: None,
-                geometry,
+                geometry: Some(geometry),
                 properties: point.properties.clone(),
                 foreign_members: None,
             },
@@ -117,7 +127,7 @@ impl TileItem<'_, Feature> {
     }
 }
 
-impl Tile<'_, Feature> {
+impl<'a> Tile<'a, Feature> {
     /// Convert the tile into a GeoJSON feature collection.
     pub fn to_feature_collection(&self) -> FeatureCollection {
         FeatureCollection {
@@ -126,13 +136,134 @@ impl Tile<'_, Feature> {
             foreign_members: None,
         }
     }
+
+    /// Get a view of the tile as a GeoJSON feature collection, which serializes to the same JSON
+    /// as `to_feature_collection` but borrows the properties of the features instead of copying
+    /// them. Use it to send a tile as GeoJSON, for example with `serde_json::to_writer`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use geojson::{Feature, Geometry};
+    /// use supercluster::{Supercluster, SuperclusterOptions};
+    ///
+    /// let features = vec![Feature::from(Geometry::new_point([-77.032, 38.913]))];
+    /// let supercluster = Supercluster::load_features(SuperclusterOptions::default(), features)?;
+    /// let tile = supercluster.tile(0, 0, 0);
+    ///
+    /// let json = serde_json::to_string(&tile.as_feature_collection())?;
+    ///
+    /// assert_eq!(json, serde_json::to_string(&tile.to_feature_collection())?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn as_feature_collection(&self) -> FeatureCollectionView<'_, 'a> {
+        FeatureCollectionView { tile: self }
+    }
+}
+
+/// A view of a tile as a GeoJSON feature collection, which `Tile::as_feature_collection` returns.
+/// It serializes like the feature collection that `Tile::to_feature_collection` returns, without
+/// copying the features.
+#[derive(Clone, Copy, Debug)]
+pub struct FeatureCollectionView<'t, 'a> {
+    /// The tile to serialize.
+    tile: &'t Tile<'a, Feature>,
+}
+
+impl Serialize for FeatureCollectionView<'_, '_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(2))?;
+
+        map.serialize_entry("type", "FeatureCollection")?;
+        map.serialize_entry("features", &FeaturesView(&self.tile.items))?;
+        map.end()
+    }
+}
+
+/// The items of a tile, which serialize as a list of GeoJSON features.
+struct FeaturesView<'t, 'a>(&'t [TileItem<'a, Feature>]);
+
+impl Serialize for FeaturesView<'_, '_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.0.iter().map(FeatureView))
+    }
+}
+
+/// An item of a tile, which serializes like `TileItem::to_feature` returns it: the fields in the
+/// order of `geojson`, with the position in the tile as the geometry.
+struct FeatureView<'t, 'a>(&'t TileItem<'a, Feature>);
+
+impl Serialize for FeatureView<'_, '_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let TileItem { x, y, item } = self.0;
+        let mut map = serializer.serialize_map(None)?;
+
+        map.serialize_entry("type", "Feature")?;
+        map.serialize_entry("geometry", &PointView([*x, *y]))?;
+
+        match item {
+            Item::Cluster(cluster) => {
+                map.serialize_entry("id", &DisplayView(cluster.id.get()))?;
+                map.serialize_entry("properties", &ClusterPropertiesView(cluster))?;
+            }
+            Item::Point { point, .. } => {
+                if let Some(id) = &point.id {
+                    map.serialize_entry("id", id)?;
+                }
+
+                map.serialize_entry("properties", &point.properties)?;
+            }
+        }
+
+        map.end()
+    }
+}
+
+/// A point geometry, which serializes like `Geometry::new_point`.
+struct PointView([f64; 2]);
+
+impl Serialize for PointView {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(2))?;
+
+        map.serialize_entry("type", "Point")?;
+        map.serialize_entry("coordinates", &self.0)?;
+        map.end()
+    }
+}
+
+/// The GeoJSON properties of a cluster, which serialize like `Cluster::get_properties`, whose keys
+/// come in alphabetical order.
+struct ClusterPropertiesView<'c, 'a>(&'c Cluster<'a>);
+
+impl Serialize for ClusterPropertiesView<'_, '_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let cluster = self.0;
+        let mut map = serializer.serialize_map(Some(4))?;
+
+        map.serialize_entry("cluster", &true)?;
+        map.serialize_entry("cluster_id", &cluster.id.get())?;
+        map.serialize_entry("point_count", &cluster.point_count)?;
+        map.serialize_entry(
+            "point_count_abbreviated",
+            &DisplayView(AbbreviatedCount(cluster.point_count)),
+        )?;
+        map.end()
+    }
+}
+
+/// A value that serializes as the string `Display` writes, without allocating it.
+struct DisplayView<T>(T);
+
+impl<T: Display> Serialize for DisplayView<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(&self.0)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::ClusterId;
 
     /// Create a point feature with a name.
     fn create_feature(id: &str, lng: f64, lat: f64) -> Feature {
@@ -240,18 +371,26 @@ mod tests {
 
     #[test]
     fn test_cluster_to_feature() {
-        let cluster = Cluster {
-            id: ClusterId::new(7),
-            point_count: 1500,
-            x: 10.0,
-            y: 50.0,
+        // 1500 points close to each other form one cluster
+        let features = (0..1500)
+            .map(|i| create_feature("a", 10.0 + f64::from(i) * 1e-7, 50.0))
+            .collect();
+        let supercluster =
+            Supercluster::load_features(SuperclusterOptions::default(), features).unwrap();
+        let items = supercluster.clusters([-180.0, -90.0, 180.0, 90.0], 0);
+        let [Item::Cluster(cluster)] = &items[..] else {
+            panic!("expected a single cluster");
         };
         let feature = cluster.to_feature();
+        let id = cluster.id.get();
 
-        assert_eq!(feature.id, Some(Id::String("7".to_string())));
-        assert_eq!(feature.geometry, Some(Geometry::new_point([10.0, 50.0])));
+        assert_eq!(feature.id, Some(Id::String(id.to_string())));
+        assert_eq!(
+            feature.geometry,
+            Some(Geometry::new_point(cluster.coordinates()))
+        );
         assert_eq!(feature.property("cluster"), Some(&JsonValue::from(true)));
-        assert_eq!(feature.property("cluster_id"), Some(&JsonValue::from(7)));
+        assert_eq!(feature.property("cluster_id"), Some(&JsonValue::from(id)));
         assert_eq!(
             feature.property("point_count"),
             Some(&JsonValue::from(1500))
@@ -341,5 +480,45 @@ mod tests {
             .unwrap();
 
         assert_eq!(item.to_feature(), create_feature("a", 10.0, 50.0));
+    }
+
+    /// Serialize a value as JSON.
+    fn to_json(value: &impl Serialize) -> String {
+        serde_json::to_string(value).unwrap()
+    }
+
+    #[test]
+    fn test_as_feature_collection_serializes_like_to_feature_collection() {
+        let mut features: Vec<Feature> = (0..1500)
+            .map(|i| create_feature("a", 10.0 + f64::from(i) * 1e-7, 50.0))
+            .collect();
+
+        // A point without an ID or properties, and one with a numeric ID
+        features.push(Feature::from(Geometry::new_point([-100.0, -30.0])));
+        features.push(Feature {
+            id: Some(Id::Number(7.into())),
+            ..create_feature("b", 100.0, 30.0)
+        });
+
+        let supercluster =
+            Supercluster::load_features(SuperclusterOptions::default(), features).unwrap();
+
+        // A cluster and points
+        let tile = supercluster.tile(0, 0, 0);
+
+        assert_eq!(tile.items.len(), 3);
+        assert_eq!(
+            to_json(&tile.as_feature_collection()),
+            to_json(&tile.to_feature_collection())
+        );
+
+        // Only points, with their properties
+        let tile = supercluster.with_cluster_max_zoom(0).tile(1, 1, 0);
+
+        assert!(tile.items.len() > 2);
+        assert_eq!(
+            to_json(&tile.as_feature_collection()),
+            to_json(&tile.to_feature_collection())
+        );
     }
 }

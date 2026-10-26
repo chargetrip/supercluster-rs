@@ -51,23 +51,30 @@ fn create_features_v3(points: &[[f64; 2]]) -> Vec<FeatureV3> {
         .collect()
 }
 
-/// Get the ID of the first cluster of the whole world on zoom level 0, from version 3.
-fn find_cluster_v3(supercluster: &SuperclusterV3) -> usize {
+/// Get the ID and the number of points of the first cluster of the whole world on zoom level 0,
+/// from version 3.
+fn find_cluster_v3(supercluster: &SuperclusterV3) -> (usize, u64) {
     supercluster
         .get_clusters(WORLD, 0)
         .unwrap()
         .iter()
-        .find_map(|feature| feature.property("cluster_id")?.as_u64())
-        .expect("the points form a cluster on zoom level 0") as usize
+        .find_map(|feature| {
+            let id = feature.property("cluster_id")?.as_u64()?;
+            let point_count = feature.property("point_count")?.as_u64()?;
+
+            Some((id as usize, point_count))
+        })
+        .expect("the points form a cluster on zoom level 0")
 }
 
-/// Get the ID of the first cluster of the whole world on zoom level 0, from version 4.
-fn find_cluster<P>(supercluster: &Supercluster<P>) -> ClusterId {
+/// Get the ID and the number of points of the first cluster of the whole world on zoom level 0,
+/// from version 4.
+fn find_cluster<P>(supercluster: &Supercluster<P>) -> (ClusterId, u64) {
     supercluster
         .clusters(WORLD, 0)
         .iter()
         .find_map(|item| match item {
-            Item::Cluster(cluster) => Some(cluster.id),
+            Item::Cluster(cluster) => Some((cluster.id, u64::from(cluster.point_count))),
             Item::Point { .. } => None,
         })
         .expect("the points form a cluster on zoom level 0")
@@ -130,11 +137,13 @@ fn compare_one_million_points(c: &mut Criterion) {
     let v4 = Supercluster::load_features(options.clone(), features).unwrap();
     let v4_points = Supercluster::load(options, points, |point| Some(*point)).unwrap();
 
-    // The versions cluster the same way, so they find the same cluster
-    let cluster = find_cluster(&v4);
+    // The versions cluster the same way, so they find the same cluster, which version 4 numbers
+    // another way
+    let (cluster_v3, point_count) = find_cluster_v3(&v3);
+    let (cluster, _) = find_cluster(&v4);
 
-    assert_eq!(find_cluster_v3(&v3), cluster.get());
-    assert_eq!(find_cluster(&v4_points), cluster);
+    assert_eq!(find_cluster(&v4), (cluster, point_count));
+    assert_eq!(find_cluster(&v4_points), (cluster, point_count));
 
     // The tile the main benchmark uses for a million points
     let mut group = c.benchmark_group("get tile of 1000000 points");
@@ -180,13 +189,18 @@ fn compare_one_million_points(c: &mut Criterion) {
     let mut group = c.benchmark_group("get leaves of a cluster of 1000000 points");
 
     group.bench_function("v3", |b| {
-        b.iter(|| v3.get_leaves(black_box(cluster.get()), black_box(10), 0))
+        b.iter(|| v3.get_leaves(black_box(cluster_v3), black_box(10), 0))
     });
 
     group.bench_function("v4", |b| {
         b.iter(|| {
-            v4.leaves(black_box(cluster))
-                .map(|leaves| leaves.take(black_box(10)).cloned().collect::<Vec<_>>())
+            v4.leaves(black_box(cluster)).map(|leaves| {
+                leaves
+                    .iter()
+                    .take(black_box(10))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
         })
     });
 
@@ -194,7 +208,49 @@ fn compare_one_million_points(c: &mut Criterion) {
         b.iter(|| {
             v4_points
                 .leaves(black_box(cluster))
-                .map(|leaves| leaves.take(black_box(10)).collect::<Vec<_>>())
+                .map(|leaves| leaves.iter().take(black_box(10)).collect::<Vec<_>>())
+        })
+    });
+
+    group.finish();
+
+    // The cluster has thousands of points, so this shows what it costs to get all of them
+    let mut group = c.benchmark_group("get all leaves of a cluster of 1000000 points");
+
+    group.bench_function("v3", |b| {
+        b.iter(|| v3.get_leaves(black_box(cluster_v3), usize::MAX, 0))
+    });
+
+    group.bench_function("v4", |b| {
+        b.iter(|| v4.leaves(black_box(cluster)).map(<[Feature]>::to_vec))
+    });
+
+    group.bench_function("v4 points", |b| {
+        b.iter(|| {
+            v4_points
+                .leaves(black_box(cluster))
+                .map(|leaves| leaves.iter().collect::<Vec<_>>())
+        })
+    });
+
+    group.finish();
+
+    let mut group = c.benchmark_group("get children of a cluster of 1000000 points");
+
+    group.bench_function("v3", |b| b.iter(|| v3.get_children(black_box(cluster_v3))));
+
+    group.bench_function("v4", |b| {
+        b.iter(|| {
+            v4.children(black_box(cluster))
+                .map(|children| children.map(|child| child.to_feature()).collect::<Vec<_>>())
+        })
+    });
+
+    group.bench_function("v4 points", |b| {
+        b.iter(|| {
+            v4_points
+                .children(black_box(cluster))
+                .map(|children| children.collect::<Vec<_>>())
         })
     });
 
@@ -204,11 +260,33 @@ fn compare_one_million_points(c: &mut Criterion) {
     let mut group = c.benchmark_group("get cluster expansion zoom of 1000000 points");
 
     group.bench_function("v3", |b| {
-        b.iter(|| v3.get_cluster_expansion_zoom(black_box(cluster.get())))
+        b.iter(|| v3.get_cluster_expansion_zoom(black_box(cluster_v3)))
     });
 
     group.bench_function("v4", |b| {
         b.iter(|| v4.cluster_expansion_zoom(black_box(cluster)))
+    });
+
+    group.finish();
+
+    // Sending a tile as GeoJSON, in the fastest way each version has. Only GeoJSON is serialized,
+    // so "v4 points" is left out
+    let mut group = c.benchmark_group("serialize the tile of 1000000 points as GeoJSON");
+
+    group.bench_function("v3", |b| {
+        b.iter(|| {
+            v3.get_tile(black_box(6), black_box(32.0), black_box(21.0))
+                .map(|tile| serde_json::to_string(&tile))
+        })
+    });
+
+    group.bench_function("v4", |b| {
+        b.iter(|| {
+            serde_json::to_string(
+                &v4.tile(black_box(6), black_box(32), black_box(21))
+                    .as_feature_collection(),
+            )
+        })
     });
 
     group.finish();

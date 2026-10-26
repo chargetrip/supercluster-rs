@@ -21,7 +21,6 @@ geojson = { version = "1.0.0", optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 thiserror = "2.0.18"
 tracing = { version = "0.1.41", default-features = false, features = ["std", "log"], optional = true }
-twox-hash = "2.1.2"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
@@ -36,7 +35,9 @@ supercluster_v3 = { package = "supercluster", version = "=3.0.8", features = ["c
 tracing-subscriber = { version = "0.3.19", default-features = false, features = ["fmt", "std"] }
 
 [features]
-geojson = ["dep:geojson"]
+# The borrowing GeoJSON serializer needs serde, which geojson depends on already
+geojson = ["dep:geojson", "dep:serde"]
+serde = ["dep:serde"]
 tracing = ["dep:tracing"]
 
 [[bench]]

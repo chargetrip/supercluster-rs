@@ -45,6 +45,7 @@ fn main() -> Result<(), SuperclusterError> {
             Item::Cluster(cluster) => {
                 let names: Vec<_> = supercluster
                     .leaves(cluster.id)?
+                    .iter()
                     .take(10)
                     .map(|station| station.name)
                     .collect();

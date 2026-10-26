@@ -25,13 +25,15 @@ fn main() -> Result<(), SuperclusterError> {
 
     for item in &clusters {
         match item {
-            Item::Cluster(cluster) => println!(
-                "Cluster {} with {} points at {}, {}",
-                cluster.id.get(),
-                cluster.point_count,
-                cluster.x,
-                cluster.y
-            ),
+            Item::Cluster(cluster) => {
+                let [lng, lat] = cluster.coordinates();
+
+                println!(
+                    "Cluster {} with {} points at {lng}, {lat}",
+                    cluster.id.get(),
+                    cluster.point_count,
+                )
+            }
             Item::Point { index, .. } => println!("Point {}", index),
         }
     }

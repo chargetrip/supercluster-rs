@@ -1,22 +1,62 @@
 //! # Filtered tile module
 //!
-//! Contains the query that builds a tile from the points that pass a filter. A cluster stays in
+//! Contains the queries that build a tile from the points that pass a filter. A cluster stays in
 //! the tile when at least one of its points passes. When a few points pass, the cluster moves to
 //! their center, and when a single point passes, the cluster moves onto that point. The
 //! coordinates come from the supercluster, which got them when the points were loaded.
+//!
+//! The filter is a closure that runs on the points of the tile, or a `Selection` that ran it on
+//! every point once.
 
 use std::{
     fmt::{self, Debug, Formatter},
+    mem,
     ops::Range,
 };
 
 use crate::{
-    supercluster::tiles_per_axis, Cluster, Item, Supercluster, SuperclusterView, TileItem,
+    selection::{filter_bits, SetPositions},
+    supercluster::tiles_per_axis,
+    ClusterId, Item, Selection, Supercluster, SuperclusterError, SuperclusterView,
 };
 
 /// The number of points below which a filtered cluster is moved to the center of the points that
 /// are left.
-const RECENTER_LIMIT: usize = 20;
+const RECENTER_LIMIT: u32 = 20;
+
+/// Which points of a filtered item pass the filter.
+#[derive(Clone)]
+enum Matches<'a> {
+    /// Every point of the item passes.
+    All,
+
+    /// One bit per point of the cluster, in the order of its leaves, set when the point passes.
+    Bits(Vec<u64>),
+
+    /// The points of the selection pass.
+    Selection(&'a Selection),
+}
+
+impl Matches<'_> {
+    /// Iterate over the positions in `leaves` of the points that pass, where `start` is the
+    /// position of the first point of the item.
+    fn passing(&self, start: usize, leaves: Range<usize>) -> SetPositions<'_> {
+        match self {
+            Matches::All => SetPositions::new(None, 0, leaves),
+            Matches::Bits(words) => SetPositions::new(Some(words), start, leaves),
+            Matches::Selection(selection) => SetPositions::new(Some(selection.words()), 0, leaves),
+        }
+    }
+
+    /// Check whether a point in `leaves` passes, where `start` is the position of the first point
+    /// of the item.
+    fn any(&self, start: usize, leaves: Range<usize>) -> bool {
+        match self {
+            Matches::Selection(selection) => selection.count(leaves) > 0,
+            _ => self.passing(start, leaves).next().is_some(),
+        }
+    }
+}
 
 /// An item of a filtered tile: a cluster or a point with at least one point that passes the filter.
 #[non_exhaustive]
@@ -38,44 +78,38 @@ pub struct FilteredTileItem<'a, P> {
     /// all of its points, and `count` the ones that pass the filter.
     pub item: Item<'a, P>,
 
+    /// The number of points that pass the filter.
+    count: u32,
+
     /// The supercluster the item comes from.
     supercluster: &'a Supercluster<P>,
 
     /// The highest zoom level to cluster on, from the view that built the tile.
     cluster_max_zoom: u8,
 
-    /// One bit per point of the cluster, in the order of its leaves, set when the point passes the
-    /// filter. It is empty when every point passes, which takes no memory, and for a point.
-    matches: Vec<u64>,
+    /// The positions of the points of the item in the points of the supercluster.
+    leaves: Range<u32>,
+
+    /// Which points of the item pass the filter.
+    matches: Matches<'a>,
 }
 
 impl<'a, P> FilteredTileItem<'a, P> {
     /// Get the number of points that pass the filter: of the cluster, or 1 for a point.
-    pub fn count(&self) -> usize {
-        match self.item {
-            Item::Cluster(cluster) if self.matches.is_empty() => cluster.point_count,
-            Item::Cluster(_) => self
-                .matches
-                .iter()
-                .map(|word| word.count_ones() as usize)
-                .sum(),
-            Item::Point { .. } => 1,
-        }
+    pub fn count(&self) -> u32 {
+        self.count
     }
 
     /// Iterate over the points that pass the filter: the points of the cluster, in the order
     /// `Supercluster::leaves` returns them, or the point itself. The first point is
     /// `points().next()`.
     pub fn points(&self) -> impl Iterator<Item = &'a P> + '_ {
-        let (point, leaves): (Option<&'a P>, &'a [u32]) = match self.item {
-            Item::Cluster(cluster) => (None, self.supercluster.cluster_leaves(cluster.id)),
-            Item::Point { point, .. } => (Some(point), &[]),
-        };
         let points = self.supercluster.points();
+        let leaves = self.leaves();
 
-        point
-            .into_iter()
-            .chain(passing(leaves, &self.matches).map(move |index| &points[index]))
+        self.matches
+            .passing(leaves.start, leaves)
+            .map(move |leaf| &points[leaf])
     }
 
     /// Determine the zoom level at which the cluster expands, counting only the points that pass
@@ -89,12 +123,19 @@ impl<'a, P> FilteredTileItem<'a, P> {
             return None;
         };
 
+        let start = self.leaves().start;
+
         // The cluster comes from the supercluster, so finding its children does not fail
         self.supercluster
-            .expansion_zoom_where(cluster.id, self.cluster_max_zoom, |_, _, positions| {
-                any_set(&self.matches, positions)
+            .expansion_zoom_where(cluster.id, self.cluster_max_zoom, |leaves| {
+                self.matches.any(start, leaves)
             })
             .ok()
+    }
+
+    /// Get the positions of the points of the item in the points of the supercluster.
+    fn leaves(&self) -> Range<usize> {
+        self.leaves.start as usize..self.leaves.end as usize
     }
 }
 
@@ -107,8 +148,10 @@ impl<P> Clone for FilteredTileItem<'_, P> {
             y: self.y,
             coordinates: self.coordinates,
             item: self.item,
+            count: self.count,
             supercluster: self.supercluster,
             cluster_max_zoom: self.cluster_max_zoom,
+            leaves: self.leaves.clone(),
             matches: self.matches.clone(),
         }
     }
@@ -123,19 +166,55 @@ impl<P: Debug> Debug for FilteredTileItem<'_, P> {
             .field("y", &self.y)
             .field("coordinates", &self.coordinates)
             .field("item", &self.item)
-            .field("count", &self.count())
+            .field("count", &self.count)
             .finish_non_exhaustive()
     }
 }
 
 impl<P> Supercluster<P> {
+    /// Run a filter once on every point that was clustered, and keep which ones pass, for
+    /// `tile_selected` and `cluster_expansion_zoom_selected` to reuse. Run it again when what the
+    /// filter reads changes, for example the availability of the points.
+    ///
+    /// It scans the points in the order they are stored, and does not branch on what the filter
+    /// returns, so it runs the filter about as fast as the filter itself allows.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use supercluster::{Supercluster, SuperclusterOptions};
+    ///
+    /// // A point is a longitude, a latitude and whether it is available
+    /// let points = vec![(10.0, 50.0, true), (10.001, 50.0, false)];
+    /// let supercluster = Supercluster::load(SuperclusterOptions::default(), points, |point| {
+    ///     Some([point.0, point.1])
+    /// })?;
+    ///
+    /// // Run the filter once, then reuse it for every tile until the availability changes
+    /// let available = supercluster.select(|point| point.2);
+    /// let items = supercluster.tile_selected(0, 0, 0, &available);
+    ///
+    /// assert_eq!(items[0].count(), 1);
+    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// ```
+    pub fn select<F>(&self, filter: F) -> Selection
+    where
+        F: Fn(&P) -> bool,
+    {
+        let points = &self.points()[..self.clustered_points()];
+
+        Selection::new(filter_bits(points, filter).collect())
+    }
+
     /// Retrieve the items of a tile, like `tile`, but keep only the points for which `filter`
     /// returns `true`. A cluster without any point left is left out, and a cluster with a few points
     /// left moves to their center. Map the items to the type of your response with an iterator.
     ///
     /// It calls `filter` once for every point of every item of the tile, and the items reuse the
     /// results, for example in `FilteredTileItem::expansion_zoom`. A cluster that the tile also
-    /// shows as a copy across the antimeridian is filtered once for each copy.
+    /// shows as a copy across the antimeridian is filtered once for each copy. To filter many
+    /// tiles the same way, `select` once and use `tile_selected`, whose cost does not grow with
+    /// the points of the tile.
     ///
     /// # Examples
     ///
@@ -165,6 +244,60 @@ impl<P> Supercluster<P> {
     {
         self.view().tile_filtered(z, x, y, filter)
     }
+
+    /// Retrieve the items of a tile, like `tile_filtered`, but keep only the points of a
+    /// selection that `select` made. It counts the points of a cluster that pass in constant time,
+    /// so its cost grows with the items of the tile, not with the points in them.
+    ///
+    /// The selection must come from this supercluster, or the items mean nothing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use supercluster::{Supercluster, SuperclusterOptions};
+    ///
+    /// // A point is a longitude, a latitude and whether it is available
+    /// let points = vec![(10.0, 50.0, true), (10.001, 50.0, false), (10.002, 50.0, true)];
+    /// let supercluster = Supercluster::load(SuperclusterOptions::default(), points, |point| {
+    ///     Some([point.0, point.1])
+    /// })?;
+    /// let available = supercluster.select(|point| point.2);
+    ///
+    /// let items = supercluster.tile_selected(0, 0, 0, &available);
+    ///
+    /// // The cluster holds the two available points and moves to their center
+    /// assert_eq!(items[0].count(), 2);
+    ///
+    /// let [lng, lat] = items[0].coordinates;
+    ///
+    /// assert!((lng - 10.001).abs() < 1e-9 && (lat - 50.0).abs() < 1e-9);
+    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// ```
+    pub fn tile_selected<'s>(
+        &'s self,
+        z: u8,
+        x: u32,
+        y: u32,
+        selection: &'s Selection,
+    ) -> Vec<FilteredTileItem<'s, P>> {
+        self.view().tile_selected(z, x, y, selection)
+    }
+
+    /// Determine the zoom level at which a cluster expands, like
+    /// `cluster_expansion_zoom_filtered`, but count only the points of a selection that `select`
+    /// made, without running a filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
+    pub fn cluster_expansion_zoom_selected(
+        &self,
+        cluster_id: ClusterId,
+        selection: &Selection,
+    ) -> Result<u8, SuperclusterError> {
+        self.view()
+            .cluster_expansion_zoom_selected(cluster_id, selection)
+    }
 }
 
 impl<'a, P> SuperclusterView<'a, P> {
@@ -174,166 +307,151 @@ impl<'a, P> SuperclusterView<'a, P> {
     where
         F: Fn(&P) -> bool,
     {
-        self.tile(z, x, y)
-            .items
-            .iter()
-            .filter_map(|tile_item| filter_item(self, (z, x, y), tile_item, &filter))
-            .collect()
-    }
-}
+        let points = self.supercluster.points();
 
-/// Filter the points of a tile item and place what is left, or return `None` if no point is left.
-/// `tile` is the zoom level, X and Y coordinates of the tile.
-fn filter_item<'a, P, F>(
-    view: &SuperclusterView<'a, P>,
-    tile: (u8, u32, u32),
-    tile_item: &TileItem<'a, P>,
-    filter: &F,
-) -> Option<FilteredTileItem<'a, P>>
-where
-    F: Fn(&P) -> bool,
-{
-    let supercluster = view.supercluster;
+        // One buffer for the bits of every cluster, which an item takes only when some of its
+        // points fail, so a cluster whose points all pass allocates nothing
+        let mut bits = vec![];
 
-    let (matches, [x, y], coordinates) = match tile_item.item {
-        Item::Point { index, point } => {
-            if !filter(point) {
-                return None;
-            }
+        filter_tile(*self, (z, x, y), |leaves| match &points[leaves] {
+            // A point needs no bits
+            [point] => (u32::from(filter(point)), Matches::All),
+            points => {
+                bits.clear();
+                bits.extend(filter_bits(points, &filter));
 
-            let coordinates = supercluster.get_point_coordinates(index)?;
+                let count = bits.iter().map(|word| word.count_ones()).sum();
 
-            (vec![], [tile_item.x, tile_item.y], coordinates)
-        }
-        Item::Cluster(cluster) => {
-            let leaves = supercluster.cluster_leaves(cluster.id);
-            let points = supercluster.points();
-            let mut matches = vec![];
-            let mut count = 0;
-
-            for (position, &index) in leaves.iter().enumerate() {
-                if filter(&points[index as usize]) {
-                    count += 1;
-
-                    if !matches.is_empty() {
-                        matches[position / 64] |= 1 << (position % 64);
-                    }
-                } else if matches.is_empty() {
-                    // The first point that fails: every point before it passed
-                    matches = vec![0; leaves.len().div_ceil(64)];
-                    matches[..position / 64].fill(u64::MAX);
-                    matches[position / 64] = (1 << (position % 64)) - 1;
+                if count as usize == points.len() {
+                    (count, Matches::All)
+                } else {
+                    (count, Matches::Bits(mem::take(&mut bits)))
                 }
             }
-
-            if count == 0 {
-                return None;
-            }
-
-            let center = if count < cluster.point_count && count < RECENTER_LIMIT {
-                find_center(supercluster, passing(leaves, &matches))
-            } else {
-                None
-            };
-
-            match center {
-                Some(center) => {
-                    let position =
-                        get_center_position(supercluster, tile, tile_item, &cluster, center);
-
-                    (matches, position, center)
-                }
-                None => (matches, [tile_item.x, tile_item.y], [cluster.x, cluster.y]),
-            }
-        }
-    };
-
-    Some(FilteredTileItem {
-        x,
-        y,
-        coordinates,
-        item: tile_item.item,
-        supercluster,
-        cluster_max_zoom: view.cluster_max_zoom,
-        matches,
-    })
-}
-
-/// Iterate over the indexes of the points of a cluster whose bit is set in `bits`, or of every
-/// point if `bits` is empty, in the order of its leaves.
-fn passing<'b>(leaves: &'b [u32], bits: &'b [u64]) -> impl Iterator<Item = usize> + 'b {
-    leaves
-        .iter()
-        .enumerate()
-        .filter(|&(position, _)| {
-            bits.is_empty() || (bits[position / 64] >> (position % 64)) & 1 == 1
         })
-        .map(|(_, &index)| index as usize)
-}
-
-/// Check whether a bit at one of `positions` is set, which is always the case for a non-empty range
-/// if `bits` is empty. It checks a word at a time, because a selective filter leaves long runs of
-/// points that fail in the large clusters of low zoom levels.
-fn any_set(bits: &[u64], Range { mut start, end }: Range<usize>) -> bool {
-    if bits.is_empty() {
-        return start < end;
     }
 
-    while start < end {
-        // The bits from `start` to the end of its word, or to `end`
-        let width = (64 - start % 64).min(end - start);
+    /// Retrieve the items of a tile that have a point of a selection, like
+    /// `Supercluster::tile_selected`.
+    pub fn tile_selected<'s>(
+        &self,
+        z: u8,
+        x: u32,
+        y: u32,
+        selection: &'s Selection,
+    ) -> Vec<FilteredTileItem<'s, P>>
+    where
+        'a: 's,
+    {
+        let view: SuperclusterView<'s, P> = *self;
 
-        if (bits[start / 64] >> (start % 64)) & (u64::MAX >> (64 - width)) != 0 {
-            return true;
+        filter_tile(view, (z, x, y), |leaves| {
+            let count = selection.count(leaves.clone());
+
+            if count as usize == leaves.len() {
+                (count, Matches::All)
+            } else {
+                (count, Matches::Selection(selection))
+            }
+        })
+    }
+
+    /// Determine the zoom level at which a cluster expands, counting only the points of a
+    /// selection, like `Supercluster::cluster_expansion_zoom_selected`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
+    pub fn cluster_expansion_zoom_selected(
+        &self,
+        cluster_id: ClusterId,
+        selection: &Selection,
+    ) -> Result<u8, SuperclusterError> {
+        self.supercluster
+            .expansion_zoom_where(cluster_id, self.cluster_max_zoom, |leaves| {
+                selection.count(leaves) > 0
+            })
+    }
+}
+
+/// Build the items of a tile that have a point that passes a filter, and place them. `tile` is the
+/// zoom level, X and Y coordinates of the tile. `find_matches` gets the positions of the points of
+/// an item in the points of the supercluster, and returns how many pass and which ones.
+fn filter_tile<'a, P>(
+    view: SuperclusterView<'a, P>,
+    tile: (u8, u32, u32),
+    mut find_matches: impl FnMut(Range<usize>) -> (u32, Matches<'a>),
+) -> Vec<FilteredTileItem<'a, P>> {
+    let supercluster = view.supercluster;
+    let coordinate_system = &supercluster.options().coordinate_system;
+    let (z, tile_x, tile_y) = tile;
+    let z2 = tiles_per_axis(z);
+    let (tile_x, tile_y) = (f64::from(tile_x), f64::from(tile_y));
+    let mut items = vec![];
+
+    supercluster.for_each_in_tile(view.cluster_max_zoom, tile, |handle, position, origin_x| {
+        let leaves = supercluster.leaf_range(handle);
+        let (count, matches) = find_matches(leaves.clone());
+
+        if count == 0 {
+            return;
         }
 
-        start += width;
-    }
+        let item = supercluster.item(handle, position);
+        let recenter = matches!(item, Item::Cluster(cluster) if count < cluster.point_count)
+            && count < RECENTER_LIMIT;
 
-    false
+        let ([x, y], coordinates) = if recenter {
+            let center = find_center(supercluster, matches.passing(leaves.start, leaves.clone()));
+
+            // The copy of the world the item is in: -1 left of it, 1 right of it, or 0
+            let world = (tile_x - origin_x) / z2;
+            let [center_x, center_y] = coordinate_system.normalize(center);
+            let position = [center_x + world, center_y];
+
+            (
+                supercluster.tile_position(position, z2, tile_x, tile_y),
+                center,
+            )
+        } else {
+            (
+                supercluster.tile_position(position, z2, origin_x, tile_y),
+                coordinate_system.denormalize(position),
+            )
+        };
+
+        items.push(FilteredTileItem {
+            x,
+            y,
+            coordinates,
+            item,
+            count,
+            supercluster,
+            cluster_max_zoom: view.cluster_max_zoom,
+            leaves: leaves.start as u32..leaves.end as u32,
+            matches,
+        });
+    });
+
+    items
 }
 
-/// Get the position in a tile of the center of the points that are left in a cluster.
-/// A tile on the edge of the world also holds the clusters of the opposite edge, which sit a world
-/// width away, so the center goes in the same copy of the world as the cluster. `center` is in the
-/// coordinate system of the supercluster, and the position is in the units of the tile extent.
-fn get_center_position<P>(
-    supercluster: &Supercluster<P>,
-    (z, tile_x, tile_y): (u8, u32, u32),
-    tile_item: &TileItem<'_, P>,
-    cluster: &Cluster,
-    center: [f64; 2],
-) -> [f64; 2] {
-    let z2 = tiles_per_axis(z);
-    let (x, y) = supercluster.normalize(center);
-    let (cluster_x, _) = supercluster.normalize([cluster.x, cluster.y]);
-    let shown_x = (tile_item.x / supercluster.options().extent + f64::from(tile_x)) / z2;
-
-    supercluster.get_tile_position(
-        x + (shown_x - cluster_x).round(),
-        y,
-        z2,
-        f64::from(tile_x),
-        f64::from(tile_y),
-    )
-}
-
-/// Find the average of the coordinates of the points at `indexes`, or `None` if none of them has
-/// coordinates.
-fn find_center<P>(
-    supercluster: &Supercluster<P>,
-    indexes: impl Iterator<Item = usize>,
-) -> Option<[f64; 2]> {
+/// Find the average of the coordinates of the points at the positions `leaves`, in the coordinate
+/// system of the supercluster. There is at least one position.
+fn find_center<P>(supercluster: &Supercluster<P>, leaves: impl Iterator<Item = usize>) -> [f64; 2] {
+    let coordinate_system = &supercluster.options().coordinate_system;
     let mut count = 0;
     let mut sum = [0.0, 0.0];
 
-    for [x, y] in indexes.filter_map(|index| supercluster.get_point_coordinates(index)) {
+    for leaf in leaves {
+        let [x, y] = coordinate_system.denormalize(supercluster.point_position(leaf));
+
         count += 1;
         sum[0] += x;
         sum[1] += y;
     }
 
-    (count > 0).then(|| [sum[0] / count as f64, sum[1] / count as f64])
+    [sum[0] / f64::from(count), sum[1] / f64::from(count)]
 }
 
 #[cfg(test)]
@@ -342,7 +460,7 @@ mod tests {
 
     use std::cell::Cell;
 
-    use crate::SuperclusterOptions;
+    use crate::{CoordinateSystem, DataRange, SuperclusterOptions};
 
     /// A point that tells whether a filter should keep it.
     struct TestPoint {
@@ -372,7 +490,7 @@ mod tests {
     }
 
     /// The ID or index, the number of points left and the position in the tile of an item.
-    type Summary = (usize, usize, [f64; 2]);
+    type Summary = (usize, u32, [f64; 2]);
 
     /// The only tile at zoom level 0.
     const WORLD_TILE: (u8, u32, u32) = (0, 0, 0);
@@ -397,7 +515,7 @@ mod tests {
             .iter()
             .map(|tile_item| {
                 let id = match tile_item.item {
-                    Item::Cluster(cluster) => cluster.id.get(),
+                    Item::Cluster(cluster) => cluster.id.get() as usize,
                     Item::Point { index, .. } => index,
                 };
 
@@ -591,7 +709,7 @@ mod tests {
         let Item::Cluster(cluster) = supercluster.tile(0, 0, 0).items[0].item else {
             panic!("expected a cluster");
         };
-        let leaves: Vec<&TestPoint> = supercluster.leaves(cluster.id).unwrap().collect();
+        let leaves: Vec<&TestPoint> = supercluster.leaves(cluster.id).unwrap().iter().collect();
         let coordinates_of = |points: Vec<&TestPoint>| -> Vec<Option<[f64; 2]>> {
             points.iter().map(|point| point.coordinates).collect()
         };
@@ -642,7 +760,7 @@ mod tests {
             panic!("expected a cluster");
         };
 
-        assert_eq!(unfiltered[0].coordinates, [cluster.x, cluster.y]);
+        assert_eq!(unfiltered[0].coordinates, cluster.coordinates());
     }
 
     #[test]
@@ -683,7 +801,7 @@ mod tests {
         let Item::Cluster(cluster) = supercluster.tile(0, 0, 0).items[0].item else {
             panic!("expected a cluster");
         };
-        let failing = *supercluster.leaves(cluster.id).unwrap().nth(100).unwrap();
+        let failing = supercluster.leaves(cluster.id).unwrap()[100];
         let filter = |point: &[f64; 2]| *point != failing;
 
         let items = supercluster.tile_filtered(0, 0, 0, filter);
@@ -696,24 +814,6 @@ mod tests {
                 .cluster_expansion_zoom_filtered(cluster.id, filter)
                 .ok()
         );
-    }
-
-    #[test]
-    fn test_any_set_across_words() {
-        // 130 bits, which spread over three words, with only bit 64 set
-        let bits = [0, 1, 0];
-
-        assert!(any_set(&bits, 0..65));
-        assert!(any_set(&bits, 64..65));
-        assert!(any_set(&bits, 60..130));
-        assert!(!any_set(&bits, 0..64));
-        assert!(!any_set(&bits, 65..130));
-        assert!(!any_set(&bits, 64..64));
-        assert!(any_set(&[u64::MAX], 0..64));
-
-        // No bits means every point passes
-        assert!(any_set(&[], 3..5));
-        assert!(!any_set(&[], 5..5));
     }
 
     #[test]
@@ -753,24 +853,199 @@ mod tests {
     }
 
     #[test]
-    fn test_find_center_without_coordinates() {
+    fn test_tile_filtered_with_a_point_left_out() {
         let supercluster = Supercluster::load(
             SuperclusterOptions::default(),
             vec![
                 TestPoint::new(10.0, 50.0, true),
                 TestPoint::without_coordinates(),
+                TestPoint::new(10.001, 50.0, false),
             ],
             |point| point.coordinates,
         )
         .unwrap();
 
-        assert_eq!(find_center(&supercluster, [1].into_iter()), None);
-        assert_eq!(find_center(&supercluster, std::iter::empty()), None);
+        // The point without coordinates is in no cluster, so the cluster moves onto the point
+        // that passes
+        let items = supercluster.tile_filtered(0, 0, 0, |point| point.keep);
+        let [lng, lat] = items[0].coordinates;
 
-        // A point without coordinates is not part of the center
-        let [lng, lat] = find_center(&supercluster, [0, 1].into_iter()).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].count(), 1);
+        assert!((lng - 10.0).abs() < 1e-9 && (lat - 50.0).abs() < 1e-9);
 
-        assert!((lng - 10.0).abs() < 1e-9);
-        assert!((lat - 50.0).abs() < 1e-9);
+        let selection = supercluster.select(|point| point.keep);
+
+        assert_eq!(
+            summarize(&supercluster.tile_selected(0, 0, 0, &selection)),
+            summarize(&items)
+        );
+    }
+
+    #[test]
+    fn test_select_calls_the_filter_once_per_clustered_point() {
+        let supercluster = Supercluster::load(
+            SuperclusterOptions::default(),
+            vec![
+                TestPoint::new(10.0, 50.0, true),
+                TestPoint::without_coordinates(),
+                TestPoint::new(-100.0, -30.0, false),
+            ],
+            |point| point.coordinates,
+        )
+        .unwrap();
+        let calls = Cell::new(0);
+        let selection = supercluster.select(|point| {
+            calls.set(calls.get() + 1);
+            point.keep
+        });
+
+        // The point without coordinates is left out
+        assert_eq!(calls.get(), 2);
+        assert_eq!(
+            summarize(&supercluster.tile_selected(0, 0, 0, &selection)),
+            vec![(0, 1, [270.0, 174.0])]
+        );
+    }
+
+    /// Check that two points come from the same place in the supercluster.
+    fn same_points<'a>(
+        a: impl Iterator<Item = &'a TestPoint>,
+        b: impl Iterator<Item = &'a TestPoint>,
+    ) -> bool {
+        let a: Vec<*const TestPoint> = a.map(|point| point as *const _).collect();
+        let b: Vec<*const TestPoint> = b.map(|point| point as *const _).collect();
+
+        a == b
+    }
+
+    #[test]
+    fn test_tile_selected_matches_tile_filtered() {
+        let supercluster = load(&create_spread_points(500));
+        let filters: [fn(&TestPoint) -> bool; 3] = [|point| point.keep, |_| true, |_| false];
+        let mut items = 0;
+
+        for view in [supercluster.view(), supercluster.with_cluster_max_zoom(3)] {
+            for filter in filters {
+                let selection = supercluster.select(filter);
+
+                for z in 0..=5 {
+                    for x in 0..1 << z {
+                        for y in 0..1 << z {
+                            let filtered = view.tile_filtered(z, x, y, filter);
+                            let selected = view.tile_selected(z, x, y, &selection);
+
+                            assert_eq!(summarize(&selected), summarize(&filtered));
+
+                            for (selected, filtered) in selected.iter().zip(&filtered) {
+                                assert_eq!(selected.coordinates, filtered.coordinates);
+                                assert_eq!(selected.expansion_zoom(), filtered.expansion_zoom());
+                                assert!(same_points(selected.points(), filtered.points()));
+
+                                if let Item::Cluster(cluster) = selected.item {
+                                    // The points that pass, in the order of the leaves
+                                    let leaves = supercluster.leaves(cluster.id).unwrap();
+
+                                    assert!(same_points(
+                                        selected.points(),
+                                        leaves.iter().filter(|point| filter(point))
+                                    ));
+
+                                    assert_eq!(
+                                        view.cluster_expansion_zoom_selected(
+                                            cluster.id, &selection
+                                        ),
+                                        view.cluster_expansion_zoom_filtered(cluster.id, filter)
+                                    );
+                                }
+                            }
+
+                            items += selected.len();
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(items > 0);
+    }
+
+    #[test]
+    fn test_cluster_expansion_zoom_selected_of_unknown_cluster() {
+        let supercluster = load(&[(10.0, 50.0, true), (10.001, 50.0, true)]);
+        let selection = supercluster.select(|point| point.keep);
+
+        assert_eq!(
+            supercluster.cluster_expansion_zoom_selected(ClusterId::new(100000), &selection),
+            Err(SuperclusterError::ClusterNotFound)
+        );
+    }
+
+    #[test]
+    fn test_tile_selected_with_a_selection_of_another_supercluster() {
+        let small = load(&[(10.0, 50.0, true)]);
+        let large = load(&create_spread_points(500));
+        let selection = small.select(|point| point.keep);
+
+        // The items mean nothing, but the queries do not panic
+        for item in large.tile_selected(0, 0, 0, &selection) {
+            assert!(item.points().count() <= item.count() as usize);
+            item.expansion_zoom();
+        }
+    }
+
+    #[test]
+    fn test_tile_selected_without_loaded_points() {
+        let supercluster = load(&[]);
+        let selection = supercluster.select(|point| point.keep);
+
+        assert!(supercluster.tile_selected(0, 0, 0, &selection).is_empty());
+    }
+
+    #[test]
+    fn test_tile_selected_with_one_point() {
+        let supercluster = load(&[(10.0, 50.0, true)]);
+        let kept = supercluster.select(|point| point.keep);
+        let rejected = supercluster.select(|point| !point.keep);
+
+        assert_eq!(
+            summarize(&supercluster.tile_selected(0, 0, 0, &kept)),
+            vec![(0, 1, [270.0, 174.0])]
+        );
+        assert!(supercluster.tile_selected(0, 0, 0, &rejected).is_empty());
+    }
+
+    #[test]
+    fn test_tile_selected_with_cartesian_coordinates() {
+        let range = DataRange::new(0.0, 0.0, 100.0, 100.0);
+        let options = SuperclusterOptions::builder()
+            .coordinate_system(CoordinateSystem::Cartesian { range })
+            .build()
+            .unwrap();
+        let supercluster = Supercluster::load(
+            options,
+            vec![
+                TestPoint::new(10.0, 10.0, true),
+                TestPoint::new(10.5, 10.0, false),
+                TestPoint::new(11.0, 10.0, true),
+                TestPoint::new(90.0, 90.0, false),
+            ],
+            |point| point.coordinates,
+        )
+        .unwrap();
+        let selection = supercluster.select(|point| point.keep);
+        let items = supercluster.tile_selected(0, 0, 0, &selection);
+
+        assert_eq!(
+            summarize(&items),
+            summarize(&supercluster.tile_filtered(0, 0, 0, |point| point.keep))
+        );
+
+        // The cluster moves to the center of the two points that pass, and the far point fails
+        let [x, y] = items[0].coordinates;
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].count(), 2);
+        assert!((x - 10.5).abs() < 1e-9 && (y - 10.0).abs() < 1e-9);
     }
 }

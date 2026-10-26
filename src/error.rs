@@ -4,7 +4,7 @@
 
 use thiserror::Error;
 
-use crate::MAX_ZOOM_LIMIT;
+use crate::{MAX_POINTS, MAX_ZOOM_LIMIT};
 
 /// Supercluster error.
 /// Represents the different errors that can occur in the supercluster crate.
@@ -42,7 +42,7 @@ pub enum SuperclusterError {
     InvalidNodeSize,
 
     /// There are more points than the index can address.
-    #[error("The number of points cannot be above {}.", u32::MAX)]
+    #[error("The number of points cannot be above {}.", MAX_POINTS)]
     TooManyPoints,
 }
 
@@ -102,7 +102,7 @@ mod tests {
     fn test_too_many_points_message_has_the_limit() {
         assert_eq!(
             SuperclusterError::TooManyPoints.to_string(),
-            format!("The number of points cannot be above {}.", u32::MAX)
+            format!("The number of points cannot be above {}.", MAX_POINTS)
         );
     }
 }

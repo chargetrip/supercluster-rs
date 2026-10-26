@@ -30,11 +30,18 @@ mod range;
 mod supercluster;
 
 /// Filtered tile module.
-/// This module contains the query that builds a tile from the points that pass a filter.
+/// This module contains the queries that build a tile from the points that pass a filter.
 mod filtered_tile;
+
+/// Selection module.
+/// This module contains the selection of the points that pass a filter, which queries reuse.
+mod selection;
 
 pub use builder::*;
 pub use error::*;
+#[cfg(feature = "geojson")]
+pub use feature::*;
 pub use filtered_tile::*;
 pub use range::*;
+pub use selection::Selection;
 pub use supercluster::*;
