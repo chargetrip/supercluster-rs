@@ -195,6 +195,13 @@ fn bench_one_million_points(c: &mut Criterion) {
         b.iter(|| supercluster.cluster_expansion_zoom_selected(black_box(cluster_id), &selection))
     });
 
+    // Selections made once per attribute, combined for every request
+    let north = supercluster.select(|point| point[1] > 0.0);
+
+    group.bench_function("combine two selections", |b| {
+        b.iter(|| selection.and(black_box(&north)))
+    });
+
     group.finish();
 }
 

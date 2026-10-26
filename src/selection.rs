@@ -5,6 +5,7 @@
 
 use std::{
     fmt::{self, Debug, Formatter},
+    iter,
     ops::Range,
 };
 
@@ -40,6 +41,63 @@ impl Selection {
         }
 
         Selection { words, ranks }
+    }
+
+    /// Get a selection of the points that pass both this selection and `other`.
+    ///
+    /// Combining works on the bits instead of the points, so it costs much less than running
+    /// `select` with both filters. Both selections must come from the same supercluster: with a
+    /// selection of another one, the result does not panic, but means nothing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use supercluster::{Supercluster, SuperclusterOptions};
+    ///
+    /// // A station is a longitude, a latitude, its power in kW and whether it is available
+    /// let stations = vec![(10.0, 50.0, 150, true), (10.001, 50.0, 150, false), (10.002, 50.0, 11, true)];
+    /// let supercluster = Supercluster::load(SuperclusterOptions::default(), stations, |station| {
+    ///     Some([station.0, station.1])
+    /// })?;
+    ///
+    /// // Select once per attribute, then combine them for each request
+    /// let fast = supercluster.select(|station| station.2 >= 50);
+    /// let available = supercluster.select(|station| station.3);
+    ///
+    /// // The items borrow the selection, so keep it while they are used
+    /// let fast_and_available = fast.and(&available);
+    /// let items = supercluster.tile_selected(0, 0, 0, &fast_and_available);
+    ///
+    /// assert_eq!(items[0].count(), 1);
+    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// ```
+    pub fn and(&self, other: &Selection) -> Selection {
+        self.combine(other, |word, other| word & other)
+    }
+
+    /// Get a selection of the points that pass this selection, `other` or both, like `and`.
+    pub fn or(&self, other: &Selection) -> Selection {
+        self.combine(other, |word, other| word | other)
+    }
+
+    /// Get a selection of the points that pass this selection but not `other`, like `and`.
+    pub fn and_not(&self, other: &Selection) -> Selection {
+        self.combine(other, |word, other| word & !other)
+    }
+
+    /// Combine the bits of this selection with the ones of `other`, a word at a time. The result
+    /// has as many words as this selection, and a word that `other` lacks counts as no bit set, so
+    /// a selection of another supercluster does not make it panic.
+    fn combine(&self, other: &Selection, operation: impl Fn(u64, u64) -> u64) -> Selection {
+        let others = other.words.iter().chain(iter::repeat(&0));
+
+        Selection::new(
+            self.words
+                .iter()
+                .zip(others)
+                .map(|(&word, &other)| operation(word, other))
+                .collect(),
+        )
     }
 
     /// Get one bit per point, set when the point passes.
@@ -157,7 +215,120 @@ impl Iterator for SetPositions<'_> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use crate::{Supercluster, SuperclusterOptions};
+
+    /// Load points spread over the world with a fixed formula, so every run uses the same points.
+    fn load_spread_points(count: usize) -> Supercluster<[f64; 2]> {
+        let points = (0..count)
+            .map(|i| {
+                let lng = (i as f64 * 0.618_033_988_749_895) % 1.0;
+                let lat = (i as f64 * 0.754_877_666_246_693) % 1.0;
+
+                [-180.0 + 360.0 * lng, -80.0 + 160.0 * lat]
+            })
+            .collect();
+
+        Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point)).unwrap()
+    }
+
+    /// Keeps about one point in three, here and there.
+    fn every_third(point: &[f64; 2]) -> bool {
+        (point[0] * 1e6) as i64 % 3 == 0
+    }
+
+    /// Keeps the points of the northern half.
+    fn north(point: &[f64; 2]) -> bool {
+        point[1] > 0.0
+    }
+
+    /// Check that two selections give the same results: the same number of points, and the same
+    /// items, counts, positions and expansion zooms in every tile up to zoom level 4.
+    fn assert_same_results(supercluster: &Supercluster<[f64; 2]>, a: &Selection, b: &Selection) {
+        assert_eq!(format!("{a:?}"), format!("{b:?}"));
+
+        for z in 0..=4 {
+            for x in 0..1 << z {
+                for y in 0..1 << z {
+                    let summarize = |selection| -> Vec<_> {
+                        supercluster
+                            .tile_selected(z, x, y, selection)
+                            .iter()
+                            .map(|item| (item.x, item.y, item.count(), item.expansion_zoom()))
+                            .collect()
+                    };
+
+                    assert_eq!(summarize(a), summarize(b), "tile {z}/{x}/{y}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_and_matches_select_with_both_filters() {
+        let supercluster = load_spread_points(500);
+        let combined = supercluster
+            .select(every_third)
+            .and(&supercluster.select(north));
+        let selected = supercluster.select(|point| every_third(point) && north(point));
+
+        assert_same_results(&supercluster, &combined, &selected);
+    }
+
+    #[test]
+    fn test_or_matches_select_with_either_filter() {
+        let supercluster = load_spread_points(500);
+        let combined = supercluster
+            .select(every_third)
+            .or(&supercluster.select(north));
+        let selected = supercluster.select(|point| every_third(point) || north(point));
+
+        assert_same_results(&supercluster, &combined, &selected);
+    }
+
+    #[test]
+    fn test_and_not_matches_select_with_the_first_filter_only() {
+        let supercluster = load_spread_points(500);
+        let combined = supercluster
+            .select(every_third)
+            .and_not(&supercluster.select(north));
+        let selected = supercluster.select(|point| every_third(point) && !north(point));
+
+        assert_same_results(&supercluster, &combined, &selected);
+    }
+
+    #[test]
+    fn test_and_with_a_selection_of_another_supercluster() {
+        let small = load_spread_points(10);
+        let large = load_spread_points(500);
+        let small_selection = small.select(|_| true);
+        let large_selection = large.select(|_| true);
+
+        // The words that the smaller selection lacks count as no bit set
+        assert_eq!(
+            format!("{:?}", large_selection.and(&small_selection)),
+            "Selection { selected: 10, .. }"
+        );
+        assert_eq!(
+            format!("{:?}", large_selection.and_not(&small_selection)),
+            "Selection { selected: 490, .. }"
+        );
+
+        // The result means nothing, but combining does not panic
+        small_selection.or(&large_selection);
+    }
+
+    #[test]
+    fn test_and_without_points() {
+        let supercluster = load_spread_points(0);
+        let selection = supercluster.select(|_| true);
+
+        assert_eq!(
+            format!("{:?}", selection.and(&selection)),
+            "Selection { selected: 0, .. }"
+        );
+    }
 
     #[test]
     fn test_debug_of_a_selection() {

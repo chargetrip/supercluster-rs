@@ -192,7 +192,24 @@ For a cluster outside a tile request, such as a click, `cluster_expansion_zoom_f
 
 ### Filtering many tiles the same way
 
-`tile_filtered` runs the filter on every point under the tile, so the tile of the whole world runs it on every point. When many tiles use the same filter, run it once with `select`, and pass the `Selection` to `tile_selected` and `cluster_expansion_zoom_selected`. A selection counts the points of a cluster that pass in constant time, so the cost of a tile grows with its items, not with the points in them. Run `select` again when what the filter reads changes, for example the availability of the stations.
+`tile_filtered` runs the filter on every point under the tile. That is cheap for a tile of a city, but the tile of the whole world runs it on every point. A `Selection` runs the filter once, with `select`, and `tile_selected` and `cluster_expansion_zoom_selected` reuse it. It counts the points of a cluster that pass in constant time, so the cost of a tile grows with its items, not with the points in them.
+
+A selection only pays off when it serves many tiles, because `select` runs the filter on every point:
+
+| Use | When |
+| --- | --- |
+| `tile_filtered` with a closure | The filter changes with every request, or the tile is zoomed in. Start with this one. |
+| `select`, then `tile_selected` | The same filter serves many tiles, for example zoomed-out tiles, or a map that most users see with the same filter. |
+
+To use selections well:
+
+- **Select once per attribute.** Keep one selection per filter that requests combine, such as a category, a range of values or a status. Combine them for each request with `and`, `or` and `and_not`, which work on the bits instead of the points, so they cost much less than a new `select`.
+- **Refresh them on a schedule.** A selection is a snapshot. Run `select` again when what the filter reads changes, for example every 30 seconds for data that changes often, and share the latest selections between threads in an `Arc`.
+- **Cache the combinations that many requests share,** keyed by the filters they combine, and refresh them with their parts.
+- **Keep a selection while you use its items.** The items borrow the selection, so store a combined selection in a variable instead of passing `&a.and(&b)` to the query.
+- **Rebuild them after loading new points.** A selection belongs to the supercluster that made it. A selection of another supercluster does not make a query panic, but the results mean nothing.
+
+Both queries return the same items, so a request can choose per tile. Here, selections serve the zoomed-out tiles and the closure serves the others:
 
 ```rust
 use supercluster::{Supercluster, SuperclusterError, SuperclusterOptions};
@@ -200,6 +217,7 @@ use supercluster::{Supercluster, SuperclusterError, SuperclusterOptions};
 struct Station {
     lng: f64,
     lat: f64,
+    power_kw: u32,
     available: bool,
 }
 
@@ -207,24 +225,36 @@ fn main() -> Result<(), SuperclusterError> {
     let supercluster = Supercluster::load(
         SuperclusterOptions::default(),
         vec![
-            Station { lng: 4.9, lat: 52.37, available: true },
-            Station { lng: 4.91, lat: 52.37, available: false },
+            Station { lng: 4.9, lat: 52.37, power_kw: 150, available: true },
+            Station { lng: 4.91, lat: 52.37, power_kw: 150, available: false },
+            Station { lng: 4.92, lat: 52.37, power_kw: 11, available: true },
         ],
         |station| Some([station.lng, station.lat]),
     )?;
 
-    // Run the filter once, and reuse it for every tile until the availability changes
+    // One selection per attribute, which a refresh replaces on a schedule
+    let fast = supercluster.select(|station| station.power_kw >= 50);
     let available = supercluster.select(|station| station.available);
-    let items = supercluster.tile_selected(0, 0, 0, &available);
 
-    assert_eq!(items.len(), 1);
+    // A request for the tile of the whole world, with the fast chargers that are available
+    let (z, x, y) = (0, 0, 0);
+    let fast_and_available;
+
+    let items = if z <= 2 {
+        // Zoomed out, the tile holds many stations, so combine the selections
+        fast_and_available = fast.and(&available);
+        supercluster.tile_selected(z, x, y, &fast_and_available)
+    } else {
+        // Zoomed in, the filter runs on the few stations of the tile only
+        supercluster.tile_filtered(z, x, y, |station| station.power_kw >= 50 && station.available)
+    };
+
+    // The cluster holds the one fast charger that is available
     assert_eq!(items[0].count(), 1);
 
     Ok(())
 }
 ```
-
-A selection belongs to the supercluster that made it. A selection of another supercluster does not make a query panic, but the results mean nothing.
 
 ### Lowering the zoom level to cluster on
 
@@ -349,7 +379,7 @@ The `tracing` feature reports one summary per load, with fields such as the numb
 
 ### New in version 4
 
-`tile_filtered` and `cluster_expansion_zoom_filtered` keep only the points that pass a filter, `select` runs a filter once for many tiles, and `with_cluster_max_zoom` lowers the zoom level to cluster on for a single request. See [Filtering tiles](#filtering-tiles), [Filtering many tiles the same way](#filtering-many-tiles-the-same-way) and [Lowering the zoom level to cluster on](#lowering-the-zoom-level-to-cluster-on).
+`tile_filtered` and `cluster_expansion_zoom_filtered` keep only the points that pass a filter, `select` runs a filter once for many tiles and its selections combine with `and`, `or` and `and_not`, and `with_cluster_max_zoom` lowers the zoom level to cluster on for a single request. See [Filtering tiles](#filtering-tiles), [Filtering many tiles the same way](#filtering-many-tiles-the-same-way) and [Lowering the zoom level to cluster on](#lowering-the-zoom-level-to-cluster-on).
 
 ## Benchmarks
 
