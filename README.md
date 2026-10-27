@@ -11,9 +11,9 @@ A high-performance Rust crate for geospatial and non-geospatial point clustering
 
 This README is for Rust developers who show many points on a map or a chart. For every type and method, read the [API documentation on docs.rs](https://docs.rs/supercluster). If you encounter any issues or have questions that are not addressed in the documentation, feel free to [submit an issue on GitHub](https://github.com/chargetrip/supercluster-rs/issues).
 
-![Clusters of points on a map, changing as the map zooms](https://github.com/user-attachments/assets/d99a7e82-f981-4e31-a327-1ff87631971c)
+<https://github.com/user-attachments/assets/d99a7e82-f981-4e31-a327-1ff87631971c>
 
-<sub>From [go.chargetrip.com](https://go.chargetrip.com).</sub>
+<sub>Clusters of points on a map, changing as the map zooms. From [go.chargetrip.com](https://go.chargetrip.com).</sub>
 
 ## Contents
 
