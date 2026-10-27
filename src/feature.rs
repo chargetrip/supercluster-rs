@@ -82,10 +82,15 @@ impl Cluster<'_> {
 
     /// Get the GeoJSON properties of the cluster as a JSON object.
     fn get_properties(&self) -> JsonObject {
-        self.properties()
-            .into_iter()
-            .map(|(key, value)| (key.to_string(), JsonValue::from(value)))
-            .collect()
+        let mut properties = JsonObject::new();
+
+        // Inserted one by one, because collecting into the map first collects into a vector
+        // and sorts it
+        for (key, value) in self.properties() {
+            properties.insert(key.to_string(), JsonValue::from(value));
+        }
+
+        properties
     }
 
     /// Convert the cluster into a GeoJSON feature, with its center as the geometry.

@@ -85,6 +85,10 @@ name = "filtered_tile"
 path = "examples/filtered_tile.rs"
 
 [[example]]
+name = "shared_state"
+path = "examples/shared_state.rs"
+
+[[example]]
 name = "tracing"
 path = "examples/tracing.rs"
 required-features = ["geojson", "tracing"]

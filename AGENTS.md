@@ -90,8 +90,8 @@ are the reference.
   builds with `--locked`.
 - The README is the crate documentation, so its Rust code blocks are doc tests. A block that needs a
   feature is marked `rust,ignore`, and the others must compile with no features. Code that cannot
-  compile, such as the version 3 code in the upgrade guide, goes in a `diff` block, with `-` lines
-  for the old code and `+` lines for the new code.
+  compile, such as the version 3 code in the upgrade guide, goes in a `rust,ignore` block, with the
+  old code under a `// Version 3` comment and the new code under a `// Version 4` comment.
 - Features are additive, because docs.rs builds with all of them (`[package.metadata.docs.rs]`).
 
 ## Error handling
