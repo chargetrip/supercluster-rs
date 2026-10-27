@@ -11,7 +11,9 @@ A high-performance Rust crate for geospatial and non-geospatial point clustering
 
 This README is for Rust developers who show many points on a map or a chart. For every type and method, read the [API documentation on docs.rs](https://docs.rs/supercluster). If you encounter any issues or have questions that are not addressed in the documentation, feel free to [submit an issue on GitHub](https://github.com/chargetrip/supercluster-rs/issues).
 
-![Clusters of points on a map, changing as the map zooms](https://cloud.githubusercontent.com/assets/25395/11857351/43407b46-a40c-11e5-8662-e99ab1cd2cb7.gif)
+![Clusters of points on a map, changing as the map zooms](https://github.com/user-attachments/assets/d99a7e82-f981-4e31-a327-1ff87631971c)
+
+<sub>From [go.chargetrip.com](https://go.chargetrip.com).</sub>
 
 ## Contents
 
@@ -235,7 +237,6 @@ Your results depend on your points, your filters and your machine, so measure yo
 - **A selection is a snapshot (cached) of what the filter returned.** If the filter only reads the points, it stays valid, because points do not change after `load`. If the filter reads other data that changes, run `select` again when it changes, for example every 30 seconds for data that changes often.
 - **A computed combination is a snapshot too.** It does not follow the selections it was computed from, so compute it again after you refresh one of them.
 - **Compute a combination only to cache it.** Computing it for every request costs more than letting the query combine it, as the benchmark shows.
-- **The items borrow the combination.** To keep the items after the statement that makes them, keep the combination in a variable.
 - **A selection belongs to the supercluster that made it.** Keep them together, for example in the same `Arc`, and replace both when you load new points. With a selection of another supercluster, a query does not panic, but its results mean nothing. The [`shared_state` example](https://github.com/chargetrip/supercluster-rs/blob/main/examples/shared_state.rs) shows a server that keeps them together, combines them per request and refreshes a selection when its data changes.
 
 ### Filter with a closure
@@ -279,7 +280,7 @@ The [`filtered_tile` example](https://github.com/chargetrip/supercluster-rs/blob
 
 ### Filter with selections
 
-Make one selection per condition with `select`, and combine them per request with `and`, `or` and `and_not`. A combination borrows the selections and computes nothing, and the query evaluates it on the points of its tile only. `compute` turns a combination into a selection of its own, which you can cache.
+Make one selection per condition with `select`, and combine them per request with `and`, `or` and `and_not`. A combination borrows the selections and computes nothing, and the query evaluates it on the points of its tile only. The items borrow the selections, not the combination, so you can pass the combination straight to the query. `compute` turns a combination into a selection of its own, which you can cache.
 
 ```rust
 use supercluster::{Supercluster, SuperclusterError, SuperclusterOptions};
@@ -307,8 +308,7 @@ fn main() -> Result<(), SuperclusterError> {
     let available = supercluster.select(|station| station.available);
 
     // Per request: combine what the request asks for, which the query evaluates on its tile only
-    let fast_and_available = fast.and(&available);
-    let items = supercluster.tile_selected(0, 0, 0, &fast_and_available);
+    let items = supercluster.tile_selected(0, 0, 0, fast.and(&available));
 
     // The cluster holds the one fast charger that is available
     assert_eq!(items[0].count(), 1);
@@ -461,17 +461,17 @@ These are methods of `Supercluster<P>`. The last column tells whether the `Super
 
 ### Filter tiles
 
-These are methods of `Supercluster<P>`, with the same last column as the queries. The `selection` of a query is a `Selection` or a `Combination`.
+These are methods of `Supercluster<P>`, with the same last column as the queries. The `selection` of a query is a reference to a `Selection`, also behind an `Arc` or a `Box`, or a `Combination`, by value or by reference.
 
 | Method | Returns | What it does | On a view |
 | --- | --- | --- | --- |
 | `tile_filtered(z, x, y, filter)` | `Vec<FilteredTileItem>` | The items of a tile that keep a point for which the closure returns `true`. | Yes |
 | `cluster_expansion_zoom_filtered(cluster_id, filter)` | `Result<u8, _>` | The zoom level where a cluster splits, counting only the points that pass the closure. | Yes |
 | `select(filter)` | `Selection` | The points that pass the closure, found once for many queries. | No |
-| `tile_selected(z, x, y, &selection)` | `Vec<FilteredTileItem>` | The items of a tile that keep a point of the selection. | Yes |
-| `cluster_expansion_zoom_selected(cluster_id, &selection)` | `Result<u8, _>` | The zoom level where a cluster splits, counting only the points of the selection. | Yes |
+| `tile_selected(z, x, y, selection)` | `Vec<FilteredTileItem>` | The items of a tile that keep a point of the selection. | Yes |
+| `cluster_expansion_zoom_selected(cluster_id, selection)` | `Result<u8, _>` | The zoom level where a cluster splits, counting only the points of the selection. | Yes |
 
-Selections combine with the methods below. `a` is a `Selection` or a `Combination`, and `b` is a `&Selection` or a `Combination`, so the calls chain, as in `a.or(&b).and(&c)`. A combination computes nothing until a query or `compute()` evaluates it.
+Selections combine with the methods below. `a` is a `Selection` or a `Combination`, and `b` is a reference to a `Selection`, also behind an `Arc` or a `Box`, or a `Combination`, by value or by reference. The calls chain, as in `a.or(&b).and(&c)`. A combination computes nothing until a query or `compute()` evaluates it.
 
 | Method | Returns | What it does |
 | --- | --- | --- |

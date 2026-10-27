@@ -58,17 +58,17 @@ fn current(state: &State) -> Arc<Index> {
 fn handle_tile(state: &State, (z, x, y): (u8, u32, u32), only_fast: bool) -> Vec<([f64; 2], u32)> {
     let index = current(state);
 
-    // A combination per request, which the query evaluates on the stations of the tile only
+    // A combination per request, which the query evaluates on the stations of the tile only. The
+    // fast selection is behind an `Arc`, which the operators take as it is.
     let wanted = if only_fast {
-        index.available.and(index.fast.as_ref())
+        index.available.and(&index.fast)
     } else {
         Combination::from(&index.available)
     };
 
-    // The items borrow the combination, which lives in a variable until the response is built
-    let items = index.supercluster.tile_selected(z, x, y, &wanted);
-
-    items
+    index
+        .supercluster
+        .tile_selected(z, x, y, wanted)
         .iter()
         .map(|item| (item.coordinates(), item.count()))
         .collect()

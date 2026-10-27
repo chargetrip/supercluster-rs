@@ -188,8 +188,9 @@ impl<P> Supercluster<P> {
     /// It calls `filter` once for every point of every item of the tile, and the items reuse the
     /// results, for example in `FilteredTileItem::expansion_zoom`. A cluster that the tile also
     /// shows as a copy across the antimeridian is filtered once for each copy. To filter many
-    /// tiles the same way, `select` once and use `tile_selected`, whose cost does not grow with
-    /// the points of the tile.
+    /// tiles the same way, `select` once and use `tile_selected`. With a selection, its cost does
+    /// not grow with the points of the tile, and with a combination of selections, it runs no
+    /// filter.
     ///
     /// # Examples
     ///
@@ -221,7 +222,10 @@ impl<P> Supercluster<P> {
     }
 
     /// Retrieve the items of a tile, like `tile_filtered`, but keep only the points of a
-    /// `Selection` that `select` made, or of a `Combination` of selections.
+    /// `Selection` that `select` made, or of a `Combination` of selections. It takes a reference to
+    /// a selection, also behind an `Arc` or a `Box`, or a combination, by value or by reference.
+    /// The items borrow the selections, not the combination, so the combination can be a
+    /// temporary, such as `a.and(&b)`.
     ///
     /// A selection counts the points of a cluster that pass in constant time, so the cost of the
     /// tile grows with its items, not with the points in them. The query evaluates a combination on
@@ -252,27 +256,28 @@ impl<P> Supercluster<P> {
     /// assert!((lng - 10.001).abs() < 1e-9 && (lat - 50.0).abs() < 1e-9);
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
-    pub fn tile_selected<'s, S: Select>(
+    pub fn tile_selected<'s, S: Select<'s>>(
         &'s self,
         z: u8,
         x: u32,
         y: u32,
-        selection: &'s S,
+        selection: S,
     ) -> Vec<FilteredTileItem<'s, P>> {
         self.view().tile_selected(z, x, y, selection)
     }
 
     /// Determine the zoom level at which a cluster expands, like
     /// `cluster_expansion_zoom_filtered`, but count only the points of a `Selection` that `select`
-    /// made, or of a `Combination` of selections, without running a filter.
+    /// made, or of a `Combination` of selections, without running a filter. It takes them like
+    /// `tile_selected`.
     ///
     /// # Errors
     ///
     /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
-    pub fn cluster_expansion_zoom_selected<S: Select>(
+    pub fn cluster_expansion_zoom_selected<'s, S: Select<'s>>(
         &self,
         cluster_id: ClusterId,
-        selection: &S,
+        selection: S,
     ) -> Result<u8, SuperclusterError> {
         self.view()
             .cluster_expansion_zoom_selected(cluster_id, selection)
@@ -304,15 +309,10 @@ impl<'a, P> SuperclusterView<'a, P> {
 
                     let count = bits.iter().map(|word| word.count_ones()).sum();
 
-                    match count {
-                        0 => None,
-                        _ if count as usize == points.len() => Some((count, Matches::All)),
-                        _ => {
-                            let words = mem::take(&mut bits);
-
-                            Some((count, Matches::Local { words, first }))
-                        }
-                    }
+                    Matches::found(count, points.len(), || Matches::Local {
+                        words: mem::take(&mut bits),
+                        first,
+                    })
                 }
             }
         })
@@ -320,12 +320,12 @@ impl<'a, P> SuperclusterView<'a, P> {
 
     /// Retrieve the items of a tile that have a point of a selection, like
     /// `Supercluster::tile_selected`.
-    pub fn tile_selected<'s, S: Select>(
+    pub fn tile_selected<'s, S: Select<'s>>(
         &self,
         z: u8,
         x: u32,
         y: u32,
-        selection: &'s S,
+        selection: S,
     ) -> Vec<FilteredTileItem<'s, P>>
     where
         'a: 's,
@@ -344,10 +344,10 @@ impl<'a, P> SuperclusterView<'a, P> {
     /// # Errors
     ///
     /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
-    pub fn cluster_expansion_zoom_selected<S: Select>(
+    pub fn cluster_expansion_zoom_selected<'s, S: Select<'s>>(
         &self,
         cluster_id: ClusterId,
-        selection: &S,
+        selection: S,
     ) -> Result<u8, SuperclusterError> {
         let mut scratch = Scratch::default();
 

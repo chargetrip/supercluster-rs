@@ -4,6 +4,7 @@
 //! so many queries can reuse it, its combinations, and the bit sets the filtered queries share.
 
 use std::{
+    borrow::Borrow,
     fmt::{self, Debug, Formatter},
     mem,
     ops::Range,
@@ -43,8 +44,8 @@ impl Selection {
         Selection { words, ranks }
     }
 
-    /// Combine the points that pass both this selection and `other`, a selection or a
-    /// combination.
+    /// Combine the points that pass both this selection and `other`: a selection, behind a
+    /// reference, an `Arc` or a `Box`, or a combination, by value or by reference.
     ///
     /// Combining computes nothing: the combination borrows the selections, and a query evaluates
     /// it on the points of its tile only, so its cost grows with the points of the tile, not with
@@ -66,9 +67,8 @@ impl Selection {
     /// let fast = supercluster.select(|station| station.2 >= 50);
     /// let available = supercluster.select(|station| station.3);
     ///
-    /// // The items borrow the combination, so keep it while they are used
-    /// let fast_and_available = fast.and(&available);
-    /// let items = supercluster.tile_selected(0, 0, 0, &fast_and_available);
+    /// // The items borrow the selections, not the combination, so it can be a temporary
+    /// let items = supercluster.tile_selected(0, 0, 0, fast.and(&available));
     ///
     /// assert_eq!(items[0].count(), 1);
     /// # Ok::<(), supercluster::SuperclusterError>(())
@@ -121,7 +121,8 @@ impl Debug for Selection {
 /// reads in constant time, to cache a combination that many queries share.
 ///
 /// Its own `and`, `or` and `and_not` take it by value, so one expression combines any number of
-/// selections, such as `a.or(&b).and(&c)`.
+/// selections, such as `a.or(&b).and(&c)`. To use a combination in another one and keep it, pass a
+/// reference to it, which copies its steps.
 #[derive(Clone)]
 pub struct Combination<'s> {
     /// The steps that evaluate the combination, in postfix order.
@@ -144,17 +145,24 @@ enum Step<'s> {
     AndNot,
 }
 
-impl<'s> From<&'s Selection> for Combination<'s> {
-    fn from(selection: &'s Selection) -> Self {
+// A selection behind a reference, an `Arc`, a `Box` or an `Rc`
+impl<'s, T: Borrow<Selection> + ?Sized> From<&'s T> for Combination<'s> {
+    fn from(selection: &'s T) -> Self {
         Combination {
-            steps: vec![Step::Take(selection)],
+            steps: vec![Step::Take(T::borrow(selection))],
         }
     }
 }
 
+// A combination that is reused, which copies its steps
+impl<'s> From<&Combination<'s>> for Combination<'s> {
+    fn from(combination: &Combination<'s>) -> Self {
+        combination.clone()
+    }
+}
+
 impl<'s> Combination<'s> {
-    /// Combine the points that pass both this combination and `other`, a selection or a
-    /// combination, like `Selection::and`.
+    /// Combine the points that pass both this combination and `other`, like `Selection::and`.
     pub fn and(self, other: impl Into<Combination<'s>>) -> Combination<'s> {
         self.combine(other.into(), Step::And)
     }
@@ -232,13 +240,17 @@ impl Debug for Combination<'_> {
     }
 }
 
-/// The points that a query keeps: the ones of a `Selection`, or of a `Combination` of selections.
+/// The points that `tile_selected` and `cluster_expansion_zoom_selected` keep: the ones of a
+/// `Selection`, behind a reference, an `Arc` or a `Box`, or of a `Combination` of selections, by
+/// value or by reference. `'s` is the lifetime of the selections, which the items of a tile borrow.
 /// Only this crate implements it.
-pub trait Select: private::Sealed {}
+pub trait Select<'s>: private::Sealed<'s> {}
 
-impl Select for Selection {}
+impl<'s, T: Borrow<Selection> + ?Sized> Select<'s> for &'s T {}
 
-impl Select for Combination<'_> {}
+impl<'s> Select<'s> for Combination<'s> {}
+
+impl<'s> Select<'s> for &Combination<'s> {}
 
 /// The trait that keeps other crates from implementing `Select`, with what the queries need.
 pub(crate) mod private {
@@ -246,12 +258,12 @@ pub(crate) mod private {
 
     use super::{Matches, Scratch};
 
-    /// What a query needs from the points that it keeps.
-    pub trait Sealed {
+    /// What a query needs from the points that it keeps, whose selections live for `'s`.
+    pub trait Sealed<'s> {
         /// Count the points at the positions of `range` that pass, and find which ones, or get
         /// `None` if no point passes. `scratch` holds buffers that a query reuses for every item.
         fn matches(&self, range: Range<usize>, scratch: &mut Scratch)
-            -> Option<(u32, Matches<'_>)>;
+            -> Option<(u32, Matches<'s>)>;
 
         /// Check whether a point at the positions of `range` passes. `scratch` holds buffers
         /// that a query reuses for every check.
@@ -259,24 +271,21 @@ pub(crate) mod private {
     }
 }
 
-impl private::Sealed for Selection {
-    fn matches(&self, range: Range<usize>, _: &mut Scratch) -> Option<(u32, Matches<'_>)> {
-        let count = self.count(range.clone());
+impl<'s, T: Borrow<Selection> + ?Sized> private::Sealed<'s> for &'s T {
+    fn matches(&self, range: Range<usize>, _: &mut Scratch) -> Option<(u32, Matches<'s>)> {
+        let selection = T::borrow(self);
+        let count = selection.count(range.clone());
 
-        match count {
-            0 => None,
-            _ if count as usize == range.len() => Some((count, Matches::All)),
-            _ => Some((count, Matches::Shared(self))),
-        }
+        Matches::found(count, range.len(), || Matches::Shared(selection))
     }
 
     fn any(&self, range: Range<usize>, _: &mut Scratch) -> bool {
-        self.count(range) > 0
+        T::borrow(self).count(range) > 0
     }
 }
 
-impl private::Sealed for Combination<'_> {
-    fn matches(&self, range: Range<usize>, scratch: &mut Scratch) -> Option<(u32, Matches<'_>)> {
+impl<'s> private::Sealed<'s> for Combination<'s> {
+    fn matches(&self, range: Range<usize>, scratch: &mut Scratch) -> Option<(u32, Matches<'s>)> {
         // A combination of a single selection reads the counts of the selection
         if let [Step::Take(selection)] = self.steps[..] {
             return selection.matches(range, scratch);
@@ -285,25 +294,30 @@ impl private::Sealed for Combination<'_> {
         let length = range.len();
         let (count, first) = evaluate_range(&self.steps, range, scratch);
 
-        match count {
-            0 => None,
-            _ if count as usize == length => Some((count, Matches::All)),
-            _ => {
-                // Only an item with some points that fail takes the words, so the buffer serves
-                // the next items otherwise
-                let words = mem::take(&mut scratch.stack[0]);
-
-                Some((count, Matches::Local { words, first }))
-            }
-        }
+        // Only an item with some points that fail takes the words, so the buffer serves the next
+        // items otherwise
+        Matches::found(count, length, || Matches::Local {
+            words: mem::take(&mut scratch.stack[0]),
+            first,
+        })
     }
 
     fn any(&self, range: Range<usize>, scratch: &mut Scratch) -> bool {
         if let [Step::Take(selection)] = self.steps[..] {
-            return selection.count(range) > 0;
+            return selection.any(range, scratch);
         }
 
         evaluate_range(&self.steps, range, scratch).0 > 0
+    }
+}
+
+impl<'s> private::Sealed<'s> for &Combination<'s> {
+    fn matches(&self, range: Range<usize>, scratch: &mut Scratch) -> Option<(u32, Matches<'s>)> {
+        (**self).matches(range, scratch)
+    }
+
+    fn any(&self, range: Range<usize>, scratch: &mut Scratch) -> bool {
+        (**self).any(range, scratch)
     }
 }
 
@@ -450,7 +464,21 @@ pub enum Matches<'a> {
     Shared(&'a Selection),
 }
 
-impl Matches<'_> {
+impl<'a> Matches<'a> {
+    /// Turn the number of points that pass, out of `length`, into what a query keeps: `None` when
+    /// no point passes, `All` when every point passes, and what `some` returns otherwise.
+    pub(crate) fn found(
+        count: u32,
+        length: usize,
+        some: impl FnOnce() -> Matches<'a>,
+    ) -> Option<(u32, Matches<'a>)> {
+        match count {
+            0 => None,
+            _ if count as usize == length => Some((count, Matches::All)),
+            _ => Some((count, some())),
+        }
+    }
+
     /// Iterate over the positions in `range` of the points that pass.
     pub(crate) fn passing(&self, range: Range<usize>) -> SetPositions<'_> {
         match self {
@@ -555,6 +583,8 @@ impl Iterator for SetPositions<'_> {
 mod tests {
     use super::*;
 
+    use std::sync::Arc;
+
     use crate::{test_points::load_spread_points, Item, Supercluster, SuperclusterOptions};
 
     /// Keeps about one point in three, here and there.
@@ -577,10 +607,10 @@ mod tests {
     type Summary = Vec<(f64, f64, u32, usize, Option<u8>)>;
 
     /// Summarize the items of the tile `z`/`x`/`y` that `selection` keeps.
-    fn summarize<S: Select>(
-        supercluster: &Supercluster<[f64; 2]>,
+    fn summarize<'s, S: Select<'s> + Copy>(
+        supercluster: &'s Supercluster<[f64; 2]>,
         (z, x, y): (u8, u32, u32),
-        selection: &S,
+        selection: S,
     ) -> Summary {
         supercluster
             .tile_selected(z, x, y, selection)
@@ -712,6 +742,60 @@ mod tests {
     }
 
     #[test]
+    fn test_and_with_a_borrowed_combination() {
+        let supercluster = load_spread_points(500);
+        let (third, northern, eastern) = (
+            supercluster.select(every_third),
+            supercluster.select(north),
+            supercluster.select(east),
+        );
+        let either = third.or(&northern);
+
+        // A borrowed combination is copied into the new one, so it stays usable
+        let combination = eastern.and(&either);
+        let selected =
+            supercluster.select(|point| east(point) && (every_third(point) || north(point)));
+
+        assert_same_results(&supercluster, &combination, &selected);
+        assert_eq!(format!("{either:?}"), "Combination { selections: 2, .. }");
+    }
+
+    #[test]
+    fn test_tile_selected_with_a_temporary_combination() {
+        let supercluster = load_spread_points(500);
+        let (third, northern) = (supercluster.select(every_third), supercluster.select(north));
+        let selected = supercluster.select(|point| every_third(point) && north(point));
+
+        // The items borrow the selections, not the combination, so they outlive it
+        let items = supercluster.tile_selected(0, 0, 0, third.and(&northern));
+        let expected = supercluster.tile_selected(0, 0, 0, &selected);
+        let summary = |items: &[crate::FilteredTileItem<'_, [f64; 2]>]| -> Vec<(f64, f64, u32)> {
+            items
+                .iter()
+                .map(|item| (item.x, item.y, item.count()))
+                .collect()
+        };
+
+        assert!(!items.is_empty());
+        assert_eq!(summary(&items), summary(&expected));
+    }
+
+    #[test]
+    fn test_tile_selected_with_selections_behind_an_arc_or_a_box() {
+        let supercluster = load_spread_points(500);
+        let third = Arc::new(supercluster.select(every_third));
+        let northern = Box::new(supercluster.select(north));
+        let selected = supercluster.select(|point| every_third(point) && north(point));
+
+        // The queries and the operators take them as they are
+        assert_eq!(
+            summarize(&supercluster, (1, 0, 0), &third),
+            summarize(&supercluster, (1, 0, 0), third.as_ref())
+        );
+        assert_same_results(&supercluster, &third.and(&northern), &selected);
+    }
+
+    #[test]
     fn test_compute_of_a_single_selection() {
         let supercluster = load_spread_points(130);
         let selection = supercluster.select(every_third);
@@ -754,8 +838,8 @@ mod tests {
 
         // The results mean nothing, but neither computing nor a query panics
         small_selection.or(&large_selection).compute();
-        small.tile_selected(0, 0, 0, &small_selection.and(&large_selection));
-        large.tile_selected(0, 0, 0, &large_selection.and(&small_selection));
+        small.tile_selected(0, 0, 0, small_selection.and(&large_selection));
+        large.tile_selected(0, 0, 0, large_selection.and(&small_selection));
     }
 
     #[test]
