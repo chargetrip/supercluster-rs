@@ -35,12 +35,6 @@ pub struct FilteredTileItem<'a, P> {
     /// The Y position in the tile, in the units of the tile extent.
     pub y: f64,
 
-    /// The position in the coordinate system of the supercluster, the longitude and latitude for
-    /// `LatLng`. It is the center of the points left for a cluster that moved, the center of the
-    /// cluster for one that did not, and the position of a point. Unlike `x` and `y`, it is not
-    /// rounded, and a copy of an item across the antimeridian keeps its own coordinates.
-    pub coordinates: [f64; 2],
-
     /// The cluster or the point, as the supercluster has it. The point count of a cluster counts
     /// all of its points, and `count` the ones that pass the filter.
     pub item: Item<'a, P>,
@@ -59,12 +53,43 @@ pub struct FilteredTileItem<'a, P> {
 
     /// Which points of the item pass the filter.
     matches: Matches<'a>,
+
+    /// Where the item is, for `coordinates`.
+    location: Location,
+}
+
+/// Where an item of a filtered tile is, in the form the query found it, so that only a call to
+/// `FilteredTileItem::coordinates` converts it.
+#[derive(Clone, Copy)]
+enum Location {
+    /// Where the supercluster has the item, normalized to the [0..1] range the KD-trees use.
+    Normalized([f64; 2]),
+
+    /// The center of the points left of a cluster that moved, in the coordinate system of the
+    /// supercluster.
+    Center([f64; 2]),
 }
 
 impl<'a, P> FilteredTileItem<'a, P> {
     /// Get the number of points that pass the filter: of the cluster, or 1 for a point.
     pub fn count(&self) -> u32 {
         self.count
+    }
+
+    /// Get the position in the coordinate system of the supercluster, the longitude and latitude
+    /// for `LatLng`. It is the center of the points left for a cluster that moved, the center of
+    /// the cluster for one that did not, and the position of a point. Unlike `x` and `y`, it is not
+    /// rounded, and a copy of an item across the antimeridian keeps its own coordinates. It is
+    /// computed on each call, so a query that does not need it does not pay for it.
+    pub fn coordinates(&self) -> [f64; 2] {
+        match self.location {
+            Location::Normalized(position) => self
+                .supercluster
+                .options()
+                .coordinate_system
+                .denormalize(position),
+            Location::Center(center) => center,
+        }
     }
 
     /// Iterate over the points that pass the filter: the points of the cluster, in the order
@@ -110,13 +135,13 @@ impl<P> Clone for FilteredTileItem<'_, P> {
         FilteredTileItem {
             x: self.x,
             y: self.y,
-            coordinates: self.coordinates,
             item: self.item,
             count: self.count,
             supercluster: self.supercluster,
             cluster_max_zoom: self.cluster_max_zoom,
             leaves: self.leaves.clone(),
             matches: self.matches.clone(),
+            location: self.location,
         }
     }
 }
@@ -128,7 +153,7 @@ impl<P: Debug> Debug for FilteredTileItem<'_, P> {
             .debug_struct("FilteredTileItem")
             .field("x", &self.x)
             .field("y", &self.y)
-            .field("coordinates", &self.coordinates)
+            .field("coordinates", &self.coordinates())
             .field("item", &self.item)
             .field("count", &self.count)
             .finish_non_exhaustive()
@@ -198,7 +223,7 @@ impl<P> Supercluster<P> {
     /// assert_eq!(items.len(), 1);
     /// assert_eq!(items[0].count(), 1);
     ///
-    /// let [lng, lat] = items[0].coordinates;
+    /// let [lng, lat] = items[0].coordinates();
     ///
     /// assert!((lng - 10.0).abs() < 1e-9 && (lat - 50.0).abs() < 1e-9);
     /// # Ok::<(), supercluster::SuperclusterError>(())
@@ -237,7 +262,7 @@ impl<P> Supercluster<P> {
     /// // The cluster holds the two available points and moves to their center
     /// assert_eq!(items[0].count(), 2);
     ///
-    /// let [lng, lat] = items[0].coordinates;
+    /// let [lng, lat] = items[0].coordinates();
     ///
     /// assert!((lng - 10.001).abs() < 1e-9 && (lat - 50.0).abs() < 1e-9);
     /// # Ok::<(), supercluster::SuperclusterError>(())
@@ -287,19 +312,21 @@ impl<'a, P> SuperclusterView<'a, P> {
 
             match &points[leaves] {
                 // A point needs no bits
-                [point] => (u32::from(filter(point)), Matches::All),
+                [point] => filter(point).then_some((1, Matches::All)),
                 points => {
                     bits.clear();
                     bits.extend(filter_bits(points, &filter));
 
                     let count = bits.iter().map(|word| word.count_ones()).sum();
 
-                    if count as usize == points.len() {
-                        (count, Matches::All)
-                    } else {
-                        let words = mem::take(&mut bits);
+                    match count {
+                        0 => None,
+                        _ if count as usize == points.len() => Some((count, Matches::All)),
+                        _ => {
+                            let words = mem::take(&mut bits);
 
-                        (count, Matches::Local { words, first })
+                            Some((count, Matches::Local { words, first }))
+                        }
                     }
                 }
             }
@@ -348,11 +375,12 @@ impl<'a, P> SuperclusterView<'a, P> {
 
 /// Build the items of a tile that have a point that passes a filter, and place them. `tile` is the
 /// zoom level, X and Y coordinates of the tile. `find_matches` gets the positions of the points of
-/// an item in the points of the supercluster, and returns how many pass and which ones.
+/// an item in the points of the supercluster, and returns how many pass and which ones, or `None`
+/// if none passes.
 fn filter_tile<'a, P>(
     view: SuperclusterView<'a, P>,
     tile: (u8, u32, u32),
-    mut find_matches: impl FnMut(Range<usize>) -> (u32, Matches<'a>),
+    mut find_matches: impl FnMut(Range<usize>) -> Option<(u32, Matches<'a>)>,
 ) -> Vec<FilteredTileItem<'a, P>> {
     let supercluster = view.supercluster;
     let coordinate_system = &supercluster.options().coordinate_system;
@@ -363,17 +391,15 @@ fn filter_tile<'a, P>(
 
     supercluster.for_each_in_tile(view.cluster_max_zoom, tile, |handle, position, origin_x| {
         let leaves = supercluster.leaf_range(handle);
-        let (count, matches) = find_matches(leaves.clone());
-
-        if count == 0 {
+        let Some((count, matches)) = find_matches(leaves.clone()) else {
             return;
-        }
+        };
 
         let item = supercluster.item(handle, position);
         let recenter = matches!(item, Item::Cluster(cluster) if count < cluster.point_count)
             && count < RECENTER_LIMIT;
 
-        let ([x, y], coordinates) = if recenter {
+        let ([x, y], location) = if recenter {
             let center = find_center(supercluster, matches.passing(leaves.clone()));
 
             // The copy of the world the item is in: -1 left of it, 1 right of it, or 0
@@ -383,25 +409,25 @@ fn filter_tile<'a, P>(
 
             (
                 supercluster.tile_position(position, z2, tile_x, tile_y),
-                center,
+                Location::Center(center),
             )
         } else {
             (
                 supercluster.tile_position(position, z2, origin_x, tile_y),
-                coordinate_system.denormalize(position),
+                Location::Normalized(position),
             )
         };
 
         items.push(FilteredTileItem {
             x,
             y,
-            coordinates,
             item,
             count,
             supercluster,
             cluster_max_zoom: view.cluster_max_zoom,
             leaves: leaves.start as u32..leaves.end as u32,
             matches,
+            location,
         });
     });
 
@@ -432,7 +458,7 @@ mod tests {
 
     use std::cell::Cell;
 
-    use crate::{CoordinateSystem, DataRange, SuperclusterOptions};
+    use crate::{test_points, CoordinateSystem, DataRange, SuperclusterOptions};
 
     /// A point that tells whether a filter should keep it.
     struct TestPoint {
@@ -602,16 +628,13 @@ mod tests {
         );
     }
 
-    /// Create points spread over the world with a fixed formula, so every run uses the same points.
-    /// The filter keeps every third point.
+    /// Create the points spread over the world that the tests share, for the filter to keep every
+    /// third point.
     fn create_spread_points(count: usize) -> Vec<(f64, f64, bool)> {
-        (0..count)
-            .map(|i| {
-                let lng = (i as f64 * 0.618_033_988_749_895) % 1.0;
-                let lat = (i as f64 * 0.754_877_666_246_693) % 1.0;
-
-                (-180.0 + 360.0 * lng, -80.0 + 160.0 * lat, i % 3 == 0)
-            })
+        test_points::create_spread_points(count)
+            .into_iter()
+            .enumerate()
+            .map(|(i, [lng, lat])| (lng, lat, i % 3 == 0))
             .collect()
     }
 
@@ -721,8 +744,8 @@ mod tests {
         for item in &items {
             match item.item {
                 // The cluster moved to the center of the two points left, without rounding
-                Item::Cluster(_) => assert!(close(item.coordinates, [11.0, 50.0])),
-                Item::Point { .. } => assert!(close(item.coordinates, [-100.0, -30.0])),
+                Item::Cluster(_) => assert!(close(item.coordinates(), [11.0, 50.0])),
+                Item::Point { .. } => assert!(close(item.coordinates(), [-100.0, -30.0])),
             }
         }
 
@@ -732,7 +755,7 @@ mod tests {
             panic!("expected a cluster");
         };
 
-        assert_eq!(unfiltered[0].coordinates, cluster.coordinates());
+        assert_eq!(unfiltered[0].coordinates(), cluster.coordinates());
     }
 
     #[test]
@@ -840,7 +863,7 @@ mod tests {
         // The point without coordinates is in no cluster, so the cluster moves onto the point
         // that passes
         let items = supercluster.tile_filtered(0, 0, 0, |point| point.keep);
-        let [lng, lat] = items[0].coordinates;
+        let [lng, lat] = items[0].coordinates();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].count(), 1);
@@ -910,7 +933,7 @@ mod tests {
                             assert_eq!(summarize(&selected), summarize(&filtered));
 
                             for (selected, filtered) in selected.iter().zip(&filtered) {
-                                assert_eq!(selected.coordinates, filtered.coordinates);
+                                assert_eq!(selected.coordinates(), filtered.coordinates());
                                 assert_eq!(selected.expansion_zoom(), filtered.expansion_zoom());
                                 assert!(same_points(selected.points(), filtered.points()));
 
@@ -1014,7 +1037,7 @@ mod tests {
         );
 
         // The cluster moves to the center of the two points that pass, and the far point fails
-        let [x, y] = items[0].coordinates;
+        let [x, y] = items[0].coordinates();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].count(), 2);

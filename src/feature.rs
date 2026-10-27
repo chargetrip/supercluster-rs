@@ -65,20 +65,27 @@ fn get_coordinates(feature: &Feature) -> Option<[f64; 2]> {
 }
 
 impl Cluster<'_> {
-    /// Get the GeoJSON properties of the cluster: `cluster`, `cluster_id`, `point_count` and
-    /// `point_count_abbreviated`.
+    /// Get the GeoJSON properties of the cluster, with their keys in alphabetical order:
+    /// `cluster`, `cluster_id`, `point_count` and `point_count_abbreviated`. Both
+    /// `get_properties` and `ClusterPropertiesView` build on them, so they always agree.
+    fn properties(&self) -> [(&'static str, ClusterProperty); 4] {
+        [
+            ("cluster", ClusterProperty::Flag(true)),
+            ("cluster_id", ClusterProperty::Number(self.id.get())),
+            ("point_count", ClusterProperty::Number(self.point_count)),
+            (
+                "point_count_abbreviated",
+                ClusterProperty::Text(AbbreviatedCount(self.point_count)),
+            ),
+        ]
+    }
+
+    /// Get the GeoJSON properties of the cluster as a JSON object.
     fn get_properties(&self) -> JsonObject {
-        let mut properties = JsonObject::new();
-
-        properties.insert("cluster".to_string(), JsonValue::from(true));
-        properties.insert("cluster_id".to_string(), JsonValue::from(self.id.get()));
-        properties.insert("point_count".to_string(), JsonValue::from(self.point_count));
-        properties.insert(
-            "point_count_abbreviated".to_string(),
-            JsonValue::from(self.point_count_abbreviated()),
-        );
-
-        properties
+        self.properties()
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), JsonValue::from(value)))
+            .collect()
     }
 
     /// Convert the cluster into a GeoJSON feature, with its center as the geometry.
@@ -196,7 +203,13 @@ struct FeatureView<'t, 'a>(&'t TileItem<'a, Feature>);
 impl Serialize for FeatureView<'_, '_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let TileItem { x, y, item } = self.0;
-        let mut map = serializer.serialize_map(None)?;
+
+        // The type, the geometry, the properties, and the ID, which a point may not have
+        let length = match item {
+            Item::Cluster(_) => 4,
+            Item::Point { point, .. } => 3 + usize::from(point.id.is_some()),
+        };
+        let mut map = serializer.serialize_map(Some(length))?;
 
         map.serialize_entry("type", "Feature")?;
         map.serialize_entry("geometry", &PointView([*x, *y]))?;
@@ -232,23 +245,52 @@ impl Serialize for PointView {
     }
 }
 
-/// The GeoJSON properties of a cluster, which serialize like `Cluster::get_properties`, whose keys
-/// come in alphabetical order.
+/// The GeoJSON properties of a cluster, which serialize like `Cluster::get_properties`.
 struct ClusterPropertiesView<'c, 'a>(&'c Cluster<'a>);
 
 impl Serialize for ClusterPropertiesView<'_, '_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let cluster = self.0;
-        let mut map = serializer.serialize_map(Some(4))?;
+        let properties = self.0.properties();
+        let mut map = serializer.serialize_map(Some(properties.len()))?;
 
-        map.serialize_entry("cluster", &true)?;
-        map.serialize_entry("cluster_id", &cluster.id.get())?;
-        map.serialize_entry("point_count", &cluster.point_count)?;
-        map.serialize_entry(
-            "point_count_abbreviated",
-            &DisplayView(AbbreviatedCount(cluster.point_count)),
-        )?;
+        for (key, value) in &properties {
+            map.serialize_entry(key, value)?;
+        }
+
         map.end()
+    }
+}
+
+/// A value of the GeoJSON properties of a cluster.
+enum ClusterProperty {
+    /// A property that is `true` or `false`.
+    Flag(bool),
+
+    /// A property that is a whole number.
+    Number(u32),
+
+    /// The number of points as a short text.
+    Text(AbbreviatedCount),
+}
+
+impl From<ClusterProperty> for JsonValue {
+    fn from(property: ClusterProperty) -> Self {
+        match property {
+            ClusterProperty::Flag(flag) => JsonValue::from(flag),
+            ClusterProperty::Number(number) => JsonValue::from(number),
+            ClusterProperty::Text(count) => JsonValue::from(count.into_string()),
+        }
+    }
+}
+
+impl Serialize for ClusterProperty {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            ClusterProperty::Flag(flag) => serializer.serialize_bool(*flag),
+            ClusterProperty::Number(number) => serializer.serialize_u32(*number),
+            // Written without allocating a string
+            ClusterProperty::Text(count) => serializer.collect_str(count),
+        }
     }
 }
 

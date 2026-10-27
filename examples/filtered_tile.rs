@@ -46,7 +46,7 @@ fn main() -> Result<(), SuperclusterError> {
         .into_iter()
         .map(|tile_item| {
             let names: Vec<_> = tile_item.points().map(|station| station.name).collect();
-            let [lng, lat] = tile_item.coordinates;
+            let [lng, lat] = tile_item.coordinates();
 
             match tile_item.item {
                 Item::Cluster(cluster) => {

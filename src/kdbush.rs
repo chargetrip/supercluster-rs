@@ -57,9 +57,19 @@ impl KDBush {
             return;
         }
 
-        let mut stack = vec![(0, self.ids.len() - 1, 0)];
+        // Each level of the tree halves the points, so the tree is less than 64 levels deep. The
+        // search keeps at most one node per level and one more, so an array holds them without
+        // allocating
+        let mut stack = [(0, 0, 0); 64];
+        let mut length = 1;
 
-        while let Some((axis, right, left)) = stack.pop() {
+        stack[0] = (0, self.ids.len() - 1, 0);
+
+        while length > 0 {
+            length -= 1;
+
+            let (axis, right, left) = stack[length];
+
             if right - left <= self.node_size {
                 for (offset, &[x, y]) in self.coords[left..=right].iter().enumerate() {
                     if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
@@ -79,11 +89,13 @@ impl KDBush {
             let next_axis = (axis + 1) % 2;
 
             if (axis == 0 && min_x <= x) || (axis != 0 && min_y <= y) {
-                stack.push((next_axis, m - 1, left));
+                stack[length] = (next_axis, m - 1, left);
+                length += 1;
             }
 
             if (axis == 0 && max_x >= x) || (axis != 0 && max_y >= y) {
-                stack.push((next_axis, right, m + 1));
+                stack[length] = (next_axis, right, m + 1);
+                length += 1;
             }
         }
     }

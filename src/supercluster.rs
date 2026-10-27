@@ -246,29 +246,39 @@ impl Cluster<'_> {
 
     /// Get the number of points as a short text, for example `1.5k` for 1500 points.
     pub fn point_count_abbreviated(&self) -> String {
-        // `to_string` of an integer skips the formatting machinery that `Display` goes through
-        if self.point_count < 1000 {
-            self.point_count.to_string()
-        } else {
-            AbbreviatedCount(self.point_count).to_string()
-        }
+        AbbreviatedCount(self.point_count).into_string()
     }
 }
+
+/// The number of points from which `AbbreviatedCount` shortens a count, for example to `1k`.
+const ABBREVIATE_FROM: u32 = 1000;
 
 /// The number of points of a cluster as a short text, for example `1.5k` for 1500 points, which
 /// `Display` writes without allocating.
 pub(crate) struct AbbreviatedCount(pub(crate) u32);
 
+impl AbbreviatedCount {
+    /// Write the count into a new string. A count it does not shorten goes through `to_string` of
+    /// an integer, which skips the formatting machinery that `Display` goes through.
+    pub(crate) fn into_string(self) -> String {
+        if self.0 < ABBREVIATE_FROM {
+            self.0.to_string()
+        } else {
+            self.to_string()
+        }
+    }
+}
+
 impl Display for AbbreviatedCount {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         let count = f64::from(self.0);
 
-        if count >= 10000.0 {
-            write!(formatter, "{}k", (count / 1000.0).round())
-        } else if count >= 1000.0 {
+        if self.0 < ABBREVIATE_FROM {
+            write!(formatter, "{}", self.0)
+        } else if count < 10000.0 {
             write!(formatter, "{}k", (count / 100.0).round() / 10.0)
         } else {
-            write!(formatter, "{}", self.0)
+            write!(formatter, "{}k", (count / 1000.0).round())
         }
     }
 }
@@ -1243,6 +1253,8 @@ fn convert_spherical_mercator_to_latitude(y: f64) -> f64 {
 mod tests {
     use super::*;
 
+    use crate::test_points::{create_spread_points, load_spread_points};
+
     /// A point that tells whether a filter should keep it.
     #[derive(Clone, Debug, PartialEq)]
     struct TestPoint {
@@ -1291,16 +1303,6 @@ mod tests {
         Supercluster::load(SuperclusterOptions::default(), points, |point| {
             point.coordinates
         })
-        .unwrap()
-    }
-
-    /// Load the points spread over the world with the default options.
-    fn load_spread_points(count: usize) -> Supercluster<[f64; 2]> {
-        Supercluster::load(
-            SuperclusterOptions::default(),
-            create_points(count),
-            |point| Some(*point),
-        )
         .unwrap()
     }
 
@@ -1484,7 +1486,7 @@ mod tests {
 
     #[test]
     fn test_clusters_gives_points_their_loaded_index() {
-        let points = create_points(500);
+        let points = create_spread_points(500);
         let supercluster =
             Supercluster::load(SuperclusterOptions::default(), points.clone(), |point| {
                 Some(*point)
@@ -1502,18 +1504,6 @@ mod tests {
 
             assert_eq!(*point, points[index]);
         }
-    }
-
-    /// Create points spread over the world with a fixed formula, so every run uses the same points.
-    fn create_points(count: usize) -> Vec<[f64; 2]> {
-        (0..count)
-            .map(|i| {
-                let lng = (i as f64 * 0.618_033_988_749_895) % 1.0;
-                let lat = (i as f64 * 0.754_877_666_246_693) % 1.0;
-
-                [-180.0 + 360.0 * lng, -80.0 + 160.0 * lat]
-            })
-            .collect()
     }
 
     /// Get the number of points an item stands for.

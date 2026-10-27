@@ -140,7 +140,7 @@ fn main() -> Result<(), SuperclusterError> {
 
 A filtered tile keeps only the points that pass a filter, for example the ones that match a search. A cluster without any point left is left out, and a cluster with a few points left moves to their center.
 
-Each item has `count()` and `points()` for the points that pass, `coordinates` for its position in your coordinate system, and `expansion_zoom()` for the zoom level where a cluster splits, counting only the points that pass. Map the items to the type of your response with an iterator.
+Each item has `count()` and `points()` for the points that pass, `coordinates()` for its position in your coordinate system, and `expansion_zoom()` for the zoom level where a cluster splits, counting only the points that pass. Map the items to the type of your response with an iterator.
 
 ### Choose a closure or selections
 
@@ -183,7 +183,7 @@ fn main() -> Result<(), SuperclusterError> {
     let items = supercluster.tile_filtered(0, 0, 0, |station| station.available);
 
     for item in &items {
-        println!("{:?}: {} station(s), zoom in to {:?}", item.coordinates, item.count(), item.expansion_zoom());
+        println!("{:?}: {} station(s), zoom in to {:?}", item.coordinates(), item.count(), item.expansion_zoom());
     }
 
     assert_eq!(items.len(), 1);
@@ -331,7 +331,7 @@ The [API documentation on docs.rs](https://docs.rs/supercluster) describes every
 | `Item` | `Item::Cluster(Cluster)`, or `Item::Point { index, point }`, a point with its index in the list that was loaded. |
 | `Cluster` | `id`, `point_count`, `coordinates()` for its center, and `point_count_abbreviated()`, such as `1.5k`. |
 | `ClusterId` | The ID of a cluster: `ClusterId::new(number)` and `get()` turn it from and into a `u32`. |
-| `FilteredTileItem` | `x`, `y`, `coordinates` and `item`, with `count()` and `points()` for the points that pass, and `expansion_zoom()`. |
+| `FilteredTileItem` | `x`, `y` and `item`, with `coordinates()`, `count()` and `points()` for the points that pass, and `expansion_zoom()`. |
 | `SuperclusterError` | The error of a query or a load: an unknown cluster, options that `build()` rejects, or too many points. |
 
 With the `geojson` feature, `Tile::to_feature_collection()`, `Item::to_feature()`, `TileItem::to_feature()` and `Cluster::to_feature()` return GeoJSON, and `Tile::as_feature_collection()` serializes a tile without copying its features.

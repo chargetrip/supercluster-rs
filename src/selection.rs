@@ -248,9 +248,10 @@ pub(crate) mod private {
 
     /// What a query needs from the points that it keeps.
     pub trait Sealed {
-        /// Count the points at the positions of `range` that pass, and find which ones.
-        /// `scratch` holds buffers that a query reuses for every item.
-        fn matches(&self, range: Range<usize>, scratch: &mut Scratch) -> (u32, Matches<'_>);
+        /// Count the points at the positions of `range` that pass, and find which ones, or get
+        /// `None` if no point passes. `scratch` holds buffers that a query reuses for every item.
+        fn matches(&self, range: Range<usize>, scratch: &mut Scratch)
+            -> Option<(u32, Matches<'_>)>;
 
         /// Check whether a point at the positions of `range` passes. `scratch` holds buffers
         /// that a query reuses for every check.
@@ -259,13 +260,13 @@ pub(crate) mod private {
 }
 
 impl private::Sealed for Selection {
-    fn matches(&self, range: Range<usize>, _: &mut Scratch) -> (u32, Matches<'_>) {
+    fn matches(&self, range: Range<usize>, _: &mut Scratch) -> Option<(u32, Matches<'_>)> {
         let count = self.count(range.clone());
 
-        if count as usize == range.len() {
-            (count, Matches::All)
-        } else {
-            (count, Matches::Shared(self))
+        match count {
+            0 => None,
+            _ if count as usize == range.len() => Some((count, Matches::All)),
+            _ => Some((count, Matches::Shared(self))),
         }
     }
 
@@ -275,7 +276,7 @@ impl private::Sealed for Selection {
 }
 
 impl private::Sealed for Combination<'_> {
-    fn matches(&self, range: Range<usize>, scratch: &mut Scratch) -> (u32, Matches<'_>) {
+    fn matches(&self, range: Range<usize>, scratch: &mut Scratch) -> Option<(u32, Matches<'_>)> {
         // A combination of a single selection reads the counts of the selection
         if let [Step::Take(selection)] = self.steps[..] {
             return selection.matches(range, scratch);
@@ -284,14 +285,16 @@ impl private::Sealed for Combination<'_> {
         let length = range.len();
         let (count, first) = evaluate_range(&self.steps, range, scratch);
 
-        // An item takes the words only when it needs them, so the buffer serves the next items
-        // otherwise
-        if count as usize == length || count == 0 {
-            (count, Matches::All)
-        } else {
-            let words = mem::take(&mut scratch.stack[0]);
+        match count {
+            0 => None,
+            _ if count as usize == length => Some((count, Matches::All)),
+            _ => {
+                // Only an item with some points that fail takes the words, so the buffer serves
+                // the next items otherwise
+                let words = mem::take(&mut scratch.stack[0]);
 
-            (count, Matches::Local { words, first })
+                Some((count, Matches::Local { words, first }))
+            }
         }
     }
 
@@ -333,43 +336,72 @@ fn evaluate<'b>(
 ) -> &'b mut Vec<u64> {
     // The number of buffers on the stack that hold words of a step
     let mut top = 0;
+    let mut steps = steps.iter().peekable();
 
-    for step in steps {
-        if let Step::Take(selection) = step {
-            let source = &selection.words;
+    while let Some(&step) = steps.next() {
+        let Step::Take(selection) = step else {
+            // An operation after two buffers combines the top one into the one below it
+            top -= 1;
 
-            if scratch.stack.len() == top {
-                scratch.stack.push(vec![]);
-            }
+            let (lower, upper) = scratch.stack.split_at_mut(top);
 
-            let buffer = &mut scratch.stack[top];
-            let end = words.end.min(source.len());
-            let start = words.start.min(end);
+            apply(step, &mut lower[top - 1], &upper[0]);
 
-            buffer.clear();
-            buffer.extend_from_slice(&source[start..end]);
-            buffer.resize(words.len(), 0);
-            top += 1;
+            continue;
+        };
+
+        let source = words_of(selection, &words);
+
+        // An operation right after a selection combines its words straight into the buffer below,
+        // without copying them into a buffer of their own first
+        if let Some(&operation) = steps.next_if(|step| top > 0 && !matches!(step, Step::Take(_))) {
+            apply(operation, &mut scratch.stack[top - 1], source);
 
             continue;
         }
 
-        // A combination always has two buffers here, because every operation follows two steps
-        top -= 1;
-
-        let (lower, upper) = scratch.stack.split_at_mut(top);
-        let pairs = lower[top - 1].iter_mut().zip(&upper[0]);
-
-        // One loop per operation, which the compiler turns into operations on many words at once
-        match step {
-            Step::And => pairs.for_each(|(left, right)| *left &= right),
-            Step::Or => pairs.for_each(|(left, right)| *left |= right),
-            Step::AndNot => pairs.for_each(|(left, right)| *left &= !right),
-            Step::Take(_) => {}
+        if scratch.stack.len() == top {
+            scratch.stack.push(vec![]);
         }
+
+        let buffer = &mut scratch.stack[top];
+
+        buffer.clear();
+        buffer.extend_from_slice(source);
+        buffer.resize(words.len(), 0);
+        top += 1;
     }
 
     &mut scratch.stack[0]
+}
+
+/// Get the words of a selection at the positions `words`, which are fewer when the selection ends
+/// before them.
+fn words_of<'s>(selection: &'s Selection, words: &Range<usize>) -> &'s [u64] {
+    let end = words.end.min(selection.words.len());
+    let start = words.start.min(end);
+
+    &selection.words[start..end]
+}
+
+/// Combine the words of `right` into `left` with an operation, one loop per operation, which the
+/// compiler turns into operations on many words at once. A word that `right` lacks counts as no
+/// bit set.
+fn apply(operation: Step<'_>, left: &mut [u64], right: &[u64]) {
+    let pairs = left.iter_mut().zip(right);
+
+    match operation {
+        Step::And => {
+            pairs.for_each(|(left, right)| *left &= right);
+
+            let lacking = right.len().min(left.len());
+
+            left[lacking..].fill(0);
+        }
+        Step::Or => pairs.for_each(|(left, right)| *left |= right),
+        Step::AndNot => pairs.for_each(|(left, right)| *left &= !right),
+        Step::Take(_) => {}
+    }
 }
 
 /// Count the bits set at the positions of `range` in `words`, whose first bit is the one of
@@ -523,21 +555,7 @@ impl Iterator for SetPositions<'_> {
 mod tests {
     use super::*;
 
-    use crate::{Item, Supercluster, SuperclusterOptions};
-
-    /// Load points spread over the world with a fixed formula, so every run uses the same points.
-    fn load_spread_points(count: usize) -> Supercluster<[f64; 2]> {
-        let points = (0..count)
-            .map(|i| {
-                let lng = (i as f64 * 0.618_033_988_749_895) % 1.0;
-                let lat = (i as f64 * 0.754_877_666_246_693) % 1.0;
-
-                [-180.0 + 360.0 * lng, -80.0 + 160.0 * lat]
-            })
-            .collect();
-
-        Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point)).unwrap()
-    }
+    use crate::{test_points::load_spread_points, Item, Supercluster, SuperclusterOptions};
 
     /// Keeps about one point in three, here and there.
     fn every_third(point: &[f64; 2]) -> bool {

@@ -37,6 +37,11 @@ mod filtered_tile;
 /// This module contains the selection of the points that pass a filter, which queries reuse.
 mod selection;
 
+/// Test points module.
+/// This module contains the points that the tests of several modules share.
+#[cfg(test)]
+mod test_points;
+
 pub use builder::*;
 pub use error::*;
 #[cfg(feature = "geojson")]
