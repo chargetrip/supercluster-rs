@@ -1,9 +1,10 @@
 //! # Filtered tile module
 //!
 //! Contains the queries that build a tile from the points that pass a filter. A cluster stays in
-//! the tile when at least one of its points passes. When a few points pass, the cluster moves to
-//! their center, and when a single point passes, the cluster moves onto that point. The
-//! coordinates come from the supercluster, which got them when the points were loaded.
+//! the tile when at least one of its points passes. When some of its points fail, the cluster
+//! moves to the exact center of the points that pass, so with a single point left, it moves onto
+//! that point. The coordinates come from the supercluster, which got them when the points were
+//! loaded.
 //!
 //! The filter is a closure that runs on the points of the tile, or a `Selection` that ran it on
 //! every point once, or a combination of selections that the query evaluates on the points of the
@@ -17,19 +18,16 @@ use std::{
 
 use crate::{
     selection::{filter_bits, Matches, Scratch},
+    sums::Positions,
     supercluster::tiles_per_axis,
     ClusterId, Item, Select, Selection, Supercluster, SuperclusterError, SuperclusterView,
 };
 
-/// The number of points below which a filtered cluster is moved to the center of the points that
-/// are left.
-const RECENTER_LIMIT: u32 = 20;
-
 /// An item of a filtered tile: a cluster or a point with at least one point that passes the filter.
 #[non_exhaustive]
 pub struct FilteredTileItem<'a, P> {
-    /// The X position in the tile, in the units of the tile extent. A cluster with a few points
-    /// left is at their center, and a cluster with one point left is on that point.
+    /// The X position in the tile, in the units of the tile extent. A cluster with points that
+    /// fail is at the center of the points left, so with one point left it is on that point.
     pub x: f64,
 
     /// The Y position in the tile, in the units of the tile extent.
@@ -178,12 +176,16 @@ impl<P> Supercluster<P> {
     {
         let points = &self.points()[..self.clustered_points()];
 
-        Selection::new(filter_bits(points, filter).collect())
+        Selection::new(
+            filter_bits(points, filter).collect(),
+            Some(self.positions()),
+        )
     }
 
     /// Retrieve the items of a tile, like `tile`, but keep only the points for which `filter`
-    /// returns `true`. A cluster without any point left is left out, and a cluster with a few points
-    /// left moves to their center. Map the items to the type of your response with an iterator.
+    /// returns `true`. A cluster without any point left is left out, and a cluster with points that
+    /// fail moves to the exact center of the points left. Map the items to the type of your
+    /// response with an iterator.
     ///
     /// It calls `filter` once for every point of every item of the tile, and the items reuse the
     /// results, for example in `FilteredTileItem::expansion_zoom`. A cluster that the tile also
@@ -380,13 +382,11 @@ fn filter_tile<'a, P>(
         };
 
         let item = supercluster.item(handle, position);
-        let recenter = matches!(item, Item::Cluster(cluster) if count < cluster.point_count)
-            && count < RECENTER_LIMIT;
-
-        let position = if recenter {
-            find_center(supercluster, matches.passing(leaves.clone()))
-        } else {
-            position
+        let position = match item {
+            Item::Cluster(cluster) if count < cluster.point_count => {
+                center_of_left(supercluster.positions(), &matches, leaves.clone(), count)
+            }
+            _ => position,
         };
 
         // A copy of the item across the antimeridian is placed by the origin of its copy of the
@@ -409,22 +409,41 @@ fn filter_tile<'a, P>(
     items
 }
 
-/// Find the average of the positions of the points at the positions `leaves`, normalized to the
-/// [0..1] range the KD-trees use. Loading places a cluster at the average of the same positions of
-/// all its points, so both centers are found the same way. There is at least one position.
-fn find_center<P>(supercluster: &Supercluster<P>, leaves: impl Iterator<Item = usize>) -> [f64; 2] {
-    let mut count = 0;
-    let mut sum = [0.0, 0.0];
-
-    for leaf in leaves {
-        let [x, y] = supercluster.point_position(leaf);
-
-        count += 1;
-        sum[0] += x;
-        sum[1] += y;
+/// Find the center of the `count` points at the positions `leaves` that pass, from the sum of their
+/// integer positions, the same way for every kind of filter. When the mean of the integers is the
+/// integers of the first of them, as for points at one place or a single point, the cluster goes
+/// onto that point exactly instead.
+fn center_of_left(
+    positions: &Positions,
+    matches: &Matches<'_>,
+    leaves: Range<usize>,
+    count: u32,
+) -> [f64; 2] {
+    // A single point needs no sum
+    if count == 1 {
+        if let Some(leaf) = matches.first(leaves.clone()) {
+            return positions[leaf];
+        }
     }
 
-    [sum[0] / f64::from(count), sum[1] / f64::from(count)]
+    let sum = matches.sum(leaves.clone(), count, positions);
+    let wide = u128::from(count);
+
+    // Points at one place sum to a multiple of their count, which few other points do, so the
+    // first point is only looked up then
+    if sum.iter().all(|value| value % wide == 0) {
+        if let Some(leaf) = matches.first(leaves) {
+            if positions
+                .quantized(leaf)
+                .map(|value| u128::from(value) * wide)
+                == sum
+            {
+                return positions[leaf];
+            }
+        }
+    }
+
+    positions.center(sum, count)
 }
 
 #[cfg(test)]
@@ -734,6 +753,159 @@ mod tests {
     }
 
     #[test]
+    fn test_tile_filtered_centers_many_points_left_exactly() {
+        // 200 points close together, which form one cluster on zoom level 0
+        let grid: Vec<[f64; 2]> = (0..200)
+            .map(|i| {
+                [
+                    10.0 + f64::from(i % 20) * 0.01,
+                    50.0 + f64::from(i / 20) * 0.01,
+                ]
+            })
+            .collect();
+        let lat_lng = CoordinateSystem::LatLng;
+
+        // Half of them pass, then most of them, which sums the points that fail instead
+        for west in [10.095, 10.015] {
+            let points: Vec<_> = grid
+                .iter()
+                .map(|&[lng, lat]| (lng, lat, lng > west))
+                .collect();
+            let supercluster = load(&points);
+            let kept: Vec<[f64; 2]> = grid
+                .iter()
+                .filter(|&&[lng, _]| lng > west)
+                .map(|&point| lat_lng.normalize(point))
+                .collect();
+            let count = kept.len() as f64;
+            let sum = kept
+                .iter()
+                .fold([0.0, 0.0], |sum, [x, y]| [sum[0] + x, sum[1] + y]);
+            let center = lat_lng.denormalize([sum[0] / count, sum[1] / count]);
+
+            let items = supercluster.tile_filtered(0, 0, 0, |point| point.keep);
+            let [lng, lat] = items[0].coordinates();
+
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].count() as usize, kept.len());
+            assert!((lng - center[0]).abs() < 1e-9 && (lat - center[1]).abs() < 1e-9);
+
+            // Every way of filtering finds the same center, to the bit
+            let selection = supercluster.select(|point| point.keep);
+            let all = supercluster.select(|_| true);
+            let computed = selection.and(&all).compute();
+            let ways = [
+                supercluster.tile_selected(0, 0, 0, &selection),
+                supercluster.tile_selected(0, 0, 0, selection.and(&all)),
+                supercluster.tile_selected(0, 0, 0, &computed),
+            ];
+
+            for way in ways {
+                assert_eq!(way[0].coordinates(), items[0].coordinates());
+                assert_eq!((way[0].x, way[0].y), (items[0].x, items[0].y));
+            }
+        }
+    }
+
+    #[test]
+    fn test_tile_filtered_puts_a_cluster_with_one_point_left_on_it() {
+        // Points at the corners of the map make the integers as coarse as in a real dataset
+        let supercluster = load(&[
+            (10.0137, 50.0071, true),
+            (10.0237, 50.0171, false),
+            (-179.0, -80.0, true),
+            (179.0, 80.0, true),
+        ]);
+        let lat_lng = CoordinateSystem::LatLng;
+        let point = lat_lng.denormalize(lat_lng.normalize([10.0137, 50.0071]));
+        let selection = supercluster.select(|point| point.keep);
+        let all = supercluster.select(|_| true);
+        let computed = selection.and(&all).compute();
+
+        // Every way of filtering puts it exactly where the point is
+        let ways = [
+            supercluster.tile_filtered(0, 0, 0, |point| point.keep),
+            supercluster.tile_selected(0, 0, 0, &selection),
+            supercluster.tile_selected(0, 0, 0, selection.and(&all)),
+            supercluster.tile_selected(0, 0, 0, &computed),
+        ];
+
+        for items in ways {
+            let item = items
+                .iter()
+                .find(|item| matches!(item.item, Item::Cluster(_)))
+                .unwrap();
+
+            assert_eq!(item.count(), 1);
+            assert_eq!(item.coordinates(), point);
+        }
+    }
+
+    #[test]
+    fn test_tile_filtered_puts_a_cluster_of_points_at_one_place_on_them() {
+        // Three points at one place, two of which pass, and points at the corners of the map
+        let supercluster = load(&[
+            (10.0137, 50.0071, true),
+            (10.0137, 50.0071, true),
+            (10.0137, 50.0071, false),
+            (-179.0, -80.0, true),
+            (179.0, 80.0, true),
+        ]);
+        let lat_lng = CoordinateSystem::LatLng;
+        let place = lat_lng.denormalize(lat_lng.normalize([10.0137, 50.0071]));
+        let selection = supercluster.select(|point| point.keep);
+        let all = supercluster.select(|_| true);
+        let computed = selection.and(&all).compute();
+
+        // Every way of filtering puts it exactly on the place, not on the mean of the integers
+        let ways = [
+            supercluster.tile_filtered(0, 0, 0, |point| point.keep),
+            supercluster.tile_selected(0, 0, 0, &selection),
+            supercluster.tile_selected(0, 0, 0, selection.and(&all)),
+            supercluster.tile_selected(0, 0, 0, &computed),
+        ];
+
+        for items in ways {
+            let item = items
+                .iter()
+                .find(|item| matches!(item.item, Item::Cluster(_)))
+                .unwrap();
+
+            assert_eq!(item.count(), 2);
+            assert_eq!(item.coordinates(), place);
+        }
+    }
+
+    #[test]
+    fn test_tile_filtered_centers_exactly_with_points_far_away() {
+        // A range of 1000 by 1000, with points far outside it, and one at each end of what a
+        // float holds, which no span between them could hold
+        let range = DataRange::new(0.0, 0.0, 1000.0, 1000.0);
+        let options = SuperclusterOptions::builder()
+            .coordinate_system(CoordinateSystem::Cartesian { range })
+            .build()
+            .unwrap();
+        let points = vec![
+            (100.3, 200.7, true),
+            (100.31, 200.71, true),
+            (100.4, 200.8, false),
+            (1e15, 1e15, true),
+            (-1e300, -1e300, true),
+            (1e300, 1e300, true),
+        ];
+        let supercluster =
+            Supercluster::load(options, points, |point| Some([point.0, point.1])).unwrap();
+        let items = supercluster.tile_filtered(0, 0, 0, |point| point.2);
+        let [x, y] = items[0].coordinates();
+
+        assert_eq!(items[0].count(), 2);
+        assert!(
+            (x - 100.305).abs() < 1e-9 && (y - 200.705).abs() < 1e-9,
+            "{x}, {y}"
+        );
+    }
+
+    #[test]
     fn test_tile_filtered_centers_the_points_left_like_loading() {
         let supercluster = load(&[(10.0, 50.0, true), (10.0, 55.0, false), (10.0, 60.0, true)]);
         let items = supercluster.tile_filtered(0, 0, 0, |point| point.keep);
@@ -980,6 +1152,50 @@ mod tests {
         for item in large.tile_selected(0, 0, 0, &selection) {
             assert!(item.points().count() <= item.count() as usize);
             item.expansion_zoom();
+        }
+    }
+
+    #[test]
+    fn test_tile_selected_with_a_selection_of_a_supercluster_elsewhere() {
+        // One supercluster near a corner of the map, with a point at the other corner, and one far
+        // from it, so the integer positions of the two differ the most
+        let spread = |i: u32, size: f64| {
+            let i = f64::from(i);
+
+            ((i * 0.618).fract() * size, (i * 0.755).fract() * size)
+        };
+        let near: Vec<_> = (0..500)
+            .map(|i| (spread(i, 0.5), i % 2 == 0))
+            .map(|((x, y), keep)| (-179.0 + x, -80.0 + y, keep))
+            .chain([(179.0, 80.0, true)])
+            .collect();
+        let far: Vec<_> = (0..2000)
+            .map(|i| spread(i, 20.0))
+            .map(|(x, y)| (100.0 + x, 50.0 + y, true))
+            .collect();
+        let near = load(&near);
+        let far = load(&far);
+        let selection = near.select(|point| point.keep);
+        let all = far.select(|_| true);
+        let items = |items: Vec<FilteredTileItem<'_, TestPoint>>| -> Vec<_> {
+            items
+                .iter()
+                .map(|item| (item.count(), item.x, item.y, item.coordinates()))
+                .collect()
+        };
+
+        // The running sums of the selection are of other positions, so the query sums its bits
+        // with its own positions, as it does for the same bits in a combination
+        for z in 0..=5 {
+            for x in 0..1 << z {
+                for y in 0..1 << z {
+                    assert_eq!(
+                        items(far.tile_selected(z, x, y, &selection)),
+                        items(far.tile_selected(z, x, y, selection.and(&all))),
+                        "tile {z}/{x}/{y}"
+                    );
+                }
+            }
         }
     }
 

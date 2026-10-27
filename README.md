@@ -146,7 +146,7 @@ fn main() -> Result<(), SuperclusterError> {
 
 ## Filter what a tile shows
 
-A filtered tile keeps only the points that pass a filter, for example the ones that match a search. A cluster without any point left is left out, and a cluster with a few points left moves to their center.
+A filtered tile keeps only the points that pass a filter, for example the ones that match a search. A cluster without any point left is left out, and a cluster with points that fail moves to the exact center of the points left.
 
 Each item has `count()` and `points()` for the points that pass, `coordinates()` for its position in your coordinate system, and `expansion_zoom()` for the zoom level where a cluster splits, counting only the points that pass. Map the items to the type of your response with an iterator.
 
@@ -156,10 +156,10 @@ There are three ways to filter a tile, and a combination can also be computed an
 
 | Way | What is cached | What runs on each request | When to refresh it |
 | --- | --- | --- | --- |
-| A closure, with `tile_filtered` | Nothing. | Your filter, on every point under the tile. | Never, because nothing is cached. |
-| A selection, made with `select` | The result of your filter for every point. | A count of the points of each cluster that pass, in constant time, however many points the tile covers. | When the data your filter reads changes. |
-| A combination of selections, such as `a.or(&b).and(&c)` | Nothing of its own. It reads the selections it combines, which are cached. | The combination, on the points under the tile only. | Never. Refresh the selections it combines instead. |
-| A computed combination, made with `compute()` | The result of the combination for every point, as a selection. | A count of the points of each cluster that pass, in constant time, like a selection. | After you refresh one of the selections it combines. |
+| A closure, with `tile_filtered` | Nothing. | Your filter, on every point under the tile. For a cluster with points that fail, it also reads the positions of the points that pass, or of the ones that fail when they are fewer, to find their center. | Never, because nothing is cached. |
+| A selection, made with `select` | The result of your filter for every point, with running sums of their positions. | A count of the points of each cluster that pass, and their center, with a few lookups, however many points the tile covers. | When the data your filter reads changes. |
+| A combination of selections, such as `a.or(&b).and(&c)` | Nothing of its own. It reads the selections it combines, which are cached. | The combination, on the points under the tile only. Like a closure, it reads positions to find the center of a cluster with points that fail. | Never. Refresh the selections it combines instead. |
+| A computed combination, made with `compute` | The result of the combination for every point, as a selection. | A count of the points of each cluster that pass, and their center, with a few lookups, like a selection. | After you refresh one of the selections it combines. |
 
 Within one request, the items keep what the query found, so their `points()` and `expansion_zoom()` do not run the filter or combine the selections again.
 
@@ -167,7 +167,7 @@ Within one request, the items keep what the query found, so their `points()` and
 | --- | --- | --- |
 | Changes with every request, such as a text search | A closure | Nothing can be prepared. It is as fast as the others on zoomed-in tiles, but on a zoomed-out tile it runs on every point the tile covers. |
 | Is one condition that you can prepare | A selection | It is the fastest way on zoomed-out tiles, and about as fast as a closure on zoomed-in ones. |
-| Mixes conditions that you can prepare, differently per request | A combination, made per request | On zoomed-out tiles it is far faster than a closure, and on zoomed-in ones it takes at most about 2 µs more. It needs no refresh of its own. |
+| Mixes conditions that you can prepare, differently per request | A combination, made per request | On zoomed-out tiles it is far faster than a closure, and on zoomed-in ones it takes at most about 3 µs more. It needs no refresh of its own. |
 | Mixes them the same way on most zoomed-out requests | That combination, computed once with `compute` and cached | A zoomed-out tile covers the most points, so combining costs the most there, and a cached selection counts them in constant time. |
 
 #### What a request costs
@@ -176,57 +176,58 @@ This benchmark times one request on 10,000,000 points spread around 3,000 places
 
 | Zoom | Points under the tile | Closure | Combination | Cached selection |
 | ---: | ---: | ---: | ---: | ---: |
-| 0 | 10,000,000 | 37,602 µs | 142 µs (265x) | 1.04 µs (36,228x) |
-| 4 | 341,224 | 1,253 µs | 9.30 µs (135x) | 1.81 µs (692x) |
-| 8 | 183,438 | 679 µs | 4.78 µs (142x) | 1.40 µs (484x) |
-| 12 | 39,806 | 149 µs | 17.0 µs (8.7x) | 10.5 µs (14x) |
-| 14 | 3,259 | 20.4 µs | 21.2 µs (1.0x) | 16.0 µs (1.3x) |
-| 16 | 184 | 2.98 µs | 4.95 µs (0.6x) | 2.46 µs (1.2x) |
-| 18 | 10 | 0.28 µs | 0.67 µs (0.4x) | 0.31 µs (0.9x) |
+| 0 | 10,000,000 | 40,147 µs | 2,919 µs (14x) | 1.73 µs (23,274x) |
+| 4 | 341,224 | 1,278 µs | 73.4 µs (17x) | 2.20 µs (581x) |
+| 8 | 183,438 | 688 µs | 36.9 µs (19x) | 1.07 µs (643x) |
+| 12 | 39,806 | 145 µs | 19.2 µs (7.6x) | 6.76 µs (22x) |
+| 14 | 3,259 | 11.6 µs | 12.9 µs (0.9x) | 6.87 µs (1.7x) |
+| 16 | 184 | 1.61 µs | 3.51 µs (0.5x) | 1.15 µs (1.4x) |
+| 18 | 10 | 0.28 µs | 0.69 µs (0.4x) | 0.29 µs (1.0x) |
 
-- **Zoomed out, a closure is slow.** It runs on every point the tile covers, which takes 37.6 ms for the tile of the whole world. Both kinds of selection take microseconds there.
-- **Zoomed in, every way is fast.** From zoom level 14, every way takes 21.2 µs or less.
-- **A cached selection is the fastest way up to zoom level 13.** Above it, a cached selection and a closure take about as long.
-- **Computing a combination for every request does not pay.** It took from 205 µs to 227 µs at every zoom level, which is more than the combination took at any zoom level.
+- **Zoomed out, a closure is slow.** It runs on every point the tile covers, which takes 40.1 ms for the tile of the whole world.
+- **Zoomed out, a combination takes milliseconds too.** It reads the positions of the points that pass, or of the ones that fail when they are fewer, to find the exact centers, which takes 2.9 ms for the tile of the whole world and 864 µs on zoom level 1. A cached selection takes 1.73 µs there, so cache the combinations that zoomed-out tiles use.
+- **Zoomed in, every way is fast.** From zoom level 14, every way takes 12.9 µs or less.
+- **A cached selection is the fastest way up to zoom level 16.** Above it, a cached selection and a closure take about as long.
+- **Computing a combination for every request does not pay.** It took about 3 ms at every zoom level. That is about what the combination takes on the tile of the whole world, and more than it takes on any other tile.
 
 <details>
 <summary>The whole benchmark, with zoom levels 0 to 30</summary>
 
-The "Computed per query" column computes the combination with `compute()` on every request. From zoom level 20, the tile that holds the busiest place has no point in it, so those rows time an empty tile.
+The "Computed per query" column computes the combination with `compute` on every request. From zoom level 20, the tile that holds the busiest place has no point in it, so those rows time an empty tile.
 
 | Zoom | Points under the tile | Closure | Computed per query | Lazy combination | Cached selection |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0 | 10,000,000 | 37,602 µs | 207 µs (182x) | 142 µs (265x) | 1.04 µs (36,228x) |
-| 1 | 3,149,699 | 11,711 µs | 207 µs (56x) | 45.4 µs (258x) | 1.02 µs (11,479x) |
-| 2 | 1,189,182 | 4,413 µs | 207 µs (21x) | 20.7 µs (213x) | 1.33 µs (3,327x) |
-| 3 | 760,516 | 2,823 µs | 209 µs (13x) | 18.1 µs (156x) | 2.45 µs (1,153x) |
-| 4 | 341,224 | 1,253 µs | 208 µs (6.0x) | 9.30 µs (135x) | 1.81 µs (692x) |
-| 5 | 213,250 | 778 µs | 206 µs (3.8x) | 5.00 µs (156x) | 1.01 µs (768x) |
-| 6 | 185,389 | 681 µs | 207 µs (3.3x) | 3.21 µs (212x) | 0.62 µs (1,104x) |
-| 7 | 183,448 | 673 µs | 205 µs (3.3x) | 3.64 µs (185x) | 1.00 µs (674x) |
-| 8 | 183,438 | 679 µs | 207 µs (3.3x) | 4.78 µs (142x) | 1.40 µs (484x) |
-| 9 | 183,438 | 673 µs | 212 µs (3.2x) | 9.99 µs (67x) | 4.20 µs (160x) |
-| 10 | 122,108 | 458 µs | 216 µs (2.1x) | 13.6 µs (34x) | 7.21 µs (64x) |
-| 11 | 78,559 | 290 µs | 219 µs (1.3x) | 16.2 µs (18x) | 9.05 µs (32x) |
-| 12 | 39,806 | 149 µs | 220 µs (0.7x) | 17.0 µs (8.7x) | 10.5 µs (14x) |
-| 13 | 11,866 | 42.3 µs | 224 µs (0.2x) | 23.6 µs (1.8x) | 18.4 µs (2.3x) |
-| 14 | 3,259 | 20.4 µs | 227 µs (0.1x) | 21.2 µs (1.0x) | 16.0 µs (1.3x) |
-| 15 | 776 | 8.32 µs | 214 µs (0.0x) | 10.5 µs (0.8x) | 6.86 µs (1.2x) |
-| 16 | 184 | 2.98 µs | 210 µs (0.0x) | 4.95 µs (0.6x) | 2.46 µs (1.2x) |
-| 17 | 42 | 0.51 µs | 207 µs (0.0x) | 1.67 µs (0.3x) | 0.62 µs (0.8x) |
-| 18 | 10 | 0.28 µs | 207 µs (0.0x) | 0.67 µs (0.4x) | 0.31 µs (0.9x) |
-| 19 | 2 | 0.18 µs | 207 µs (0.0x) | 0.41 µs (0.4x) | 0.19 µs (1.0x) |
-| 20 | 0 | 0.14 µs | 207 µs (0.0x) | 0.31 µs (0.4x) | 0.16 µs (0.9x) |
-| 21 | 0 | 0.15 µs | 215 µs (0.0x) | 0.29 µs (0.5x) | 0.14 µs (1.0x) |
-| 22 | 0 | 0.14 µs | 211 µs (0.0x) | 0.28 µs (0.5x) | 0.14 µs (1.1x) |
-| 23 | 0 | 0.14 µs | 207 µs (0.0x) | 0.27 µs (0.5x) | 0.14 µs (1.0x) |
-| 24 | 0 | 0.14 µs | 210 µs (0.0x) | 0.29 µs (0.5x) | 0.15 µs (0.9x) |
-| 25 | 0 | 0.14 µs | 218 µs (0.0x) | 0.27 µs (0.5x) | 0.14 µs (1.1x) |
-| 26 | 0 | 0.14 µs | 208 µs (0.0x) | 0.27 µs (0.5x) | 0.14 µs (1.0x) |
-| 27 | 0 | 0.16 µs | 209 µs (0.0x) | 0.30 µs (0.5x) | 0.14 µs (1.1x) |
-| 28 | 0 | 0.14 µs | 221 µs (0.0x) | 0.30 µs (0.5x) | 0.16 µs (0.9x) |
-| 29 | 0 | 0.16 µs | 218 µs (0.0x) | 0.27 µs (0.6x) | 0.14 µs (1.1x) |
-| 30 | 0 | 0.15 µs | 208 µs (0.0x) | 0.27 µs (0.6x) | 0.14 µs (1.1x) |
+| 0 | 10,000,000 | 40,147 µs | 2,991 µs (13x) | 2,919 µs (14x) | 1.73 µs (23,274x) |
+| 1 | 3,149,699 | 12,403 µs | 3,017 µs (4.1x) | 864 µs (14x) | 1.60 µs (7,748x) |
+| 2 | 1,189,182 | 4,617 µs | 2,987 µs (1.5x) | 272 µs (17x) | 2.15 µs (2,147x) |
+| 3 | 760,516 | 2,910 µs | 2,985 µs (1.0x) | 168 µs (17x) | 4.29 µs (678x) |
+| 4 | 341,224 | 1,278 µs | 2,950 µs (0.4x) | 73.4 µs (17x) | 2.20 µs (581x) |
+| 5 | 213,250 | 791 µs | 2,959 µs (0.3x) | 43.2 µs (18x) | 1.17 µs (674x) |
+| 6 | 185,389 | 684 µs | 3,000 µs (0.2x) | 36.4 µs (19x) | 0.40 µs (1,700x) |
+| 7 | 183,448 | 679 µs | 2,954 µs (0.2x) | 35.5 µs (19x) | 0.55 µs (1,231x) |
+| 8 | 183,438 | 688 µs | 2,993 µs (0.2x) | 36.9 µs (19x) | 1.07 µs (643x) |
+| 9 | 183,438 | 695 µs | 3,010 µs (0.2x) | 40.6 µs (17x) | 3.05 µs (228x) |
+| 10 | 122,108 | 461 µs | 3,027 µs (0.2x) | 32.8 µs (14x) | 5.08 µs (91x) |
+| 11 | 78,559 | 294 µs | 3,053 µs (0.1x) | 25.9 µs (11x) | 6.79 µs (43x) |
+| 12 | 39,806 | 145 µs | 3,041 µs (0.0x) | 19.2 µs (7.6x) | 6.76 µs (22x) |
+| 13 | 11,866 | 34.8 µs | 3,062 µs (0.0x) | 14.3 µs (2.4x) | 6.59 µs (5.3x) |
+| 14 | 3,259 | 11.6 µs | 3,051 µs (0.0x) | 12.9 µs (0.9x) | 6.87 µs (1.7x) |
+| 15 | 776 | 4.42 µs | 3,036 µs (0.0x) | 6.95 µs (0.6x) | 3.06 µs (1.4x) |
+| 16 | 184 | 1.61 µs | 3,005 µs (0.0x) | 3.51 µs (0.5x) | 1.15 µs (1.4x) |
+| 17 | 42 | 0.50 µs | 3,028 µs (0.0x) | 1.81 µs (0.3x) | 0.56 µs (0.9x) |
+| 18 | 10 | 0.28 µs | 2,992 µs (0.0x) | 0.69 µs (0.4x) | 0.29 µs (1.0x) |
+| 19 | 2 | 0.18 µs | 2,990 µs (0.0x) | 0.41 µs (0.4x) | 0.19 µs (1.0x) |
+| 20 | 0 | 0.14 µs | 3,015 µs (0.0x) | 0.28 µs (0.5x) | 0.14 µs (1.0x) |
+| 21 | 0 | 0.14 µs | 2,956 µs (0.0x) | 0.28 µs (0.5x) | 0.14 µs (1.0x) |
+| 22 | 0 | 0.14 µs | 2,949 µs (0.0x) | 0.28 µs (0.5x) | 0.14 µs (1.0x) |
+| 23 | 0 | 0.14 µs | 2,987 µs (0.0x) | 0.28 µs (0.5x) | 0.14 µs (1.0x) |
+| 24 | 0 | 0.14 µs | 2,959 µs (0.0x) | 0.28 µs (0.5x) | 0.14 µs (1.0x) |
+| 25 | 0 | 0.14 µs | 2,967 µs (0.0x) | 0.28 µs (0.5x) | 0.14 µs (1.0x) |
+| 26 | 0 | 0.14 µs | 2,994 µs (0.0x) | 0.30 µs (0.4x) | 0.14 µs (1.0x) |
+| 27 | 0 | 0.14 µs | 2,986 µs (0.0x) | 0.29 µs (0.5x) | 0.14 µs (1.0x) |
+| 28 | 0 | 0.14 µs | 2,959 µs (0.0x) | 0.28 µs (0.5x) | 0.14 µs (1.0x) |
+| 29 | 0 | 0.14 µs | 2,965 µs (0.0x) | 0.28 µs (0.5x) | 0.14 µs (1.0x) |
+| 30 | 0 | 0.14 µs | 2,970 µs (0.0x) | 0.28 µs (0.5x) | 0.14 µs (1.0x) |
 
 </details>
 
@@ -236,7 +237,7 @@ Your results depend on your points, your filters and your machine, so measure yo
 
 - **A selection is a snapshot (cached) of what the filter returned.** If the filter only reads the points, it stays valid, because points do not change after `load`. If the filter reads other data that changes, run `select` again when it changes, for example every 30 seconds for data that changes often.
 - **A computed combination is a snapshot too.** It does not follow the selections it was computed from, so compute it again after you refresh one of them.
-- **Compute a combination only to cache it.** Computing it for every request costs more than letting the query combine it, as the benchmark shows.
+- **Compute a combination only to cache it.** Computing it for every request costs more than letting the query combine it, except on the tile of the whole world, where both take about 3 ms, as the benchmark shows.
 - **A selection belongs to the supercluster that made it.** Keep them together, for example in the same `Arc`, and replace both when you load new points. With a selection of another supercluster, a query does not panic, but its results mean nothing. The [`shared_state` example](https://github.com/chargetrip/supercluster-rs/blob/main/examples/shared_state.rs) shows a server that keeps them together, combines them per request and refreshes a selection when its data changes.
 
 ### Filter with a closure
@@ -471,7 +472,7 @@ These are methods of `Supercluster<P>`, with the same last column as the queries
 | `tile_selected(z, x, y, selection)` | `Vec<FilteredTileItem>` | The items of a tile that keep a point of the selection. | Yes |
 | `cluster_expansion_zoom_selected(cluster_id, selection)` | `Result<u8, _>` | The zoom level where a cluster splits, counting only the points of the selection. | Yes |
 
-Selections combine with the methods below. `a` is a `Selection` or a `Combination`, and `b` is a reference to a `Selection`, also behind an `Arc` or a `Box`, or a `Combination`, by value or by reference. The calls chain, as in `a.or(&b).and(&c)`. A combination computes nothing until a query or `compute()` evaluates it.
+Selections combine with the methods below. `a` is a `Selection` or a `Combination`, and `b` is a reference to a `Selection`, also behind an `Arc` or a `Box`, or a `Combination`, by value or by reference. The calls chain, as in `a.or(&b).and(&c)`. A combination computes nothing until a query or `compute` evaluates it.
 
 | Method | Returns | What it does |
 | --- | --- | --- |

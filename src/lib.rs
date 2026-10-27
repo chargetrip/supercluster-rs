@@ -37,6 +37,10 @@ mod filtered_tile;
 /// This module contains the selection of the points that pass a filter, which queries reuse.
 mod selection;
 
+/// Sums module.
+/// This module contains the running sums of positions that find the center of filtered clusters.
+mod sums;
+
 /// Test points module.
 /// This module contains the points that the tests of several modules share.
 #[cfg(test)]

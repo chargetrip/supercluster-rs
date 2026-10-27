@@ -22,12 +22,13 @@ use std::{
     f64::consts::PI,
     fmt::{self, Display, Formatter},
     ops::Range,
+    sync::Arc,
 };
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::{kdbush::KDBush, DataRange, SuperclusterError, SuperclusterOptions};
+use crate::{kdbush::KDBush, sums::Positions, DataRange, SuperclusterError, SuperclusterOptions};
 
 /// The highest maximum zoom level a supercluster supports. Building options with a higher
 /// `max_zoom` is an error.
@@ -381,8 +382,11 @@ pub struct Supercluster<P> {
     indexes: Vec<u32>,
 
     /// The position of every point that was clustered, normalized to the [0..1] range the KD-trees
-    /// use, in the order of `points`. The points that were left out have none.
-    positions: Vec<[f64; 2]>,
+    /// use, in the order of `points`. The points that were left out have none. The selections
+    /// keep a weak reference, to sum the positions of the points that pass. They are written as a
+    /// list.
+    #[cfg_attr(feature = "serde", serde(with = "shared_positions"))]
+    positions: Arc<Positions>,
 
     /// KD-trees for each zoom level, from 0 to the maximum zoom level plus one, whose IDs are the
     /// handles of their items. The last one holds the points that are not clustered. The ones
@@ -391,6 +395,32 @@ pub struct Supercluster<P> {
 
     /// The clusters of every zoom level.
     clusters: Clusters,
+}
+
+/// Writes the shared positions as a list, the way a `Vec` of them is written, and reads them back
+/// into a new table, which builds the rest from the positions that were read.
+#[cfg(feature = "serde")]
+mod shared_positions {
+    use std::sync::Arc;
+
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use crate::sums::Positions;
+
+    /// Write the positions as a list.
+    pub(super) fn serialize<S: Serializer>(
+        positions: &Arc<Positions>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(positions.iter())
+    }
+
+    /// Read a list of positions into a new table.
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Arc<Positions>, D::Error> {
+        Vec::deserialize(deserializer).map(|positions| Arc::new(Positions::new(positions)))
+    }
 }
 
 impl<P> Supercluster<P> {
@@ -446,7 +476,7 @@ impl<P> Supercluster<P> {
             options,
             points,
             indexes: vec![],
-            positions: vec![],
+            positions: Arc::new(Positions::new(vec![])),
             trees: vec![],
             clusters: Clusters::new(),
         };
@@ -650,10 +680,10 @@ impl<P> Supercluster<P> {
         }
     }
 
-    /// Get the normalized position of the point at `leaf` in `points`. Only the points that were
-    /// left out of the clustering have none.
-    pub(crate) fn point_position(&self, leaf: usize) -> [f64; 2] {
-        self.positions[leaf]
+    /// Get the positions of the points that were clustered, with their running sums, which the
+    /// filtered queries and the selections use.
+    pub(crate) fn positions(&self) -> &Arc<Positions> {
+        &self.positions
     }
 
     /// Get the number of points that were clustered, which come before the ones left out in
@@ -1028,7 +1058,7 @@ impl<P> Supercluster<P> {
         permute(&mut self.points, &indexes);
 
         self.indexes = indexes;
-        self.positions = positions;
+        self.positions = Arc::new(Positions::new(positions));
     }
 
     /// Warn when points are left out of the clustering because their coordinates are missing or
@@ -1582,6 +1612,44 @@ mod tests {
         }
 
         assert_eq!(restored.tile(2, 1, 1), supercluster.tile(2, 1, 1));
+
+        // The filtered clusters move to the same centers, from the sums that were read back
+        let filter = |point: &[f64; 2]| point[0] > 0.0;
+        let centers = |supercluster: &Supercluster<[f64; 2]>| -> Vec<[f64; 2]> {
+            supercluster
+                .tile_filtered(0, 0, 0, filter)
+                .iter()
+                .map(|item| item.coordinates())
+                .collect()
+        };
+
+        assert_eq!(centers(&restored), centers(&supercluster));
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_supercluster_json_holds_only_the_loaded_data() {
+        let json = serde_json::to_value(load_spread_points(10)).unwrap();
+        let mut keys: Vec<&str> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+
+        // The sums are built again when it is read, so they always match the positions
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "clusters",
+                "indexes",
+                "options",
+                "points",
+                "positions",
+                "trees"
+            ]
+        );
     }
 
     #[test]

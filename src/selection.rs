@@ -3,19 +3,24 @@
 //! Contains the selection of the points that pass a filter, which `Supercluster::select` finds once
 //! so many queries can reuse it, its combinations, and the bit sets the filtered queries share.
 
+use crate::sums::{sub, sum_bits, Positions, Sums};
+
 use std::{
     borrow::Borrow,
     fmt::{self, Debug, Formatter},
-    mem,
+    iter, mem,
     ops::Range,
+    ptr,
+    sync::{Arc, Weak},
 };
 
 /// The points of a supercluster that pass a filter, which `Supercluster::select` finds once, so
 /// many queries can reuse them.
 ///
-/// It holds one bit per point, and a count per 64 points, so it counts the points of a cluster
-/// that pass with two lookups, whatever the size of the cluster. A million points take about
-/// 190 KB. `and`, `or` and `and_not` combine selections into a `Combination`.
+/// It holds one bit per point, and a count and a sum of the positions per 64 points, so it counts
+/// the points of a cluster that pass, and finds their center, with a few lookups, whatever the size
+/// of the cluster. A million points take about 445 KB. `and`, `or` and `and_not` combine
+/// selections into a `Combination`.
 ///
 /// A selection belongs to the supercluster that made it. With another supercluster the queries
 /// do not panic, but their results mean nothing. See `Supercluster::select` for an example.
@@ -26,11 +31,21 @@ pub struct Selection {
 
     /// The number of bits set before every word, followed by the number in all of them.
     ranks: Vec<u32>,
+
+    /// The running sums of the positions of the points that pass, with the positions of the
+    /// supercluster that made it. A computed combination whose supercluster was dropped has none.
+    sums: Option<Sums>,
+
+    /// The positions of the points of the supercluster that made it, which `compute` sums, and
+    /// which tell a query whether the running sums are of its own positions. The reference is weak,
+    /// so a selection does not keep the positions after the supercluster is dropped.
+    positions: Weak<Positions>,
 }
 
 impl Selection {
-    /// Create a selection from one bit per point, set when the point passes.
-    pub(crate) fn new(words: Vec<u64>) -> Self {
+    /// Create a selection from one bit per point, set when the point passes, and the positions of
+    /// the points of its supercluster, or `None` when it was dropped.
+    pub(crate) fn new(words: Vec<u64>, positions: Option<&Arc<Positions>>) -> Self {
         let mut ranks = Vec::with_capacity(words.len() + 1);
         let mut rank = 0;
 
@@ -41,7 +56,51 @@ impl Selection {
             ranks.push(rank);
         }
 
-        Selection { words, ranks }
+        let sums = positions.map(|positions| {
+            Sums::new(
+                words.len(),
+                |index| words[index],
+                |leaf| positions.quantized(leaf),
+            )
+        });
+
+        Selection {
+            words,
+            ranks,
+            sums,
+            positions: positions.map_or_else(Weak::new, Arc::downgrade),
+        }
+    }
+
+    /// Get the running sums when they are of `positions`, the positions of the supercluster of the
+    /// query. The positions of another supercluster do not add up with them. The weak reference
+    /// keeps the place of the positions it points to, so new positions never take it.
+    fn sums_of(&self, positions: &Positions) -> Option<&Sums> {
+        self.sums
+            .as_ref()
+            .filter(|_| ptr::eq(self.positions.as_ptr(), positions))
+    }
+
+    /// Find the first point at the positions of `range` that passes, with a binary search over the
+    /// counts, so a long run of points that fail costs about as little as a short one.
+    fn first(&self, range: Range<usize>) -> Option<usize> {
+        let before = self.rank(range.start);
+
+        if self.rank(range.end) == before {
+            return None;
+        }
+
+        // The first word with more points that pass up to its end than before the range holds it
+        let start = range.start / 64;
+        let end = range.end.div_ceil(64).min(self.words.len());
+        let word = start + self.ranks[start + 1..=end].partition_point(|&rank| rank <= before);
+        let mut bits = self.words[word];
+
+        if word == start {
+            bits &= !0u64 << (range.start % 64);
+        }
+
+        Some(word * 64 + bits.trailing_zeros() as usize)
     }
 
     /// Combine the points that pass both this selection and `other`: a selection, behind a
@@ -179,7 +238,9 @@ impl<'s> Combination<'s> {
     }
 
     /// Compute the bits of every point into a `Selection`, which a query reads in constant time,
-    /// and which does not borrow the selections it combines, so a cache can keep it.
+    /// and which does not borrow the selections it combines, so a cache can keep it. It reads the
+    /// positions of the points that pass, so a query finds the center of the points of a cluster
+    /// that pass without reading them again.
     ///
     /// # Examples
     ///
@@ -212,7 +273,17 @@ impl<'s> Combination<'s> {
             .unwrap_or_default();
         let mut scratch = Scratch::default();
 
-        Selection::new(mem::take(evaluate(&self.steps, 0..words, &mut scratch)))
+        let words = mem::take(evaluate(&self.steps, 0..words, &mut scratch));
+
+        // The sums are built now from the positions of the supercluster of the first selection
+        // whose supercluster is still there. When none is, there are none, and a query sums the
+        // bits itself. Queries use them only on that supercluster, so either way is safe
+        let positions = self.steps.iter().find_map(|step| match step {
+            Step::Take(selection) => selection.positions.upgrade(),
+            _ => None,
+        });
+
+        Selection::new(words, positions.as_ref())
     }
 
     /// Combine this combination with `other` in one more step.
@@ -425,11 +496,12 @@ fn count_set(words: &[u64], first: usize, range: Range<usize>) -> u32 {
         return 0;
     }
 
+    // Unlike `range_words`, it checks the range once, at the first and the last word, not at every
+    // word, and counts the words between as they are. A combination counts the points of every
+    // item it evaluates, and the check per word made that measurably slower
     let start = range.start - first;
     let end = range.end - first;
     let (first_word, last_word) = (start / 64, (end - 1) / 64);
-
-    // The bits of the first and last word that are part of the range
     let low = u64::MAX << (start % 64);
     let high = u64::MAX >> (63 - (end - 1) % 64);
 
@@ -443,6 +515,37 @@ fn count_set(words: &[u64], first: usize, range: Range<usize>) -> u32 {
         .sum();
 
     (words[first_word] & low).count_ones() + middle + (words[last_word] & high).count_ones()
+}
+
+/// Get the words that hold the positions of `range` in `words`, whose first bit is the one of
+/// position `first`, each with the position of its first bit. The bits are inverted with `invert`,
+/// then the ones outside the range are cleared. A word past the end of `words` has no bit set.
+pub(crate) fn range_words(
+    words: &[u64],
+    first: usize,
+    range: Range<usize>,
+    invert: bool,
+) -> impl Iterator<Item = (usize, u64)> + '_ {
+    let (start, end) = (range.start - first, range.end - first);
+
+    (start / 64..end.div_ceil(64)).map(move |index| {
+        let low = index * 64;
+        let mut bits = words.get(index).copied().unwrap_or_default();
+
+        if invert {
+            bits = !bits;
+        }
+
+        if start > low {
+            bits &= !0u64 << (start - low);
+        }
+
+        if end < low + 64 {
+            bits &= (1u64 << (end - low)) - 1;
+        }
+
+        (first + low, bits)
+    })
 }
 
 /// Which points of a filtered item pass the filter.
@@ -479,21 +582,86 @@ impl<'a> Matches<'a> {
         }
     }
 
-    /// Iterate over the positions in `range` of the points that pass.
-    pub(crate) fn passing(&self, range: Range<usize>) -> SetPositions<'_> {
+    /// Find the position of the first point at the positions of `range` that passes.
+    pub(crate) fn first(&self, range: Range<usize>) -> Option<usize> {
         match self {
-            Matches::All => SetPositions::new(None, 0, range),
-            Matches::Local { words, first } => SetPositions::new(Some(words), *first, range),
-            Matches::Shared(selection) => SetPositions::new(Some(&selection.words), 0, range),
+            Matches::All => (!range.is_empty()).then_some(range.start),
+            Matches::Local { words, first } => range_words(words, *first, range, false)
+                .find(|&(_, bits)| bits != 0)
+                .map(|(low, bits)| low + bits.trailing_zeros() as usize),
+            Matches::Shared(selection) => selection.first(range),
+        }
+    }
+
+    /// Iterate over the positions in `range` of the points that pass, a word at a time, so a long
+    /// run of points that fail costs one step per 64 of them.
+    pub(crate) fn passing(&self, range: Range<usize>) -> impl Iterator<Item = usize> + '_ {
+        // Every point passes: the inverted bits of no words are all set
+        let (words, first, invert) = match self {
+            Matches::All => (&[][..], range.start, true),
+            Matches::Local { words, first } => (&words[..], *first, false),
+            Matches::Shared(selection) => (&selection.words[..], 0, false),
+        };
+
+        range_words(words, first, range, invert).flat_map(|(low, mut bits)| {
+            iter::from_fn(move || {
+                let bit = bits.trailing_zeros() as usize;
+
+                bits &= bits.wrapping_sub(1);
+                (bit < 64).then_some(low + bit)
+            })
+        })
+    }
+
+    /// Sum the integer positions of the `count` points at the positions of `range` that pass, with
+    /// the positions of the supercluster of the query.
+    pub(crate) fn sum(&self, range: Range<usize>, count: u32, positions: &Positions) -> [u128; 2] {
+        match self {
+            Matches::All => positions.sum_all(range),
+            Matches::Shared(selection) => match selection.sums_of(positions) {
+                Some(sums) => sums.sum(
+                    range,
+                    |index| selection.words[index],
+                    |leaf| positions.quantized(leaf),
+                ),
+                // A selection of another supercluster has no running sums of these positions, so
+                // its bits are summed here, like the bits of a combination
+                None => sum_passing(&selection.words, 0, range, count, positions),
+            },
+            Matches::Local { words, first } => sum_passing(words, *first, range, count, positions),
         }
     }
 
     /// Check whether a point at the positions of `range` passes.
     pub(crate) fn any(&self, range: Range<usize>) -> bool {
         match self {
+            Matches::All => !range.is_empty(),
+            Matches::Local { words, first } => {
+                range_words(words, *first, range, false).any(|(_, bits)| bits != 0)
+            }
             Matches::Shared(selection) => selection.count(range) > 0,
-            _ => self.passing(range).next().is_some(),
         }
+    }
+}
+
+/// Sum the integer positions of the `count` points at the positions of `range` whose bit is set in
+/// `words`, where bit 0 is the point at `first`. When more than half are set, it sums the points
+/// whose bit is not set and takes them from the sum of all, so it reads at most half of the points.
+fn sum_passing(
+    words: &[u64],
+    first: usize,
+    range: Range<usize>,
+    count: u32,
+    positions: &Positions,
+) -> [u128; 2] {
+    let position = |leaf| positions.quantized(leaf);
+
+    if count as usize * 2 > range.len() {
+        let failing = sum_bits(words, first, range.clone(), true, position);
+
+        sub(positions.sum_all(range), failing)
+    } else {
+        sum_bits(words, first, range, false, position)
     }
 }
 
@@ -509,74 +677,6 @@ pub(crate) fn filter_bits<'p, P>(
             word | (u64::from(filter(point)) << bit)
         })
     })
-}
-
-/// Iterate over the positions of a range whose bit is set, a word at a time, so a long run of
-/// bits that are not set costs one step per 64 of them. The bit of position `p` is bit
-/// `p - offset` of the words, and without words every position is set.
-pub(crate) struct SetPositions<'b> {
-    /// The bits, or `None` when every position is set.
-    words: Option<&'b [u64]>,
-
-    /// The position of the first bit of the words.
-    offset: usize,
-
-    /// The next position to look at.
-    next: usize,
-
-    /// The end of the range, which is not part of it.
-    end: usize,
-}
-
-impl<'b> SetPositions<'b> {
-    /// Iterate over the positions of `range` whose bit is set in `words`, where the first bit of
-    /// the words is the one of position `offset`, which is not after the start of the range.
-    pub(crate) fn new(words: Option<&'b [u64]>, offset: usize, range: Range<usize>) -> Self {
-        SetPositions {
-            words,
-            offset,
-            next: range.start,
-            end: range.end,
-        }
-    }
-}
-
-impl Iterator for SetPositions<'_> {
-    type Item = usize;
-
-    fn next(&mut self) -> Option<usize> {
-        while self.next < self.end {
-            let Some(words) = self.words else {
-                self.next += 1;
-
-                return Some(self.next - 1);
-            };
-
-            let bit = self.next - self.offset;
-            let word = words.get(bit / 64).map_or(0, |word| word >> (bit % 64));
-
-            if word == 0 {
-                // No bit is set in the rest of the word
-                self.next += 64 - bit % 64;
-
-                continue;
-            }
-
-            let position = self.next + word.trailing_zeros() as usize;
-
-            if position >= self.end {
-                break;
-            }
-
-            self.next = position + 1;
-
-            return Some(position);
-        }
-
-        self.next = self.end;
-
-        None
-    }
 }
 
 #[cfg(test)]
@@ -793,6 +893,36 @@ mod tests {
             summarize(&supercluster, (1, 0, 0), third.as_ref())
         );
         assert_same_results(&supercluster, &third.and(&northern), &selected);
+    }
+
+    #[test]
+    fn test_selection_does_not_keep_the_positions_of_a_dropped_supercluster() {
+        let supercluster = load_spread_points(500);
+        let selection = supercluster.select(every_third);
+        let positions = Arc::downgrade(supercluster.positions());
+
+        drop(supercluster);
+
+        // The positions are freed, and computing a combination still works
+        assert!(positions.upgrade().is_none());
+
+        let computed = selection.and(&selection).compute();
+
+        assert_eq!(format!("{computed:?}"), format!("{selection:?}"));
+
+        // With the same points loaded again, it has no running sums, so a query sums its bits with
+        // the positions of the new supercluster, and its tiles are the ones of a fresh selection
+        let reloaded = load_spread_points(500);
+        let fresh = reloaded.select(every_third);
+        let tiles = |selection: &Selection| -> Vec<([f64; 2], f64, f64, u32)> {
+            reloaded
+                .tile_selected(0, 0, 0, selection)
+                .iter()
+                .map(|item| (item.coordinates(), item.x, item.y, item.count()))
+                .collect()
+        };
+
+        assert_eq!(tiles(&computed), tiles(&fresh));
     }
 
     #[test]
