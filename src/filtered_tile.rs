@@ -54,20 +54,9 @@ pub struct FilteredTileItem<'a, P> {
     /// Which points of the item pass the filter.
     matches: Matches<'a>,
 
-    /// Where the item is, for `coordinates`.
-    location: Location,
-}
-
-/// Where an item of a filtered tile is, in the form the query found it, so that only a call to
-/// `FilteredTileItem::coordinates` converts it.
-#[derive(Clone, Copy)]
-enum Location {
-    /// Where the supercluster has the item, normalized to the [0..1] range the KD-trees use.
-    Normalized([f64; 2]),
-
-    /// The center of the points left of a cluster that moved, in the coordinate system of the
-    /// supercluster.
-    Center([f64; 2]),
+    /// Where the item is, normalized to the [0..1] range the KD-trees use, which only a call to
+    /// `coordinates` converts.
+    position: [f64; 2],
 }
 
 impl<'a, P> FilteredTileItem<'a, P> {
@@ -82,14 +71,10 @@ impl<'a, P> FilteredTileItem<'a, P> {
     /// rounded, and a copy of an item across the antimeridian keeps its own coordinates. It is
     /// computed on each call, so a query that does not need it does not pay for it.
     pub fn coordinates(&self) -> [f64; 2] {
-        match self.location {
-            Location::Normalized(position) => self
-                .supercluster
-                .options()
-                .coordinate_system
-                .denormalize(position),
-            Location::Center(center) => center,
-        }
+        self.supercluster
+            .options()
+            .coordinate_system
+            .denormalize(self.position)
     }
 
     /// Iterate over the points that pass the filter: the points of the cluster, in the order
@@ -141,7 +126,7 @@ impl<P> Clone for FilteredTileItem<'_, P> {
             cluster_max_zoom: self.cluster_max_zoom,
             leaves: self.leaves.clone(),
             matches: self.matches.clone(),
-            location: self.location,
+            position: self.position,
         }
     }
 }
@@ -383,10 +368,9 @@ fn filter_tile<'a, P>(
     mut find_matches: impl FnMut(Range<usize>) -> Option<(u32, Matches<'a>)>,
 ) -> Vec<FilteredTileItem<'a, P>> {
     let supercluster = view.supercluster;
-    let coordinate_system = &supercluster.options().coordinate_system;
-    let (z, tile_x, tile_y) = tile;
+    let (z, _, tile_y) = tile;
     let z2 = tiles_per_axis(z);
-    let (tile_x, tile_y) = (f64::from(tile_x), f64::from(tile_y));
+    let tile_y = f64::from(tile_y);
     let mut items = vec![];
 
     supercluster.for_each_in_tile(view.cluster_max_zoom, tile, |handle, position, origin_x| {
@@ -399,24 +383,15 @@ fn filter_tile<'a, P>(
         let recenter = matches!(item, Item::Cluster(cluster) if count < cluster.point_count)
             && count < RECENTER_LIMIT;
 
-        let ([x, y], location) = if recenter {
-            let center = find_center(supercluster, matches.passing(leaves.clone()));
-
-            // The copy of the world the item is in: -1 left of it, 1 right of it, or 0
-            let world = (tile_x - origin_x) / z2;
-            let [center_x, center_y] = coordinate_system.normalize(center);
-            let position = [center_x + world, center_y];
-
-            (
-                supercluster.tile_position(position, z2, tile_x, tile_y),
-                Location::Center(center),
-            )
+        let position = if recenter {
+            find_center(supercluster, matches.passing(leaves.clone()))
         } else {
-            (
-                supercluster.tile_position(position, z2, origin_x, tile_y),
-                Location::Normalized(position),
-            )
+            position
         };
+
+        // A copy of the item across the antimeridian is placed by the origin of its copy of the
+        // world, so it keeps its own position
+        let [x, y] = supercluster.tile_position(position, z2, origin_x, tile_y);
 
         items.push(FilteredTileItem {
             x,
@@ -427,22 +402,22 @@ fn filter_tile<'a, P>(
             cluster_max_zoom: view.cluster_max_zoom,
             leaves: leaves.start as u32..leaves.end as u32,
             matches,
-            location,
+            position,
         });
     });
 
     items
 }
 
-/// Find the average of the coordinates of the points at the positions `leaves`, in the coordinate
-/// system of the supercluster. There is at least one position.
+/// Find the average of the positions of the points at the positions `leaves`, normalized to the
+/// [0..1] range the KD-trees use. Loading places a cluster at the average of the same positions of
+/// all its points, so both centers are found the same way. There is at least one position.
 fn find_center<P>(supercluster: &Supercluster<P>, leaves: impl Iterator<Item = usize>) -> [f64; 2] {
-    let coordinate_system = &supercluster.options().coordinate_system;
     let mut count = 0;
     let mut sum = [0.0, 0.0];
 
     for leaf in leaves {
-        let [x, y] = coordinate_system.denormalize(supercluster.point_position(leaf));
+        let [x, y] = supercluster.point_position(leaf);
 
         count += 1;
         sum[0] += x;
@@ -756,6 +731,25 @@ mod tests {
         };
 
         assert_eq!(unfiltered[0].coordinates(), cluster.coordinates());
+    }
+
+    #[test]
+    fn test_tile_filtered_centers_the_points_left_like_loading() {
+        let supercluster = load(&[(10.0, 50.0, true), (10.0, 55.0, false), (10.0, 60.0, true)]);
+        let items = supercluster.tile_filtered(0, 0, 0, |point| point.keep);
+
+        // Loading averages the normalized positions, where latitudes are not evenly spread, so the
+        // center of the points at 50 and 60 is north of 55
+        let lat_lng = CoordinateSystem::LatLng;
+        let [south, north] = [[10.0, 50.0], [10.0, 60.0]].map(|point| lat_lng.normalize(point));
+        let center =
+            lat_lng.denormalize([(south[0] + north[0]) / 2.0, (south[1] + north[1]) / 2.0]);
+        let [lng, lat] = items[0].coordinates();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].count(), 2);
+        assert!((lng - center[0]).abs() < 1e-9 && (lat - center[1]).abs() < 1e-9);
+        assert!(lat > 55.1);
     }
 
     #[test]

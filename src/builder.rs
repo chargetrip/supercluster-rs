@@ -10,6 +10,8 @@ use crate::{CoordinateSystem, SuperclusterError, MAX_ZOOM_LIMIT};
 /// Supercluster configuration options.
 /// The options are valid by construction: only `SuperclusterOptions::builder()`, `Default` and,
 /// with the `serde` feature, deserialization create them, and the first and last check the values.
+/// Their fields are private, so read them with the methods of the same names, and they cannot
+/// change once they are checked.
 #[derive(Clone, Debug)]
 #[cfg_attr(
     feature = "serde",
@@ -20,31 +22,31 @@ use crate::{CoordinateSystem, SuperclusterError, MAX_ZOOM_LIMIT};
 pub struct SuperclusterOptions {
     /// Minimal zoom level to generate clusters on.
     /// The default value is 0.
-    pub min_zoom: u8,
+    pub(crate) min_zoom: u8,
 
     /// Maximal zoom level to cluster the points on.
     /// The default value is 16.
-    pub max_zoom: u8,
+    pub(crate) max_zoom: u8,
 
     /// Minimum points to form a cluster.
     /// The default value is 2.
-    pub min_points: u8,
+    pub(crate) min_points: u8,
 
     /// Cluster radius, in pixels.
     /// The default value is 40.0.
-    pub radius: f64,
+    pub(crate) radius: f64,
 
     /// Tile extent (radius is calculated relative to it).
     /// The default value is 512.0.
-    pub extent: f64,
+    pub(crate) extent: f64,
 
     /// Size of the KD-tree leaf node, affects performance.
     /// The default value is 64.
-    pub node_size: usize,
+    pub(crate) node_size: usize,
 
     /// Type of coordinate system for clustering.
     /// The default value is `CoordinateSystem::LatLng`.
-    pub coordinate_system: CoordinateSystem,
+    pub(crate) coordinate_system: CoordinateSystem,
 }
 
 impl SuperclusterOptions {
@@ -60,13 +62,48 @@ impl SuperclusterOptions {
     ///     .max_zoom(14)
     ///     .build()?;
     ///
-    /// assert_eq!(options.radius, 60.0);
+    /// assert_eq!(options.radius(), 60.0);
     /// // The extent keeps its default
-    /// assert_eq!(options.extent, 512.0);
+    /// assert_eq!(options.extent(), 512.0);
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
     pub fn builder() -> SuperclusterOptionsBuilder {
         SuperclusterOptionsBuilder::default()
+    }
+
+    /// Get the lowest zoom level to cluster on.
+    pub fn min_zoom(&self) -> u8 {
+        self.min_zoom
+    }
+
+    /// Get the highest zoom level to cluster on.
+    pub fn max_zoom(&self) -> u8 {
+        self.max_zoom
+    }
+
+    /// Get the fewest points that form a cluster.
+    pub fn min_points(&self) -> u8 {
+        self.min_points
+    }
+
+    /// Get the cluster radius, in pixels.
+    pub fn radius(&self) -> f64 {
+        self.radius
+    }
+
+    /// Get the size of a tile, in pixels, which the radius is relative to.
+    pub fn extent(&self) -> f64 {
+        self.extent
+    }
+
+    /// Get the number of points in a leaf of the KD-tree.
+    pub fn node_size(&self) -> usize {
+        self.node_size
+    }
+
+    /// Get the coordinate system of the points.
+    pub fn coordinate_system(&self) -> &CoordinateSystem {
+        &self.coordinate_system
     }
 }
 
@@ -215,6 +252,18 @@ impl TryFrom<SuperclusterOptionsBuilder> for SuperclusterOptions {
         builder.build()
     }
 }
+
+/// Setting a field of the options does not compile outside the crate, because it would skip the
+/// checks of the builder. This item only exists for the doc tests, so the documentation does not
+/// show code that fails.
+///
+/// ```compile_fail,E0616
+/// let mut options = supercluster::SuperclusterOptions::default();
+///
+/// options.node_size = 0;
+/// ```
+#[cfg(doctest)]
+struct OptionsCannotChange;
 
 /// Check whether a value is a finite number above 0, which `NaN` is not.
 fn is_positive(value: f64) -> bool {

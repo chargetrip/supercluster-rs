@@ -114,7 +114,7 @@ fn main() -> Result<(), SuperclusterError> {
 
 ### Set the options
 
-`SuperclusterOptions::default()` gives these values, and `SuperclusterOptions::builder()` changes the ones you set. `build()` checks every value and returns an error for one it cannot use.
+`SuperclusterOptions::default()` gives these values, and `SuperclusterOptions::builder()` changes the ones you set. `build()` checks every value and returns an error for one it cannot use. Read an option with the method of the same name, such as `options.extent()`. The options cannot change once they are built.
 
 | Option | Default | What it sets |
 | --- | --- | --- |
@@ -136,7 +136,7 @@ fn main() -> Result<(), SuperclusterError> {
         .build()?;
 
     // The values that are not set keep their default
-    assert_eq!(options.extent, 512.0);
+    assert_eq!(options.extent(), 512.0);
 
     Ok(())
 }
@@ -531,7 +531,7 @@ supercluster = { version = "4.0.0", features = ["geojson", "tracing"] }
 
 ### Options
 
-Build the options with `SuperclusterOptions::builder()`, or take the defaults. `build()` returns a `Result`. It gives an error for a `max_zoom` above 30, a `min_zoom` above the `max_zoom`, a radius or extent that is not a finite number above 0, a `node_size` of 0 and a `DataRange` that cannot scale the data. Deserializing the options with the `serde` feature checks the same values, and a struct literal cannot build them anymore.
+Build the options with `SuperclusterOptions::builder()`, or take the defaults. `build()` returns a `Result`. It gives an error for a `max_zoom` above 30, a `min_zoom` above the `max_zoom`, a radius or extent that is not a finite number above 0, a `node_size` of 0 and a `DataRange` that cannot scale the data. Deserializing the options with the `serde` feature checks the same values. A struct literal cannot build them anymore, and their fields are private, so they cannot change once they are checked. Read them with the methods of the same names, such as `options.max_zoom()`.
 
 ```rust,ignore
 // Version 3
