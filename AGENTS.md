@@ -36,6 +36,9 @@ a test file with `#![cfg(feature = "...")]`. An example or benchmark that needs 
   to them later. Derive a trait only when the bounds the derive adds are acceptable. Otherwise write
   the impl by hand: an item holds a reference to a point, so it must not require the point to be
   `Clone`.
+- Keep the API consistent. A variant of a type or a query is named after the original and has the
+  same fields, methods and trait impls under the same names, unless it cannot. Docs and examples
+  name a value after its type.
 - Prefer a closure over a trait for what a user supplies, as `load` and `tile_filtered` do. A
   per-request setting goes on `SuperclusterView` (`with_cluster_max_zoom`), not into a `_with`
   variant of a query.

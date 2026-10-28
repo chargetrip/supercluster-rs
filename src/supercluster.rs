@@ -20,9 +20,11 @@
 
 use std::{
     f64::consts::PI,
-    fmt::{self, Display, Formatter},
+    fmt::{self, Debug, Display, Formatter},
     ops::Range,
+    slice,
     sync::Arc,
+    vec,
 };
 
 #[cfg(feature = "serde")]
@@ -148,9 +150,11 @@ impl Clusters {
 }
 
 /// Coordinate system for clustering.
-/// The coordinate system is used to determine the range of the incoming data.
+/// The coordinate system is used to determine the range of the incoming data. More coordinate
+/// systems may come, so a `match` on it needs a `_` arm.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[non_exhaustive]
 pub enum CoordinateSystem {
     /// Latitude and longitude coordinates. Used for geo-spatial data.
     LatLng,
@@ -245,9 +249,27 @@ impl Cluster<'_> {
         self.coordinate_system.denormalize(self.position)
     }
 
-    /// Get the number of points as a short text, for example `1.5k` for 1500 points.
-    pub fn point_count_abbreviated(&self) -> String {
-        AbbreviatedCount(self.point_count).into_string()
+    /// Get the number of points as a short text, for example `1.5k` for 1500 points. It writes
+    /// itself wherever it is formatted, such as into a response, without allocating a string. Call
+    /// `to_string()` to keep it as a `String`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use supercluster::{Item, Supercluster, SuperclusterOptions};
+    ///
+    /// let points = vec![[10.0, 50.0]; 1500];
+    /// let supercluster = Supercluster::load(SuperclusterOptions::default(), points, |point| {
+    ///     Some(*point)
+    /// })?;
+    ///
+    /// if let Item::Cluster(cluster) = supercluster.tile(0, 0, 0).items[0].item {
+    ///     assert_eq!(format!("{} points", cluster.point_count_abbreviated()), "1.5k points");
+    /// }
+    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// ```
+    pub fn point_count_abbreviated(&self) -> impl Display + Copy {
+        AbbreviatedCount(self.point_count)
     }
 }
 
@@ -256,11 +278,13 @@ const ABBREVIATE_FROM: u32 = 1000;
 
 /// The number of points of a cluster as a short text, for example `1.5k` for 1500 points, which
 /// `Display` writes without allocating.
+#[derive(Clone, Copy)]
 pub(crate) struct AbbreviatedCount(pub(crate) u32);
 
 impl AbbreviatedCount {
     /// Write the count into a new string. A count it does not shorten goes through `to_string` of
     /// an integer, which skips the formatting machinery that `Display` goes through.
+    #[cfg(feature = "geojson")]
     pub(crate) fn into_string(self) -> String {
         if self.0 < ABBREVIATE_FROM {
             self.0.to_string()
@@ -311,7 +335,6 @@ impl<P> Clone for Item<'_, P> {
 impl<P> Copy for Item<'_, P> {}
 
 /// An item of a tile with its position in the tile.
-#[derive(Debug, PartialEq)]
 #[non_exhaustive]
 pub struct TileItem<'a, P> {
     /// The X position in the tile, in the units of the tile extent.
@@ -322,6 +345,66 @@ pub struct TileItem<'a, P> {
 
     /// The cluster or point at the position.
     pub item: Item<'a, P>,
+
+    /// The view that built the tile, which finds the expansion zoom.
+    view: SuperclusterView<'a, P>,
+}
+
+impl<P> TileItem<'_, P> {
+    /// Determine the zoom level at which the cluster expands, like
+    /// `Supercluster::cluster_expansion_zoom`, up to the highest zoom level of the view that built
+    /// the tile.
+    ///
+    /// Returns `None` for a point.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use supercluster::{Supercluster, SuperclusterOptions};
+    ///
+    /// let points = vec![[10.0, 50.0], [10.001, 50.0]];
+    /// let supercluster = Supercluster::load(SuperclusterOptions::default(), points, |point| {
+    ///     Some(*point)
+    /// })?;
+    /// let tile = supercluster.tile(0, 0, 0);
+    ///
+    /// // The two points form a cluster, which splits on a zoom level a map can zoom in to
+    /// assert!(tile.items[0].expansion_zoom().is_some());
+    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// ```
+    pub fn expansion_zoom(&self) -> Option<u8> {
+        let Item::Cluster(cluster) = self.item else {
+            return None;
+        };
+
+        // The cluster comes from the supercluster, so finding it does not fail
+        self.view.cluster_expansion_zoom(cluster.id).ok()
+    }
+}
+
+// Written by hand, because a derive would print the whole supercluster.
+impl<P: Debug> Debug for TileItem<'_, P> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TileItem")
+            .field("x", &self.x)
+            .field("y", &self.y)
+            .field("item", &self.item)
+            .finish_non_exhaustive()
+    }
+}
+
+// Written by hand, because a derive would compare the whole supercluster. Items are equal at the
+// same position with the same cluster or point. Clusters also need views with the same highest
+// zoom level, so they expand on the same zoom level.
+impl<P: PartialEq> PartialEq for TileItem<'_, P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.x == other.x
+            && self.y == other.y
+            && self.item == other.item
+            && (matches!(self.item, Item::Point { .. })
+                || self.view.cluster_max_zoom == other.view.cluster_max_zoom)
+    }
 }
 
 impl<P> Clone for TileItem<'_, P> {
@@ -352,6 +435,24 @@ impl<P> Tile<'_, P> {
     /// Check whether the tile has no items.
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
+    }
+}
+
+impl<'a, P> IntoIterator for Tile<'a, P> {
+    type Item = TileItem<'a, P>;
+    type IntoIter = vec::IntoIter<TileItem<'a, P>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.into_iter()
+    }
+}
+
+impl<'t, 'a, P> IntoIterator for &'t Tile<'a, P> {
+    type Item = &'t TileItem<'a, P>;
+    type IntoIter = slice::Iter<'t, TileItem<'a, P>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.iter()
     }
 }
 
@@ -914,7 +1015,7 @@ impl<P> Supercluster<P> {
         clusters: &mut Clusters,
     ) -> Vec<Entry> {
         let r = self.options.radius / (self.options.extent * (2.0_f64).powi(zoom as i32));
-        let min_points = u32::from(self.options.min_points);
+        let min_points = self.options.min_points;
 
         let mut processed = vec![false; entries.len()];
         let mut next = Vec::with_capacity(entries.len());
@@ -1204,6 +1305,7 @@ impl<'a, P> SuperclusterView<'a, P> {
                     x,
                     y,
                     item: supercluster.item(handle, position),
+                    view: *self,
                 });
             },
         );
@@ -1618,6 +1720,7 @@ mod tests {
         let centers = |supercluster: &Supercluster<[f64; 2]>| -> Vec<[f64; 2]> {
             supercluster
                 .tile_filtered(0, 0, 0, filter)
+                .items
                 .iter()
                 .map(|item| item.coordinates())
                 .collect()
@@ -2021,6 +2124,98 @@ mod tests {
     }
 
     #[test]
+    fn test_load_with_min_points_above_255() {
+        let options = SuperclusterOptions::builder()
+            .min_points(300)
+            .build()
+            .unwrap();
+        let load = |count| {
+            Supercluster::load(options.clone(), vec![[10.0, 50.0]; count], |point| {
+                Some(*point)
+            })
+            .unwrap()
+        };
+
+        // 300 points at one place form a cluster, and 299 stay points
+        assert_eq!(load(300).tile(0, 0, 0).items.len(), 1);
+        assert_eq!(load(299).tile(0, 0, 0).items.len(), 299);
+    }
+
+    #[test]
+    fn test_tile_iterates_over_its_items() {
+        let supercluster = load_spread_points(500);
+        let tile = supercluster.tile(1, 0, 0);
+        let borrowed: Vec<_> = (&tile).into_iter().copied().collect();
+
+        assert!(!tile.is_empty());
+        assert_eq!(borrowed, tile.items);
+        assert_eq!(tile.clone().into_iter().collect::<Vec<_>>(), tile.items);
+    }
+
+    #[test]
+    fn test_tile_items_of_views_with_another_highest_zoom_level_differ() {
+        let supercluster = load_spread_points(500);
+        let full = supercluster.tile(0, 0, 0);
+        let capped = supercluster.with_cluster_max_zoom(5).tile(0, 0, 0);
+
+        // The same clusters and points at the same places, which can expand on other zoom levels,
+        // so the items are not equal
+        let places = |tile: &Tile<'_, [f64; 2]>| -> Vec<(f64, f64, Option<u32>)> {
+            tile.items
+                .iter()
+                .map(|item| match item.item {
+                    Item::Cluster(cluster) => (item.x, item.y, Some(cluster.id.get())),
+                    Item::Point { .. } => (item.x, item.y, None),
+                })
+                .collect()
+        };
+
+        assert_eq!(places(&full), places(&capped));
+        assert_ne!(full, capped);
+    }
+
+    #[test]
+    fn test_tile_points_of_views_with_another_highest_zoom_level_are_equal() {
+        let points = vec![[10.0, 50.0], [10.0001, 50.0]];
+        let supercluster =
+            Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))
+                .unwrap();
+        let z2 = tiles_per_axis(17);
+        let x = (convert_longitude_to_spherical_mercator(10.0) * z2).floor() as u32;
+        let y = (convert_latitude_to_spherical_mercator(50.0) * z2).floor() as u32;
+
+        // Above the highest zoom level of both views, the tile holds the same points, which have
+        // no expansion zoom, so the highest zoom level makes no difference
+        let full = supercluster.tile(17, x, y);
+        let capped = supercluster.with_cluster_max_zoom(5).tile(17, x, y);
+
+        assert!(full
+            .items
+            .iter()
+            .all(|item| matches!(item.item, Item::Point { .. })));
+        assert!(!full.is_empty());
+        assert_eq!(full, capped);
+    }
+
+    #[test]
+    fn test_tile_item_expansion_zoom() {
+        let supercluster = load_spread_points(500);
+
+        for view in [supercluster.view(), supercluster.with_cluster_max_zoom(3)] {
+            for tile_item in view.tile(0, 0, 0).items {
+                let expected = match tile_item.item {
+                    Item::Cluster(cluster) => {
+                        Some(view.cluster_expansion_zoom(cluster.id).unwrap())
+                    }
+                    Item::Point { .. } => None,
+                };
+
+                assert_eq!(tile_item.expansion_zoom(), expected);
+            }
+        }
+    }
+
+    #[test]
     fn test_point_count_abbreviated() {
         let abbreviate = |point_count| {
             Cluster {
@@ -2030,6 +2225,7 @@ mod tests {
                 coordinate_system: &CoordinateSystem::LatLng,
             }
             .point_count_abbreviated()
+            .to_string()
         };
 
         assert_eq!(abbreviate(3), "3");

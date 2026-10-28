@@ -30,7 +30,7 @@ pub struct SuperclusterOptions {
 
     /// Minimum points to form a cluster.
     /// The default value is 2.
-    pub(crate) min_points: u8,
+    pub(crate) min_points: u32,
 
     /// Cluster radius, in pixels.
     /// The default value is 40.0.
@@ -82,7 +82,7 @@ impl SuperclusterOptions {
     }
 
     /// Get the fewest points that form a cluster.
-    pub fn min_points(&self) -> u8 {
+    pub fn min_points(&self) -> u32 {
         self.min_points
     }
 
@@ -133,7 +133,7 @@ pub struct SuperclusterOptionsBuilder {
     max_zoom: Option<u8>,
 
     /// Minimum points to form a cluster.
-    min_points: Option<u8>,
+    min_points: Option<u32>,
 
     /// Cluster radius, in pixels.
     radius: Option<f64>,
@@ -162,7 +162,7 @@ impl SuperclusterOptionsBuilder {
     }
 
     /// Set the minimum points to form a cluster.
-    pub fn min_points(mut self, min_points: u8) -> Self {
+    pub fn min_points(mut self, min_points: u32) -> Self {
         self.min_points = Some(min_points);
         self
     }

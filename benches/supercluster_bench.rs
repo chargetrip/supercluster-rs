@@ -82,6 +82,7 @@ fn bench_many_points(c: &mut Criterion) {
             b.iter(|| {
                 supercluster
                     .tile_filtered(black_box(3), black_box(4), black_box(3), filter)
+                    .items
                     .iter()
                     .filter_map(|tile_item| tile_item.expansion_zoom())
                     .map(u32::from)
@@ -102,6 +103,7 @@ fn bench_many_points(c: &mut Criterion) {
             b.iter(|| {
                 supercluster
                     .tile_selected(black_box(3), black_box(4), black_box(3), &selection)
+                    .items
                     .iter()
                     .filter_map(|tile_item| tile_item.expansion_zoom())
                     .map(u32::from)
@@ -149,6 +151,7 @@ fn bench_one_million_points(c: &mut Criterion) {
         b.iter(|| {
             supercluster
                 .tile_filtered(black_box(0), black_box(0), black_box(0), filter)
+                .items
                 .iter()
                 .filter_map(|tile_item| tile_item.expansion_zoom())
                 .map(u32::from)
@@ -164,6 +167,7 @@ fn bench_one_million_points(c: &mut Criterion) {
         b.iter(|| {
             supercluster
                 .tile_selected(black_box(0), black_box(0), black_box(0), &selection)
+                .items
                 .iter()
                 .filter_map(|tile_item| tile_item.expansion_zoom())
                 .map(u32::from)
@@ -211,6 +215,7 @@ fn bench_one_million_points(c: &mut Criterion) {
             b.iter(|| {
                 supercluster
                     .tile_selected(black_box(0), black_box(0), black_box(0), &combination)
+                    .items
                     .iter()
                     .filter_map(|tile_item| tile_item.expansion_zoom())
                     .map(u32::from)

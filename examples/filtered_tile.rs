@@ -43,6 +43,7 @@ fn main() -> Result<(), SuperclusterError> {
     // The cluster keeps the available stations only and moves to their center, Rotterdam is left out
     let descriptions = supercluster
         .tile_filtered(0, 0, 0, |station| station.available)
+        .items
         .into_iter()
         .map(|tile_item| {
             let names: Vec<_> = tile_item.points().map(|station| station.name).collect();
@@ -75,7 +76,7 @@ fn main() -> Result<(), SuperclusterError> {
     // changes. The tiles then cost the same however many stations they hold.
     let available = supercluster.select(|station| station.available);
 
-    for tile_item in supercluster.tile_selected(0, 0, 0, &available) {
+    for tile_item in supercluster.tile_selected(0, 0, 0, &available).items {
         println!(
             "{} available station(s), zoom in to {:?}",
             tile_item.count(),

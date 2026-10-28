@@ -69,6 +69,7 @@ fn handle_tile(state: &State, (z, x, y): (u8, u32, u32), only_fast: bool) -> Vec
     index
         .supercluster
         .tile_selected(z, x, y, wanted)
+        .items
         .iter()
         .map(|item| (item.coordinates(), item.count()))
         .collect()

@@ -53,13 +53,13 @@ impl DataRange {
 
     /// Normalize the coordinate value to the range `[0, 1]`.
     /// The formula is `(v - offset) / scale`.
-    pub fn normalize(&self, v: f64) -> f64 {
+    pub(crate) fn normalize(&self, v: f64) -> f64 {
         (v - self.offset()) / self.scale()
     }
 
     /// Denormalize the coordinate value from the range `[0, 1]` to the original range.
     /// The formula is `v_scaled * scale + offset`.
-    pub fn denormalize(&self, v_scaled: f64) -> f64 {
+    pub(crate) fn denormalize(&self, v_scaled: f64) -> f64 {
         v_scaled * self.scale() + self.offset()
     }
 

@@ -127,7 +127,7 @@ impl Selection {
     /// let available = supercluster.select(|station| station.3);
     ///
     /// // The items borrow the selections, not the combination, so it can be a temporary
-    /// let items = supercluster.tile_selected(0, 0, 0, fast.and(&available));
+    /// let items = supercluster.tile_selected(0, 0, 0, fast.and(&available)).items;
     ///
     /// assert_eq!(items[0].count(), 1);
     /// # Ok::<(), supercluster::SuperclusterError>(())
@@ -146,8 +146,29 @@ impl Selection {
         Combination::from(self).and_not(other)
     }
 
+    /// Get the number of points of the supercluster that pass, which it counts once, when it is
+    /// made.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use supercluster::{Supercluster, SuperclusterOptions};
+    ///
+    /// // A point is a longitude, a latitude and whether it is available
+    /// let points = vec![(10.0, 50.0, true), (10.001, 50.0, false), (10.002, 50.0, true)];
+    /// let supercluster = Supercluster::load(SuperclusterOptions::default(), points, |point| {
+    ///     Some([point.0, point.1])
+    /// })?;
+    ///
+    /// assert_eq!(supercluster.select(|point| point.2).count(), 2);
+    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// ```
+    pub fn count(&self) -> u32 {
+        self.ranks[self.words.len()]
+    }
+
     /// Count the points at the positions of `range` that pass.
-    pub(crate) fn count(&self, range: Range<usize>) -> u32 {
+    pub(crate) fn count_in(&self, range: Range<usize>) -> u32 {
         self.rank(range.end) - self.rank(range.start)
     }
 
@@ -167,7 +188,7 @@ impl Debug for Selection {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Selection")
-            .field("selected", &self.ranks[self.words.len()])
+            .field("selected", &self.count())
             .finish_non_exhaustive()
     }
 }
@@ -258,7 +279,7 @@ impl<'s> Combination<'s> {
     /// // A cache can keep it, because it does not borrow `fast` and `available`
     /// let cached: Selection = fast.and(&available).compute();
     ///
-    /// assert_eq!(supercluster.tile_selected(0, 0, 0, &cached)[0].count(), 1);
+    /// assert_eq!(supercluster.tile_selected(0, 0, 0, &cached).items[0].count(), 1);
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
     pub fn compute(&self) -> Selection {
@@ -345,13 +366,13 @@ pub(crate) mod private {
 impl<'s, T: Borrow<Selection> + ?Sized> private::Sealed<'s> for &'s T {
     fn matches(&self, range: Range<usize>, _: &mut Scratch) -> Option<(u32, Matches<'s>)> {
         let selection = T::borrow(self);
-        let count = selection.count(range.clone());
+        let count = selection.count_in(range.clone());
 
         Matches::found(count, range.len(), || Matches::Shared(selection))
     }
 
     fn any(&self, range: Range<usize>, _: &mut Scratch) -> bool {
-        T::borrow(self).count(range) > 0
+        T::borrow(self).count_in(range) > 0
     }
 }
 
@@ -639,7 +660,7 @@ impl<'a> Matches<'a> {
             Matches::Local { words, first } => {
                 range_words(words, *first, range, false).any(|(_, bits)| bits != 0)
             }
-            Matches::Shared(selection) => selection.count(range) > 0,
+            Matches::Shared(selection) => selection.count_in(range) > 0,
         }
     }
 }
@@ -714,6 +735,7 @@ mod tests {
     ) -> Summary {
         supercluster
             .tile_selected(z, x, y, selection)
+            .items
             .iter()
             .map(|item| {
                 let expansion_zoom = match item.item {
@@ -867,8 +889,10 @@ mod tests {
         let selected = supercluster.select(|point| every_third(point) && north(point));
 
         // The items borrow the selections, not the combination, so they outlive it
-        let items = supercluster.tile_selected(0, 0, 0, third.and(&northern));
-        let expected = supercluster.tile_selected(0, 0, 0, &selected);
+        let items = supercluster
+            .tile_selected(0, 0, 0, third.and(&northern))
+            .items;
+        let expected = supercluster.tile_selected(0, 0, 0, &selected).items;
         let summary = |items: &[crate::FilteredTileItem<'_, [f64; 2]>]| -> Vec<(f64, f64, u32)> {
             items
                 .iter()
@@ -917,6 +941,7 @@ mod tests {
         let tiles = |selection: &Selection| -> Vec<([f64; 2], f64, f64, u32)> {
             reloaded
                 .tile_selected(0, 0, 0, selection)
+                .items
                 .iter()
                 .map(|item| (item.coordinates(), item.x, item.y, item.count()))
                 .collect()
@@ -982,6 +1007,9 @@ mod tests {
             format!("{:?}", combination.compute()),
             "Selection { selected: 0, .. }"
         );
-        assert!(supercluster.tile_selected(0, 0, 0, &combination).is_empty());
+        assert!(supercluster
+            .tile_selected(0, 0, 0, &combination)
+            .items
+            .is_empty());
     }
 }

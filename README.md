@@ -146,7 +146,7 @@ fn main() -> Result<(), SuperclusterError> {
 
 ## Filter what a tile shows
 
-A filtered tile keeps only the points that pass a filter, for example the ones that match a search. A cluster without any point left is left out, and a cluster with points that fail moves to the exact center of the points left.
+A filtered tile keeps only the points that pass a filter, for example the ones that match a search. A cluster without any point left is left out, a cluster with one point left becomes that point, and a cluster with more points left moves to the exact center of the points left.
 
 Each item has `count()` and `points()` for the points that pass, `coordinates()` for its position in your coordinate system, and `expansion_zoom()` for the zoom level where a cluster splits, counting only the points that pass. Map the items to the type of your response with an iterator.
 
@@ -263,8 +263,8 @@ fn main() -> Result<(), SuperclusterError> {
         |station| Some([station.lng, station.lat]),
     )?;
 
-    // The cluster holds the available station only, and moves onto it
-    let items = supercluster.tile_filtered(0, 0, 0, |station| station.available);
+    // The cluster has one available station left, so the tile holds that station
+    let items = supercluster.tile_filtered(0, 0, 0, |station| station.available).items;
 
     for item in &items {
         println!("{:?}: {} station(s), zoom in to {:?}", item.coordinates(), item.count(), item.expansion_zoom());
@@ -309,7 +309,7 @@ fn main() -> Result<(), SuperclusterError> {
     let available = supercluster.select(|station| station.available);
 
     // Per request: combine what the request asks for, which the query evaluates on its tile only
-    let items = supercluster.tile_selected(0, 0, 0, fast.and(&available));
+    let items = supercluster.tile_selected(0, 0, 0, fast.and(&available)).items;
 
     // The cluster holds the one fast charger that is available
     assert_eq!(items[0].count(), 1);
@@ -372,10 +372,11 @@ With the `geojson` feature, a supercluster loads GeoJSON features and returns it
 | To return | Call | The geometry holds |
 | --- | --- | --- |
 | A tile, to send to a map | `tile.as_feature_collection()`, which you serialize, or `tile.to_feature_collection()` | The position in the tile, in the units of the tile `extent`. |
+| A filtered tile | The same calls, on what `tile_filtered` or `tile_selected` returns | The position in the tile, at the center of the points that pass. |
 | The items of a bounding box | `item.to_feature()`, on each item that `clusters(bbox, zoom)` returns | The coordinates, such as the longitude and latitude. |
 | One cluster | `cluster.to_feature()` | The coordinates of its center. |
 
-A cluster becomes a feature with the properties `cluster`, `cluster_id`, `point_count` and `point_count_abbreviated`, and a point keeps the ID and the properties it was loaded with. A filtered tile has no GeoJSON conversion, so build the features from its items.
+A cluster becomes a feature with the properties `cluster`, `cluster_id`, `point_count` and `point_count_abbreviated`, and a point keeps the ID and the properties it was loaded with. In a filtered tile, a cluster's `point_count` and `point_count_abbreviated` count the points that pass.
 
 ```rust,ignore
 use geojson::{Feature, Geometry};
@@ -466,13 +467,13 @@ These are methods of `Supercluster<P>`, with the same last column as the queries
 
 | Method | Returns | What it does | On a view |
 | --- | --- | --- | --- |
-| `tile_filtered(z, x, y, filter)` | `Vec<FilteredTileItem>` | The items of a tile that keep a point for which the closure returns `true`. | Yes |
+| `tile_filtered(z, x, y, filter)` | `FilteredTile` | The items of a tile that keep a point for which the closure returns `true`. | Yes |
 | `cluster_expansion_zoom_filtered(cluster_id, filter)` | `Result<u8, _>` | The zoom level where a cluster splits, counting only the points that pass the closure. | Yes |
 | `select(filter)` | `Selection` | The points that pass the closure, found once for many queries. | No |
-| `tile_selected(z, x, y, selection)` | `Vec<FilteredTileItem>` | The items of a tile that keep a point of the selection. | Yes |
+| `tile_selected(z, x, y, selection)` | `FilteredTile` | The items of a tile that keep a point of the selection. | Yes |
 | `cluster_expansion_zoom_selected(cluster_id, selection)` | `Result<u8, _>` | The zoom level where a cluster splits, counting only the points of the selection. | Yes |
 
-Selections combine with the methods below. `a` is a `Selection` or a `Combination`, and `b` is a reference to a `Selection`, also behind an `Arc` or a `Box`, or a `Combination`, by value or by reference. The calls chain, as in `a.or(&b).and(&c)`. A combination computes nothing until a query or `compute` evaluates it.
+Selections combine with the methods below, and `count()` gives the number of points of a selection. `a` is a `Selection` or a `Combination`, and `b` is a reference to a `Selection`, also behind an `Arc` or a `Box`, or a `Combination`, by value or by reference. The calls chain, as in `a.or(&b).and(&c)`. A combination computes nothing until a query or `compute` evaluates it.
 
 | Method | Returns | What it does |
 | --- | --- | --- |
@@ -480,16 +481,18 @@ Selections combine with the methods below. `a` is a `Selection` or a `Combinatio
 | `a.or(b)` | `Combination` | The points in `a`, in `b`, or in both. |
 | `a.and_not(b)` | `Combination` | The points in `a` that are not in `b`. |
 | `combination.compute()` | `Selection` | The combination computed for every point, to cache. |
+| `selection.count()` | `u32` | The number of points of the selection. |
 
 ### Read the results
 
 | Type | What it holds | Methods |
 | --- | --- | --- |
 | `Tile` | `items`, a list of `TileItem`. | `is_empty()` |
-| `TileItem` | `x` and `y`, the position in the tile, and `item`. | None |
+| `TileItem` | `x` and `y`, the position in the tile, and `item`. | `expansion_zoom()` |
 | `Item` | `Item::Cluster(Cluster)`, or `Item::Point { index, point }`, a point with its index in the list that was loaded. | None |
 | `Cluster` | `id` and `point_count`. | `coordinates()` for its center, and `point_count_abbreviated()`, such as `1.5k` |
 | `ClusterId` | The ID of a cluster, as a `u32`. `ClusterId::new(number)` makes one from a `u32`. | `get()` returns the `u32` |
+| `FilteredTile` | `items`, a list of `FilteredTileItem`. | `is_empty()` |
 | `FilteredTileItem` | `x`, `y` and `item`, like a `TileItem`. | `coordinates()`, `count()` and `points()` for the points that pass, and `expansion_zoom()` |
 
 ### Convert to GeoJSON
@@ -501,6 +504,7 @@ These methods need the `geojson` feature.
 | `tile.to_feature_collection()` | `FeatureCollection` | The items of the tile, with their positions in the tile as the geometry. |
 | `tile.as_feature_collection()` | `FeatureCollectionView` | Serializes to the same JSON as `to_feature_collection()`, without copying the properties. |
 | `tile_item.to_feature()` | `Feature` | The item, with its position in the tile as the geometry. |
+| `filtered_tile.to_feature_collection()`, `as_feature_collection()` and `filtered_tile_item.to_feature()` | Like the ones of a tile | The items of a filtered tile, at their positions in the tile. |
 | `item.to_feature()` | `Feature` | A cluster at its center, or the point as it was loaded. |
 | `cluster.to_feature()` | `Feature` | The cluster at its center, with the properties `cluster`, `cluster_id`, `point_count` and `point_count_abbreviated`. |
 
@@ -532,7 +536,7 @@ supercluster = { version = "4.0.0", features = ["geojson", "tracing"] }
 
 ### Options
 
-Build the options with `SuperclusterOptions::builder()`, or take the defaults. `build()` returns a `Result`. It gives an error for a `max_zoom` above 30, a `min_zoom` above the `max_zoom`, a radius or extent that is not a finite number above 0, a `node_size` of 0 and a `DataRange` that cannot scale the data. Deserializing the options with the `serde` feature checks the same values. A struct literal cannot build them anymore, and their fields are private, so they cannot change once they are checked. Read them with the methods of the same names, such as `options.max_zoom()`.
+Build the options with `SuperclusterOptions::builder()`, or take the defaults. `build()` returns a `Result`. It gives an error for a `max_zoom` above 30, a `min_zoom` above the `max_zoom`, a radius or extent that is not a finite number above 0, a `node_size` of 0 and a `DataRange` that cannot scale the data. Deserializing the options with the `serde` feature checks the same values. A struct literal cannot build them anymore, and their fields are private, so they cannot change once they are checked. Read them with the methods of the same names, such as `options.max_zoom()`. `min_points` is a `u32` instead of a `u8`.
 
 ```rust,ignore
 // Version 3
@@ -545,7 +549,7 @@ let options = SuperclusterOptions::builder().radius(40.0).max_zoom(16).build()?;
 let options = SuperclusterOptions::default();
 ```
 
-A `DataRange` for the `Cartesian` coordinate system has no `offset` and `scale` fields anymore.
+A `DataRange` for the `Cartesian` coordinate system has no `offset` and `scale` fields, and no public `normalize` and `denormalize` anymore. A `match` on `CoordinateSystem` needs a `_` arm.
 
 ```rust,ignore
 // Version 3
