@@ -373,11 +373,11 @@ The numbers change from one load to the next. After you load new points, a numbe
 
 ### Map and reduce the points
 
-Mapbox’s supercluster combines the values of points into clusters while it loads, with `map` and `reduce`. Here you combine them when you need them, which also works on filtered tiles:
+Mapbox’s supercluster combines the values of points into clusters while it loads, with its `map` and `reduce` options. This crate has no such options. Here you combine the values when you need them, which also works on filtered tiles:
 
-- **`map`:** points are your own type, so read their fields.
-- **`reduce` to count matching points:** filter the tile, and read each item's `count()`.
-- **`reduce` to combine other values:** compute them from `supercluster.leaves(cluster.id)`, or from `filtered_tile_item.leaves()` for the points that pass.
+- Instead of `map`, read the fields of your points directly, they're your own type.
+- Instead of `reduce` to count matching points, filter the tile with `tile_filtered` or `tile_selected`, and read each item's `count()`.
+- Instead of `reduce` to combine values, like a sum, compute them from `supercluster.leaves(cluster.id)`, or from `filtered_tile_item.leaves()` for only the points that pass the filter.
 
 ```rust
 use supercluster::{Item, Supercluster, SuperclusterError, SuperclusterOptions};
