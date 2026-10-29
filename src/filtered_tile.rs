@@ -196,6 +196,7 @@ impl<P: Debug> Debug for FilteredTileItem<'_, P> {
             .field("coordinates", &self.coordinates())
             .field("item", &self.item)
             .field("count", &self.count)
+            .field("expansion_zoom", &self.expansion_zoom())
             .finish_non_exhaustive()
     }
 }
@@ -1234,7 +1235,7 @@ mod tests {
         let debug = format!("{:?}", items[0]);
 
         assert!(debug.starts_with("FilteredTileItem { x:"));
-        assert!(debug.contains("count: 2"));
+        assert!(debug.contains("count: 2, expansion_zoom: Some("));
         assert!(!debug.contains("trees"));
     }
 

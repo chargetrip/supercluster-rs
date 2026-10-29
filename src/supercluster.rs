@@ -338,6 +338,7 @@ impl<P: Debug> Debug for TileItem<'_, P> {
             .field("y", &self.y)
             .field("item", &self.item)
             .field("count", &self.count())
+            .field("expansion_zoom", &self.expansion_zoom)
             .finish_non_exhaustive()
     }
 }
@@ -728,6 +729,13 @@ impl<P> Supercluster<P> {
     /// `points`.
     pub(crate) fn clustered_points(&self) -> usize {
         self.positions.len()
+    }
+
+    /// Determine the zoom level at which the cluster at `cluster` in the table of clusters expands,
+    /// up to `cluster_max_zoom` plus one.
+    fn expansion_zoom_of(&self, cluster: usize, cluster_max_zoom: u8) -> u8 {
+        // A cluster has at least two children, so it splits on the zoom level after it formed
+        (self.clusters.zooms[cluster] + 1).min(cluster_max_zoom + 1)
     }
 
     /// Convert an item of a KD-tree, at its normalized `position`, into a cluster or a point.
@@ -1237,19 +1245,14 @@ impl<'a, P> SuperclusterView<'a, P> {
             (z, x, y),
             |handle, position, origin_x| {
                 let [x, y] = supercluster.tile_position(position, z2, origin_x, tile_y);
-                let item = supercluster.item(handle, position);
-
-                // A lookup in the table of clusters, which does not fail for a cluster of the
-                // supercluster
-                let expansion_zoom = match item {
-                    Item::Cluster(cluster) => self.cluster_expansion_zoom(cluster.id).ok(),
-                    Item::Point { .. } => None,
-                };
+                let expansion_zoom = (handle as usize)
+                    .checked_sub(supercluster.points.len())
+                    .map(|cluster| supercluster.expansion_zoom_of(cluster, self.cluster_max_zoom));
 
                 items.push(TileItem {
                     x,
                     y,
-                    item,
+                    item: supercluster.item(handle, position),
                     expansion_zoom,
                 });
             },
@@ -1266,11 +1269,11 @@ impl<'a, P> SuperclusterView<'a, P> {
     ///
     /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
     pub fn cluster_expansion_zoom(&self, cluster_id: ClusterId) -> Result<u8, SuperclusterError> {
-        let supercluster = self.supercluster;
-        let cluster = supercluster.cluster_index(cluster_id)?;
+        let cluster = self.supercluster.cluster_index(cluster_id)?;
 
-        // A cluster has at least two children, so it splits on the zoom level after it formed
-        Ok((supercluster.clusters.zooms[cluster] + 1).min(self.cluster_max_zoom + 1))
+        Ok(self
+            .supercluster
+            .expansion_zoom_of(cluster, self.cluster_max_zoom))
     }
 
     /// Determine the zoom level at which a cluster expands, counting only the points that pass a
@@ -2117,7 +2120,8 @@ mod tests {
         let debug = format!("{:?}", items[1]);
 
         assert!(debug.starts_with("TileItem { x:"));
-        assert!(debug.ends_with("count: 2, .. }"));
+        assert!(debug.contains("count: 2, expansion_zoom: Some("));
+        assert!(debug.ends_with(".. }"));
     }
 
     #[test]

@@ -655,20 +655,24 @@ impl<'a> Matches<'a> {
     /// Sum the integer positions of the `count` points at the positions of `range` that pass, with
     /// the positions of the supercluster of the query.
     pub(crate) fn sum(&self, range: Range<usize>, count: u32, positions: &Positions) -> [u128; 2] {
-        match self {
-            Matches::All => positions.sum_all(range),
+        let (words, first) = match self {
+            Matches::All => return positions.sum_all(range),
             Matches::Shared(selection) => match selection.sums_of(positions) {
-                Some(sums) => sums.sum(
-                    range,
-                    |index| selection.words[index],
-                    |leaf| positions.quantized(leaf),
-                ),
+                Some(sums) => {
+                    return sums.sum(
+                        range,
+                        |index| selection.words[index],
+                        |leaf| positions.quantized(leaf),
+                    )
+                }
                 // A selection of another supercluster has no running sums of these positions, so
                 // its bits are summed here, like the bits of a combination
-                None => sum_passing(&selection.words, 0, range, count, positions),
+                None => (&selection.words[..], 0),
             },
-            Matches::Local { words, first } => sum_passing(words, *first, range, count, positions),
-        }
+            Matches::Local { words, first } => (&words[..], *first),
+        };
+
+        sum_passing(words, first, range, count, positions)
     }
 
     /// Check whether a point at the positions of `range` passes.
