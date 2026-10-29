@@ -5,185 +5,132 @@
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// Array of coordinates with longitude as first value and latitude as second one.
-type Point = [f64; 2];
-
 /// Static spatial index for 2D points based on a flat KD-tree.
-/// The KD-tree is used to perform range and within queries on the points.
-/// The index is built from a list of 2D points and can be queried to find points within a specified bounding box or radius.
-#[derive(Clone, Debug)]
+/// The index is built once from a list of points, and finds the points in a bounding box or within
+/// a radius. Every point has an ID, which is its index in the list the tree is built from, until
+/// the owner of the tree replaces the IDs. It holds up to `u32::MAX` points.
+#[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct KDBush {
     /// Node size for the KD-tree. Determines the number of points in a leaf node.
     /// Affects the performance of the index.
     pub node_size: usize,
 
-    /// A list of point IDs used to reference points in the KD-tree.
-    /// The IDs are used to retrieve the original points from the index.
-    pub ids: Vec<usize>,
+    /// The ID of every point, in the order of the tree.
+    pub ids: Vec<u32>,
 
-    /// A flat array containing the X and Y coordinates of all points in interleaved order.
-    /// The coordinates are stored as [x1, y1, x2, y2, ..., xn, yn].
-    pub coords: Vec<f64>,
-
-    /// A list of 2D points represented as an array of [longitude, latitude] coordinates.
-    /// The points are used to build the KD-tree index.
-    pub points: Vec<Point>,
-
-    /// A list of additional data associated with the points (e.g., properties).
-    /// The data is stored in the same order as the points.
-    pub data: Vec<f64>,
+    /// The X and Y coordinates of every point, in the order of the tree.
+    pub coords: Vec<[f64; 2]>,
 }
 
 impl KDBush {
-    /// Create a new KDBush index with the specified node size and the size hint for allocating memory.
-    ///
-    /// # Arguments
-    ///
-    /// - `size_hint`: An estimate of the number of points that will be added to the index.
-    /// - `node_size`: The maximum number of points in a leaf node of the KD-tree.
-    ///
-    /// # Returns
-    ///
-    /// A new `KDBush` instance with the given configuration.
-    pub fn new(size_hint: usize, node_size: usize) -> Self {
-        KDBush {
+    /// Build the index over the points of `coords`, whose leaf nodes hold up to `node_size`
+    /// points. The ID of a point is its index in `coords`.
+    pub fn new(coords: Vec<[f64; 2]>, node_size: usize) -> Self {
+        let mut tree = KDBush {
             node_size,
-            ids: Vec::with_capacity(size_hint),
-            points: Vec::with_capacity(size_hint),
-            coords: Vec::with_capacity(size_hint),
-            data: Vec::with_capacity(size_hint),
-        }
-    }
+            ids: (0..coords.len() as u32).collect(),
+            coords,
+        };
 
-    /// Add a 2D point to the KDBush index.
-    ///
-    /// # Arguments
-    ///
-    /// - `x`: The X-coordinate of the point (longitude).
-    /// - `y`: The Y-coordinate of the point (latitude).
-    pub fn add_point(&mut self, x: f64, y: f64) {
-        self.points.push([x, y]);
-    }
-
-    /// Build the KD-tree index from the added points.
-    ///
-    /// This method constructs the KD-tree index based on the points added to the KDBush instance.
-    /// After calling this method, the index will be ready for range and within queries.
-    pub fn build_index(&mut self) {
-        #[cfg(feature = "log")]
-        log::debug!("Building KDBush index with {} points", self.points.len());
-
-        self.coords = vec![0.0; 2 * self.points.len()];
-
-        for (i, point) in self.points.iter().enumerate() {
-            self.ids.push(i);
-
-            self.coords[i * 2] = point[0];
-            self.coords[i * 2 + 1] = point[1];
+        if !tree.ids.is_empty() {
+            tree.sort(0, tree.ids.len() - 1, 0);
         }
 
-        self.sort(0, self.ids.len() - 1, 0);
+        #[cfg(feature = "tracing")]
+        tracing::trace!(points = tree.ids.len(), "Built a KDBush index");
 
-        #[cfg(feature = "log")]
-        log::debug!("KDBush index built successfully");
+        tree
     }
 
-    /// Find all point indices within the specified bounding box defined by minimum and maximum coordinates.
-    ///
-    /// # Arguments
-    ///
-    /// - `min_x`: The minimum X-coordinate (longitude) of the bounding box.
-    /// - `min_y`: The minimum Y-coordinate (latitude) of the bounding box.
-    /// - `max_x`: The maximum X-coordinate (longitude) of the bounding box.
-    /// - `max_y`: The maximum Y-coordinate (latitude) of the bounding box.
-    ///
-    /// # Returns
-    ///
-    /// A vector of point indices that fall within the specified bounding box.
-    pub fn range(&self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<usize> {
-        #[cfg(feature = "log")]
-        log::debug!(
-            "Finding points within range [{}, {}, {}, {}]",
-            min_x,
-            min_y,
-            max_x,
-            max_y
-        );
+    /// Call `visit` with the position in the tree of every point in a bounding box, edges
+    /// included. The position indexes `ids` and `coords`.
+    pub fn range(
+        &self,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+        mut visit: impl FnMut(usize),
+    ) {
+        if self.ids.is_empty() {
+            return;
+        }
 
-        let mut stack = vec![(0, self.ids.len() - 1, 0)];
-        let mut result: Vec<usize> = Vec::new();
-        let mut x: f64;
-        let mut y: f64;
+        // Each level of the tree halves the points, so the tree is less than 64 levels deep. The
+        // search keeps at most one node per level and one more, so an array holds them without
+        // allocating
+        let mut stack = [(0, 0, 0); 64];
+        let mut length = 1;
 
-        while let Some((axis, right, left)) = stack.pop() {
+        stack[0] = (0, self.ids.len() - 1, 0);
+
+        while length > 0 {
+            length -= 1;
+
+            let (axis, right, left) = stack[length];
+
             if right - left <= self.node_size {
-                for i in left..=right {
-                    x = self.coords[i * 2];
-                    y = self.coords[i * 2 + 1];
-
+                for (offset, &[x, y]) in self.coords[left..=right].iter().enumerate() {
                     if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
-                        result.push(self.ids[i]);
+                        visit(left + offset);
                     }
                 }
                 continue;
             }
 
             let m = (left + right) >> 1;
-            x = self.coords[m * 2];
-            y = self.coords[m * 2 + 1];
+            let [x, y] = self.coords[m];
 
             if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
-                result.push(self.ids[m]);
+                visit(m);
             }
 
             let next_axis = (axis + 1) % 2;
 
             if (axis == 0 && min_x <= x) || (axis != 0 && min_y <= y) {
-                stack.push((next_axis, m - 1, left));
+                stack[length] = (next_axis, m - 1, left);
+                length += 1;
             }
 
             if (axis == 0 && max_x >= x) || (axis != 0 && max_y >= y) {
-                stack.push((next_axis, right, m + 1));
+                stack[length] = (next_axis, right, m + 1);
+                length += 1;
             }
         }
-
-        result
     }
 
-    /// Find all point indices within a given radius from a query point specified by coordinates.
-    ///
-    /// # Arguments
-    ///
-    /// - `qx`: The X-coordinate (longitude) of the query point.
-    /// - `qy`: The Y-coordinate (latitude) of the query point.
-    /// - `radius`: The radius around the query point.
-    ///
-    /// # Returns
-    ///
-    /// A vector of point indices that fall within the specified radius from the query point.
-    pub fn within(&self, qx: f64, qy: f64, radius: f64) -> Vec<usize> {
-        #[cfg(feature = "log")]
-        log::debug!(
-            "Finding points within radius {} from query point [{}, {}]",
-            radius,
-            qx,
-            qy
-        );
+    /// Find the IDs of the points within `radius` of the point `qx`, `qy` and write them into
+    /// `result`. The search works in `stack`. The caller reuses both buffers between queries, which
+    /// avoids allocating two vectors for every query, and the search clears them first.
+    pub fn within_into(
+        &self,
+        qx: f64,
+        qy: f64,
+        radius: f64,
+        stack: &mut Vec<(usize, usize, usize)>,
+        result: &mut Vec<usize>,
+    ) {
+        stack.clear();
+        result.clear();
 
-        let mut stack = vec![(0, self.ids.len() - 1, 0)];
-        let mut result: Vec<usize> = Vec::new();
+        if self.ids.is_empty() {
+            return;
+        }
+
+        stack.push((0, self.ids.len() - 1, 0));
+
         let r2 = radius * radius;
 
         while let Some((axis, right, left)) = stack.pop() {
             if right - left <= self.node_size {
-                for i in left..=right {
-                    let x = self.coords[i * 2];
-                    let y = self.coords[i * 2 + 1];
-                    let dst = KDBush::sq_dist(x, y, qx, qy);
+                let leaf = self.coords[left..=right]
+                    .iter()
+                    .zip(&self.ids[left..=right]);
 
-                    if dst <= r2 {
-                        result.push(self.ids[i]);
+                for (&[x, y], &id) in leaf {
+                    if KDBush::sq_dist(x, y, qx, qy) <= r2 {
+                        result.push(id as usize);
                     }
                 }
 
@@ -191,11 +138,10 @@ impl KDBush {
             }
 
             let m = (left + right) >> 1;
-            let x = self.coords[m * 2];
-            let y = self.coords[m * 2 + 1];
+            let [x, y] = self.coords[m];
 
             if KDBush::sq_dist(x, y, qx, qy) <= r2 {
-                result.push(self.ids[m]);
+                result.push(self.ids[m] as usize);
             }
 
             let next_axis = (axis + 1) % 2;
@@ -208,19 +154,10 @@ impl KDBush {
                 stack.push((next_axis, right, m + 1));
             }
         }
-
-        result
     }
 
-    /// Sort points in the KD-tree along a specified axis.
-    ///
-    /// This method sorts the points in the KD-tree along a specified axis (0 for X or 1 for Y).
-    ///
-    /// # Arguments
-    ///
-    /// - `left`: The left index for the range of points to be sorted.
-    /// - `right`: The right index for the range of points to be sorted.
-    /// - `axis`: The axis along which the points should be sorted (0 for X or 1 for Y).
+    /// Sort the points from `left` to `right`, both included, into a KD-tree that splits first along
+    /// `axis` (0 for X or 1 for Y).
     fn sort(&mut self, left: usize, right: usize, axis: usize) {
         if right - left <= self.node_size {
             return;
@@ -234,17 +171,8 @@ impl KDBush {
         self.sort(m + 1, right, 1 - axis);
     }
 
-    /// Select the k-th element along a specified axis within a range of indices.
-    ///
-    /// This method selects the k-th element along the specified axis (0 for X or 1 for Y)
-    /// within the given range of indices.
-    ///
-    /// # Arguments
-    ///
-    /// - `k`: The index of the element to be selected.
-    /// - `left`: The left index for the range of points.
-    /// - `right`: The right index for the range of points.
-    /// - `axis`: The axis along which the selection should be performed (0 for X or 1 for Y).
+    /// Move the points from `left` to `right`, both included, so the `k`-th one along `axis` (0 for X
+    /// or 1 for Y) is in place, with smaller values before it and larger ones after it.
     fn select(&mut self, k: usize, left: usize, right: usize, axis: usize) {
         let mut left = left;
         let mut right = right;
@@ -274,13 +202,13 @@ impl KDBush {
                 self.select(k, new_left, new_right, axis);
             }
 
-            let t = self.coords[2 * k + axis];
+            let t = self.coords[k][axis];
             let mut i = left;
             let mut j = right;
 
             self.swap_item(left, k);
 
-            if self.coords[2 * right + axis] > t {
+            if self.coords[right][axis] > t {
                 self.swap_item(left, right);
             }
 
@@ -290,16 +218,16 @@ impl KDBush {
                 i += 1;
                 j -= 1;
 
-                while self.coords[2 * i + axis] < t {
+                while self.coords[i][axis] < t {
                     i += 1;
                 }
 
-                while self.coords[2 * j + axis] > t {
+                while self.coords[j][axis] > t {
                     j -= 1;
                 }
             }
 
-            if self.coords[2 * left + axis] == t {
+            if self.coords[left][axis] == t {
                 self.swap_item(left, j);
             } else {
                 j += 1;
@@ -316,15 +244,6 @@ impl KDBush {
     }
 
     /// Return the maximum of two values.
-    ///
-    /// # Arguments
-    ///
-    /// - `a`: The first value.
-    /// - `b`: The second value.
-    ///
-    /// # Returns
-    ///
-    /// The maximum of the two values.
     fn get_max(a: usize, b: usize) -> usize {
         if a > b {
             a
@@ -334,15 +253,6 @@ impl KDBush {
     }
 
     /// Return the minimum of two values.
-    ///
-    /// # Arguments
-    ///
-    /// - `a`: The first value.
-    /// - `b`: The second value.
-    ///
-    /// # Returns
-    ///
-    /// The minimum of the two values.
     fn get_min(a: usize, b: usize) -> usize {
         if a < b {
             a
@@ -351,31 +261,13 @@ impl KDBush {
         }
     }
 
-    /// Swap the elements at two specified indices in the KD-tree data structures.
-    ///
-    /// # Arguments
-    ///
-    /// - `i`: The index of the first element.
-    /// - `j`: The index of the second element.
+    /// Swap the points at two positions in the tree.
     fn swap_item(&mut self, i: usize, j: usize) {
         self.ids.swap(i, j);
-
-        self.coords.swap(2 * i, 2 * j);
-        self.coords.swap(2 * i + 1, 2 * j + 1);
+        self.coords.swap(i, j);
     }
 
     /// Compute the square of the Euclidean distance between two points in a 2D space.
-    ///
-    /// # Arguments
-    ///
-    /// - `ax`: The x-coordinate of the first point.
-    /// - `ay`: The y-coordinate of the first point.
-    /// - `bx`: The x-coordinate of the second point.
-    /// - `by`: The y-coordinate of the second point.
-    ///
-    /// # Returns
-    ///
-    /// The square of the Euclidean distance between the two points.
     fn sq_dist(ax: f64, ay: f64, bx: f64, by: f64) -> f64 {
         let dx = ax - bx;
         let dy = ay - by;
@@ -388,7 +280,7 @@ impl KDBush {
 mod tests {
     use super::*;
 
-    pub const POINTS: [[f64; 2]; 100] = [
+    const POINTS: [[f64; 2]; 100] = [
         [54.0, 1.0],
         [97.0, 21.0],
         [65.0, 35.0],
@@ -491,7 +383,7 @@ mod tests {
         [46.0, 78.0],
     ];
 
-    pub const IDS: [usize; 100] = [
+    const IDS: [u32; 100] = [
         97, 74, 95, 30, 77, 38, 76, 27, 80, 55, 72, 90, 88, 48, 43, 46, 65, 39, 62, 93, 9, 96, 47,
         8, 3, 12, 15, 14, 21, 41, 36, 40, 69, 56, 85, 78, 17, 71, 44, 19, 18, 13, 99, 24, 67, 33,
         37, 49, 54, 57, 98, 45, 23, 31, 66, 68, 0, 32, 5, 51, 75, 73, 84, 35, 81, 22, 61, 89, 1,
@@ -499,7 +391,7 @@ mod tests {
         50, 7, 28, 82, 70, 29, 34, 91,
     ];
 
-    pub const COORDS: [f64; 200] = [
+    const COORDS: [f64; 200] = [
         10.0, 20.0, 6.0, 22.0, 10.0, 10.0, 6.0, 27.0, 20.0, 42.0, 18.0, 28.0, 11.0, 23.0, 13.0,
         25.0, 9.0, 40.0, 26.0, 4.0, 29.0, 50.0, 30.0, 38.0, 41.0, 11.0, 43.0, 12.0, 43.0, 3.0,
         46.0, 12.0, 32.0, 14.0, 35.0, 15.0, 40.0, 31.0, 33.0, 18.0, 43.0, 15.0, 40.0, 34.0, 32.0,
@@ -516,37 +408,116 @@ mod tests {
         96.0, 98.0, 96.0, 82.0,
     ];
 
-    #[test]
-    fn test_build_index() {
-        let mut index = KDBush::new(POINTS.len(), 10);
+    /// Build the index over the test points, with leaf nodes of 10 points.
+    fn build_index() -> KDBush {
+        KDBush::new(POINTS.to_vec(), 10)
+    }
 
-        for point in POINTS.iter() {
-            index.add_point(point[0], point[1]);
+    /// Build a tree from points that are not sorted yet, to test the sorting on its own.
+    fn unsorted(coords: Vec<[f64; 2]>) -> KDBush {
+        KDBush {
+            node_size: 1,
+            ids: (0..coords.len() as u32).collect(),
+            coords,
+        }
+    }
+
+    /// Get the IDs of the points in a bounding box, in the order the tree finds them.
+    fn range_ids(index: &KDBush, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<usize> {
+        let mut ids = vec![];
+
+        index.range(min_x, min_y, max_x, max_y, |position| {
+            ids.push(index.ids[position] as usize)
+        });
+
+        ids
+    }
+
+    #[test]
+    fn test_new_without_points() {
+        let index = KDBush::new(vec![], 10);
+
+        assert!(index.ids.is_empty());
+        assert!(index.coords.is_empty());
+    }
+
+    #[test]
+    fn test_range_without_points() {
+        let index = KDBush::new(vec![], 10);
+
+        assert!(range_ids(&index, 0.0, 0.0, 100.0, 100.0).is_empty());
+    }
+
+    #[test]
+    fn test_within_into() {
+        let index = build_index();
+
+        // The buffers still hold the result of an earlier query, which the new query clears
+        let mut stack = vec![(1, 2, 3)];
+        let mut result = vec![999];
+
+        index.within_into(50.0, 50.0, 20.0, &mut stack, &mut result);
+
+        let expected_ids = vec![60, 6, 25, 92, 42, 20, 45, 3, 71, 44, 18, 96];
+
+        assert_eq!(result, expected_ids);
+
+        let r2 = 20.0 * 20.0;
+
+        for &i in &result {
+            let p = POINTS[i];
+
+            if KDBush::sq_dist(p[0], p[1], 50.0, 50.0) > r2 {
+                panic!();
+            }
         }
 
-        index.build_index();
+        for (i, p) in POINTS.iter().enumerate() {
+            if !result.contains(&i) && KDBush::sq_dist(p[0], p[1], 50.0, 50.0) <= r2 {
+                panic!();
+            }
+        }
+
+        // A second query with the same buffers gets the second query's result, not a mix of both
+        index.within_into(10.0, 10.0, 5.0, &mut stack, &mut result);
+
+        let r2 = 5.0 * 5.0;
+
+        for &i in &result {
+            let p = POINTS[i];
+
+            if KDBush::sq_dist(p[0], p[1], 10.0, 10.0) > r2 {
+                panic!();
+            }
+        }
+    }
+
+    #[test]
+    fn test_within_without_points() {
+        let index = KDBush::new(vec![], 10);
+
+        let mut stack = vec![];
+        let mut result = vec![];
+
+        index.within_into(50.0, 50.0, 100.0, &mut stack, &mut result);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_new() {
+        let index = build_index();
 
         assert_eq!(index.node_size, 10);
-        assert!(!index.points.is_empty());
-
-        let expected_ids: Vec<usize> = IDS.to_vec();
-        let expected_coords: Vec<f64> = COORDS.to_vec();
-
-        assert_eq!(index.ids, expected_ids);
-        assert_eq!(index.coords, expected_coords)
+        assert_eq!(index.ids, IDS.to_vec());
+        assert_eq!(index.coords.as_flattened(), COORDS);
     }
 
     #[test]
     fn test_range() {
-        let mut index = KDBush::new(POINTS.len(), 10);
+        let index = build_index();
 
-        for point in POINTS.iter() {
-            index.add_point(point[0], point[1]);
-        }
-
-        index.build_index();
-
-        let result = index.range(20.0, 30.0, 50.0, 70.0);
+        let result = range_ids(&index, 20.0, 30.0, 50.0, 70.0);
         let expected_ids = vec![
             60, 20, 45, 3, 17, 71, 44, 19, 18, 15, 69, 90, 62, 96, 47, 8, 77, 72,
         ];
@@ -569,35 +540,14 @@ mod tests {
     }
 
     #[test]
-    fn test_within() {
-        let mut index = KDBush::new(POINTS.len(), 10);
+    fn test_range_visits_positions_in_the_tree() {
+        let index = build_index();
 
-        for point in POINTS.iter() {
-            index.add_point(point[0], point[1]);
-        }
+        index.range(20.0, 30.0, 50.0, 70.0, |position| {
+            let [x, y] = index.coords[position];
 
-        index.build_index();
-
-        let result = index.within(50.0, 50.0, 20.0);
-        let expected_ids = vec![60, 6, 25, 92, 42, 20, 45, 3, 71, 44, 18, 96];
-
-        assert_eq!(result, expected_ids);
-
-        let r2 = 20.0 * 20.0;
-
-        for &i in &result {
-            let p = POINTS[i];
-
-            if KDBush::sq_dist(p[0], p[1], 50.0, 50.0) > r2 {
-                panic!();
-            }
-        }
-
-        for (i, p) in POINTS.iter().enumerate() {
-            if !result.contains(&i) && KDBush::sq_dist(p[0], p[1], 50.0, 50.0) <= r2 {
-                panic!();
-            }
-        }
+            assert_eq!(POINTS[index.ids[position] as usize], [x, y]);
+        });
     }
 
     #[test]
@@ -637,41 +587,49 @@ mod tests {
 
     #[test]
     fn test_select_basic() {
-        let mut kdbush = KDBush::new(10, 1);
-        kdbush.coords = vec![2.0, 3.0, 1.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
-        kdbush.ids = vec![0, 1, 2, 3, 4];
+        let mut kdbush = unsorted(vec![
+            [2.0, 3.0],
+            [1.0, 4.0],
+            [5.0, 6.0],
+            [7.0, 8.0],
+            [9.0, 10.0],
+        ]);
         kdbush.select(2, 0, 4, 0);
 
-        assert_eq!(kdbush.coords[4], 5.0);
+        assert_eq!(kdbush.coords[2][0], 5.0);
     }
 
     #[test]
     fn test_select_large_range() {
-        let mut kdbush = KDBush::new(10, 1);
-        kdbush.coords = (0..4000).map(|x| x as f64).collect();
-        kdbush.ids = (0..4000).collect();
+        let mut kdbush = unsorted(
+            (0..2000)
+                .map(|i| [(2 * i) as f64, (2 * i + 1) as f64])
+                .collect(),
+        );
         kdbush.select(1000, 0, 1999, 0);
 
-        assert_eq!(kdbush.coords[2000], 2000.0);
+        assert_eq!(kdbush.coords[1000][0], 2000.0);
     }
 
     #[test]
     fn test_select_axis_y() {
-        let mut kdbush = KDBush::new(10, 1);
-        kdbush.coords = vec![2.0, 3.0, 1.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
-        kdbush.ids = vec![0, 1, 2, 3, 4];
+        let mut kdbush = unsorted(vec![
+            [2.0, 3.0],
+            [1.0, 4.0],
+            [5.0, 6.0],
+            [7.0, 8.0],
+            [9.0, 10.0],
+        ]);
         kdbush.select(2, 0, 4, 1);
 
-        assert_eq!(kdbush.coords[4], 5.0);
+        assert_eq!(kdbush.coords[2][1], 6.0);
     }
 
     #[test]
     fn test_select_single_element() {
-        let mut kdbush = KDBush::new(10, 1);
-        kdbush.coords = vec![2.0];
-        kdbush.ids = vec![0];
+        let mut kdbush = unsorted(vec![[2.0, 3.0]]);
         kdbush.select(0, 0, 0, 0);
 
-        assert_eq!(kdbush.coords[0], 2.0);
+        assert_eq!(kdbush.coords[0], [2.0, 3.0]);
     }
 }

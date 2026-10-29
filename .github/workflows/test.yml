@@ -7,12 +7,22 @@ on:
       - '**.rs'
       - 'src/**.rs'
       - 'tests/**.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'README.md'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/test.yml'
   pull_request:
     branches: [ "main" ]
     paths:
       - '**.rs'
       - 'src/**.rs'
       - 'tests/**.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'README.md'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/test.yml'
 
 env:
   CI: true
@@ -29,7 +39,7 @@ jobs:
     - name: Use Rust
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
-        toolchain: 1.87.0
+        toolchain: 1.96.0
         components: clippy, rustfmt
     - name: Install tarpaulin
       run: cargo install --locked cargo-tarpaulin
@@ -39,8 +49,22 @@ jobs:
       run: cargo clippy --locked --all-targets --all-features --no-deps -- -D warnings
     - name: Run lint
       run: cargo fmt -- --check
-    - name: Run tests
-      run: cargo tarpaulin --tests --bins --all-targets --all-features --locked --out xml
+    - name: Check feature combinations
+      run: |
+        for features in geojson serde tracing "geojson serde tracing"; do
+          cargo check --locked --all-targets --no-default-features --features "$features"
+        done
+    - name: Run tests without features
+      run: cargo test --locked
+    - name: Run tests with all features, including doc tests
+      run: cargo test --locked --all-features
+    - name: Check docs
+      run: cargo doc --locked --no-deps --all-features
+      env:
+        RUSTDOCFLAGS: -D warnings
+    - name: Run coverage
+      # The benchmarks are left out, because tests cannot run them
+      run: cargo tarpaulin --tests --bins --all-targets --all-features --locked --exclude-files "benches/*" --out xml
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v6
       env:
