@@ -14,6 +14,7 @@ cargo test                           # core, no features
 cargo test --all-features            # everything, including the doc tests of the README
 cargo test --features geojson        # one feature
 cargo bench --features geojson       # criterion benchmarks, the slow group included
+cargo bench --bench request_cost_bench  # the tables of "What a request costs" in the README
 cargo tarpaulin --tests --bins --all-targets --all-features --locked --exclude-files "benches/*"  # coverage, as in CI
 
 # While you work, run the tests of the code you changed, then the full runs above.

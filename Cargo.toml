@@ -52,6 +52,12 @@ harness = false
 bench = false
 required-features = ["geojson"]
 
+# The tables of "What a request costs" in the README, on up to ten million points, so `cargo bench`
+# runs it only when `--bench` names it
+[[bench]]
+name = "request_cost_bench"
+harness = false
+bench = false
 [lib]
 name = "supercluster"
 path = "src/lib.rs"

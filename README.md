@@ -172,7 +172,7 @@ Within one request, the items keep what the query found, so their `leaves()` and
 
 #### What a request costs
 
-This benchmark times one request on 10,000,000 points spread around 3,000 places, on a Mac with Apple silicon. The request filters with a combination of four selections, `a.or(&b).and(&c).and(&d)`, and asks every item for its `expansion_zoom()`. At each zoom level, it uses the tile that holds the busiest place. In brackets is how many times faster than the closure each way is, where below 1 means slower.
+This benchmark times one request on 10,000,000 points spread around 3,000 places, on a Mac with Apple silicon. The request filters with a combination of four selections, `a.or(&b).and(&c).and(&d)`, and asks every item for its `expansion_zoom()`. At each zoom level, it uses the tile that holds the busiest place. In brackets is how many times faster than the closure each way is, where below 1 means slower. Run it with `cargo bench --bench request_cost_bench`.
 
 | Zoom | Points under the tile | Closure | Combination | Cached selection |
 | ---: | ---: | ---: | ---: | ---: |
@@ -709,6 +709,7 @@ They measure:
 - **Filtering tiles:** filtering a tile with a closure, with a selection that `select` made, and with a combination of selections.
 - **One million points:** loading a million points, and getting and filtering tiles from them.
 - **Comparison with version 3:** loading and the queries of version 3.0.8, on the same points. It runs only when you name it: `cargo bench --features geojson --bench v3_comparison_bench`.
+- **What a request costs:** the tables of [What a request costs](#what-a-request-costs), which time one request on every zoom level. It runs only when you name it: `cargo bench --bench request_cost_bench`.
 
 For more detailed benchmark scenarios, please refer to the [`benches` directory](https://github.com/chargetrip/supercluster-rs/tree/main/benches) in the repository.
 
