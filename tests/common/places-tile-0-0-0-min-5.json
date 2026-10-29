@@ -13,8 +13,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 164,
-        "point_count": 15,
-        "point_count_abbreviated": "15"
+        "point_count": 15
       },
       "id": "164"
     },
@@ -30,8 +29,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 196,
-        "point_count": 20,
-        "point_count_abbreviated": "20"
+        "point_count": 20
       },
       "id": "196"
     },
@@ -47,8 +45,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 228,
-        "point_count": 14,
-        "point_count_abbreviated": "14"
+        "point_count": 14
       },
       "id": "228"
     },
@@ -64,8 +61,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 260,
-        "point_count": 10,
-        "point_count_abbreviated": "10"
+        "point_count": 10
       },
       "id": "260"
     },
@@ -81,8 +77,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 356,
-        "point_count": 11,
-        "point_count_abbreviated": "11"
+        "point_count": 11
       },
       "id": "356"
     },
@@ -182,8 +177,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 548,
-        "point_count": 5,
-        "point_count_abbreviated": "5"
+        "point_count": 5
       },
       "id": "548"
     },
@@ -283,8 +277,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 964,
-        "point_count": 5,
-        "point_count_abbreviated": "5"
+        "point_count": 5
       },
       "id": "964"
     },
@@ -300,8 +293,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 1092,
-        "point_count": 6,
-        "point_count_abbreviated": "6"
+        "point_count": 6
       },
       "id": "1092"
     },
@@ -443,8 +435,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 1444,
-        "point_count": 6,
-        "point_count_abbreviated": "6"
+        "point_count": 6
       },
       "id": "1444"
     },
@@ -565,8 +556,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 1924,
-        "point_count": 8,
-        "point_count_abbreviated": "8"
+        "point_count": 8
       },
       "id": "1924"
     },
@@ -582,8 +572,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 2180,
-        "point_count": 10,
-        "point_count_abbreviated": "10"
+        "point_count": 10
       },
       "id": "2180"
     },
@@ -599,8 +588,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 2340,
-        "point_count": 5,
-        "point_count_abbreviated": "5"
+        "point_count": 5
       },
       "id": "2340"
     },
@@ -700,8 +688,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 2692,
-        "point_count": 13,
-        "point_count_abbreviated": "13"
+        "point_count": 13
       },
       "id": "2692"
     },
@@ -717,8 +704,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 3236,
-        "point_count": 6,
-        "point_count_abbreviated": "6"
+        "point_count": 6
       },
       "id": "3236"
     },
@@ -839,8 +825,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 2180,
-        "point_count": 10,
-        "point_count_abbreviated": "10"
+        "point_count": 10
       },
       "id": "2180"
     },
@@ -856,8 +841,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 2692,
-        "point_count": 13,
-        "point_count_abbreviated": "13"
+        "point_count": 13
       },
       "id": "2692"
     },
@@ -915,8 +899,7 @@
       "properties": {
         "cluster": true,
         "cluster_id": 1444,
-        "point_count": 6,
-        "point_count_abbreviated": "6"
+        "point_count": 6
       },
       "id": "1444"
     },

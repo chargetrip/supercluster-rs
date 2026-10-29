@@ -13,8 +13,8 @@ use serde::{ser::SerializeMap, Serialize, Serializer};
 use std::fmt::Display;
 
 use crate::{
-    supercluster::AbbreviatedCount, Cluster, FilteredTile, FilteredTileItem, Item, Supercluster,
-    SuperclusterError, SuperclusterOptions, Tile, TileItem,
+    supercluster::Cluster, FilteredTile, FilteredTileItem, Item, Supercluster, SuperclusterError,
+    SuperclusterOptions, Tile, TileItem,
 };
 
 impl Supercluster<Feature> {
@@ -66,18 +66,14 @@ fn get_coordinates(feature: &Feature) -> Option<[f64; 2]> {
 
 impl Cluster<'_> {
     /// Get the GeoJSON properties of the cluster, with their keys in alphabetical order:
-    /// `cluster`, `cluster_id`, `point_count` and `point_count_abbreviated`, where `point_count`
-    /// is all the points of the cluster, or the ones that pass for a filtered tile. Both
+    /// `cluster`, `cluster_id` and `point_count`, where `point_count` is all the points of the
+    /// cluster, or the ones that pass for a filtered tile. Both
     /// `get_properties` and `ClusterPropertiesView` build on them, so they always agree.
-    fn properties(&self, point_count: u32) -> [(&'static str, ClusterProperty); 4] {
+    fn properties(&self, point_count: u32) -> [(&'static str, ClusterProperty); 3] {
         [
             ("cluster", ClusterProperty::Flag(true)),
             ("cluster_id", ClusterProperty::Number(self.id.get())),
             ("point_count", ClusterProperty::Number(point_count)),
-            (
-                "point_count_abbreviated",
-                ClusterProperty::Text(AbbreviatedCount(point_count)),
-            ),
         ]
     }
 
@@ -197,7 +193,7 @@ impl<'a> Tile<'a, Feature> {
 impl<'a> FilteredTile<'a, Feature> {
     /// Convert the filtered tile into a GeoJSON feature collection, like
     /// `Tile::to_feature_collection`. A cluster is at the center of the points that pass, and its
-    /// `point_count` and `point_count_abbreviated` count the points that pass.
+    /// `point_count` counts the points that pass.
     pub fn to_feature_collection(&self) -> FeatureCollection {
         FeatureCollection {
             bbox: None,
@@ -368,9 +364,6 @@ enum ClusterProperty {
 
     /// A property that is a whole number.
     Number(u32),
-
-    /// The number of points as a short text.
-    Text(AbbreviatedCount),
 }
 
 impl From<ClusterProperty> for JsonValue {
@@ -378,7 +371,6 @@ impl From<ClusterProperty> for JsonValue {
         match property {
             ClusterProperty::Flag(flag) => JsonValue::from(flag),
             ClusterProperty::Number(number) => JsonValue::from(number),
-            ClusterProperty::Text(count) => JsonValue::from(count.into_string()),
         }
     }
 }
@@ -388,8 +380,6 @@ impl Serialize for ClusterProperty {
         match self {
             ClusterProperty::Flag(flag) => serializer.serialize_bool(*flag),
             ClusterProperty::Number(number) => serializer.serialize_u32(*number),
-            // Written without allocating a string
-            ClusterProperty::Text(count) => serializer.collect_str(count),
         }
     }
 }
@@ -537,10 +527,7 @@ mod tests {
             feature.property("point_count"),
             Some(&JsonValue::from(1500))
         );
-        assert_eq!(
-            feature.property("point_count_abbreviated"),
-            Some(&JsonValue::from("1.5k"))
-        );
+        assert_eq!(feature.property("point_count_abbreviated"), None);
     }
 
     #[test]
@@ -708,10 +695,6 @@ mod tests {
 
             assert_eq!(item.count(), 750);
             assert_eq!(feature.property("point_count"), Some(&JsonValue::from(750)));
-            assert_eq!(
-                feature.property("point_count_abbreviated"),
-                Some(&JsonValue::from("750"))
-            );
             assert_eq!(feature.property("cluster_id"), plain.property("cluster_id"));
             assert_eq!(feature.id, plain.id);
             assert_eq!(

@@ -377,7 +377,7 @@ With the `geojson` feature, a supercluster loads GeoJSON features and returns it
 | The items of a bounding box | `item.to_feature()`, on each item that `clusters(bbox, zoom)` returns | The coordinates, such as the longitude and latitude. |
 | One cluster | `cluster.to_feature()` | The coordinates of its center. |
 
-A cluster becomes a feature with the properties `cluster`, `cluster_id`, `point_count` and `point_count_abbreviated`, and a point keeps the ID and the properties it was loaded with. In a filtered tile, a cluster's `point_count` and `point_count_abbreviated` count the points that pass.
+A cluster becomes a feature with the properties `cluster`, `cluster_id` and `point_count`, and a point keeps the ID and the properties it was loaded with. In a filtered tile, a cluster's `point_count` counts the points that pass.
 
 ```rust,ignore
 use geojson::{Feature, Geometry};
@@ -491,7 +491,7 @@ Selections combine with the methods below, and `count()` gives the number of poi
 | `Tile` | `items`, a list of `TileItem`. | `is_empty()` |
 | `TileItem` | `x` and `y`, the position in the tile, and `item`. | `count()` for its points, and `expansion_zoom()` |
 | `Item` | `Item::Cluster(Cluster)`, or `Item::Point { index, point }`, a point with its index in the list that was loaded. | None |
-| `Cluster` | `id` and `point_count`. | `coordinates()` for its center, and `point_count_abbreviated()`, such as `1.5k` |
+| `Cluster` | `id` and `point_count`. | `coordinates()` for its center |
 | `ClusterId` | The ID of a cluster, as a `u32`. `ClusterId::new(number)` makes one from a `u32`. | `get()` returns the `u32` |
 | `FilteredTile` | `items`, a list of `FilteredTileItem`. | `is_empty()` |
 | `FilteredTileItem` | `x`, `y` and `item`, like a `TileItem`. | `coordinates()`, `count()` and `leaves()` for the points that pass, and `expansion_zoom()` |
@@ -507,7 +507,7 @@ These methods need the `geojson` feature.
 | `tile_item.to_feature()` | `Feature` | The item, with its position in the tile as the geometry. |
 | `filtered_tile.to_feature_collection()`, `as_feature_collection()` and `filtered_tile_item.to_feature()` | Like the ones of a tile | The items of a filtered tile, at their positions in the tile. |
 | `item.to_feature()` | `Feature` | A cluster at its center, or the point as it was loaded. |
-| `cluster.to_feature()` | `Feature` | The cluster at its center, with the properties `cluster`, `cluster_id`, `point_count` and `point_count_abbreviated`. |
+| `cluster.to_feature()` | `Feature` | The cluster at its center, with the properties `cluster`, `cluster_id` and `point_count`. |
 
 ### Errors and limits
 
@@ -525,7 +525,7 @@ Version 4 makes the supercluster generic over the type of the points, returns ty
 
 ### Cargo features
 
-The `geojson` feature holds all GeoJSON support and is not on by default anymore. The `cluster_metadata` feature is gone, because the GeoJSON features of clusters always have their `cluster`, `cluster_id`, `point_count` and `point_count_abbreviated` properties. The `log` feature is now the `tracing` feature, which still turns its events into `log` records for applications that only use the `log` crate.
+The `geojson` feature holds all GeoJSON support and is not on by default anymore. The `cluster_metadata` feature is gone, because the GeoJSON features of clusters always have their `cluster`, `cluster_id` and `point_count` properties. The `log` feature is now the `tracing` feature, which still turns its events into `log` records for applications that only use the `log` crate.
 
 ```toml
 # Version 3
@@ -627,6 +627,33 @@ for tile_item in &supercluster.tile(0, 0, 0).items {
         Item::Point { index, .. } => println!("point {index}"),
     }
 }
+```
+
+The GeoJSON features of clusters no longer have a `point_count_abbreviated` property. We leave it to the consumers of the library to format the count as they wish. If you need it, format `point_count` yourself and add the property to the features of `to_feature_collection()`:
+
+```rust,ignore
+// Version 3, with the cluster_metadata feature
+let tile = supercluster.get_tile(0, 0.0, 0.0)?;
+
+// Version 4
+let mut tile = supercluster.tile(0, 0, 0).to_feature_collection();
+
+for feature in &mut tile.features {
+    if let Some(count) = feature.property("point_count").and_then(|count| count.as_u64()) {
+        let abbreviated = match count {
+            10000.. => format!("{}k", (count as f64 / 1000.0).round()),
+            1000.. => format!("{}k", (count as f64 / 100.0).round() / 10.0),
+            _ => count.to_string(),
+        };
+
+        feature.set_property("point_count_abbreviated", abbreviated);
+    }
+}
+
+// Write the tile as GeoJSON, for example into the body of a response
+let mut body = Vec::new();
+
+serde_json::to_writer(&mut body, &tile)?;
 ```
 
 You cannot build `Cluster`, `Tile` or `TileItem` yourself, so we can add fields to them without breaking your code. The `point_count` of a `Cluster` is a `u32`, and `coordinates()` computes its center when you ask for it, so a tile that only needs positions in the tile does not pay for it.

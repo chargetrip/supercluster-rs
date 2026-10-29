@@ -20,7 +20,7 @@
 
 use std::{
     f64::consts::PI,
-    fmt::{self, Debug, Display, Formatter},
+    fmt::{self, Debug, Formatter},
     ops::Range,
     slice,
     sync::Arc,
@@ -247,64 +247,6 @@ impl Cluster<'_> {
     /// query that does not need them does not pay for them.
     pub fn coordinates(&self) -> [f64; 2] {
         self.coordinate_system.denormalize(self.position)
-    }
-
-    /// Get the number of points as a short text, for example `1.5k` for 1500 points. It writes
-    /// itself wherever it is formatted, such as into a response, without allocating a string. Call
-    /// `to_string()` to keep it as a `String`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use supercluster::{Item, Supercluster, SuperclusterOptions};
-    ///
-    /// let points = vec![[10.0, 50.0]; 1500];
-    /// let supercluster = Supercluster::load(SuperclusterOptions::default(), points, |point| {
-    ///     Some(*point)
-    /// })?;
-    ///
-    /// if let Item::Cluster(cluster) = supercluster.tile(0, 0, 0).items[0].item {
-    ///     assert_eq!(format!("{} points", cluster.point_count_abbreviated()), "1.5k points");
-    /// }
-    /// # Ok::<(), supercluster::SuperclusterError>(())
-    /// ```
-    pub fn point_count_abbreviated(&self) -> impl Display + Copy {
-        AbbreviatedCount(self.point_count)
-    }
-}
-
-/// The number of points from which `AbbreviatedCount` shortens a count, for example to `1k`.
-const ABBREVIATE_FROM: u32 = 1000;
-
-/// The number of points of a cluster as a short text, for example `1.5k` for 1500 points, which
-/// `Display` writes without allocating.
-#[derive(Clone, Copy)]
-pub(crate) struct AbbreviatedCount(pub(crate) u32);
-
-impl AbbreviatedCount {
-    /// Write the count into a new string. A count it does not shorten goes through `to_string` of
-    /// an integer, which skips the formatting machinery that `Display` goes through.
-    #[cfg(feature = "geojson")]
-    pub(crate) fn into_string(self) -> String {
-        if self.0 < ABBREVIATE_FROM {
-            self.0.to_string()
-        } else {
-            self.to_string()
-        }
-    }
-}
-
-impl Display for AbbreviatedCount {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        let count = f64::from(self.0);
-
-        if self.0 < ABBREVIATE_FROM {
-            write!(formatter, "{}", self.0)
-        } else if count < 10000.0 {
-            write!(formatter, "{}k", (count / 100.0).round() / 10.0)
-        } else {
-            write!(formatter, "{}k", (count / 1000.0).round())
-        }
     }
 }
 
@@ -2253,26 +2195,6 @@ mod tests {
                 assert_eq!(tile_item.expansion_zoom(), expected);
             }
         }
-    }
-
-    #[test]
-    fn test_point_count_abbreviated() {
-        let abbreviate = |point_count| {
-            Cluster {
-                id: ClusterId::new(0),
-                point_count,
-                position: [0.0, 0.0],
-                coordinate_system: &CoordinateSystem::LatLng,
-            }
-            .point_count_abbreviated()
-            .to_string()
-        };
-
-        assert_eq!(abbreviate(3), "3");
-        assert_eq!(abbreviate(999), "999");
-        assert_eq!(abbreviate(1000), "1k");
-        assert_eq!(abbreviate(1500), "1.5k");
-        assert_eq!(abbreviate(10000), "10k");
     }
 
     #[test]
