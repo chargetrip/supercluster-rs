@@ -87,11 +87,8 @@ pub struct FilteredTileItem<'a, P> {
     /// The number of points that pass the filter.
     count: u32,
 
-    /// The supercluster the item comes from.
-    supercluster: &'a Supercluster<P>,
-
-    /// The highest zoom level to cluster on, from the view that built the tile.
-    cluster_max_zoom: u8,
+    /// The view that built the tile, which finds the expansion zoom.
+    view: SuperclusterView<'a, P>,
 
     /// The positions of the points of the item in the points of the supercluster.
     leaves: Range<u32>,
@@ -116,7 +113,8 @@ impl<'a, P> FilteredTileItem<'a, P> {
     /// rounded, and a copy of an item across the antimeridian keeps its own coordinates. It is
     /// computed on each call, so a query that does not need it does not pay for it.
     pub fn coordinates(&self) -> [f64; 2] {
-        self.supercluster
+        self.view
+            .supercluster
             .options()
             .coordinate_system
             .denormalize(self.position)
@@ -126,7 +124,7 @@ impl<'a, P> FilteredTileItem<'a, P> {
     /// `Supercluster::leaves` returns them, or the point itself. The first point is
     /// `points().next()`.
     pub fn points(&self) -> impl Iterator<Item = &'a P> + '_ {
-        let points = self.supercluster.points();
+        let points = self.view.supercluster.points();
 
         self.matches
             .passing(self.leaves())
@@ -145,8 +143,9 @@ impl<'a, P> FilteredTileItem<'a, P> {
         };
 
         // The cluster comes from the supercluster, so finding its children does not fail
-        self.supercluster
-            .expansion_zoom_where(cluster.id, self.cluster_max_zoom, |leaves| {
+        self.view
+            .supercluster
+            .expansion_zoom_where(cluster.id, self.view.cluster_max_zoom, |leaves| {
                 self.matches.any(leaves)
             })
             .ok()
@@ -160,7 +159,7 @@ impl<'a, P> FilteredTileItem<'a, P> {
     /// Check whether two items keep the same points of the same supercluster without reading
     /// them, which holds when every point passes or they share a selection.
     fn keeps_the_same_points(&self, other: &Self) -> bool {
-        ptr::eq(self.supercluster, other.supercluster)
+        ptr::eq(self.view.supercluster, other.view.supercluster)
             && self.leaves == other.leaves
             && match (&self.matches, &other.matches) {
                 (Matches::All, Matches::All) => true,
@@ -179,8 +178,7 @@ impl<P> Clone for FilteredTileItem<'_, P> {
             y: self.y,
             item: self.item,
             count: self.count,
-            supercluster: self.supercluster,
-            cluster_max_zoom: self.cluster_max_zoom,
+            view: self.view,
             leaves: self.leaves.clone(),
             matches: self.matches.clone(),
             position: self.position,
@@ -205,16 +203,16 @@ impl<P: Debug> Debug for FilteredTileItem<'_, P> {
 // Written by hand, because a derive would compare the whole supercluster. Items are equal at the
 // same position with the same cluster or point and the same points that pass, counted first, which
 // is cheaper, and read one by one only when the items do not keep the same points of the same
-// supercluster. Clusters also need views with the same highest zoom level, so they expand on the
-// same zoom level.
+// supercluster. Clusters also need to expand on the same zoom level, which only needs finding when
+// the views that built them cluster up to other zoom levels.
 impl<P: PartialEq> PartialEq for FilteredTileItem<'_, P> {
     fn eq(&self, other: &Self) -> bool {
         self.x == other.x
             && self.y == other.y
             && self.item == other.item
             && self.count == other.count
-            && (matches!(self.item, Item::Point { .. })
-                || self.cluster_max_zoom == other.cluster_max_zoom)
+            && (self.view.cluster_max_zoom == other.view.cluster_max_zoom
+                || self.expansion_zoom() == other.expansion_zoom())
             && (self.keeps_the_same_points(other) || self.points().eq(other.points()))
     }
 }
@@ -496,8 +494,7 @@ fn filter_tile<'a, P>(
             y,
             item,
             count,
-            supercluster,
-            cluster_max_zoom: view.cluster_max_zoom,
+            view,
             leaves: leaves.start as u32..leaves.end as u32,
             matches,
             position,
@@ -767,6 +764,26 @@ mod tests {
             tile,
             supercluster.tile_filtered(0, 0, 0, |point| !point.keep)
         );
+    }
+
+    #[test]
+    fn test_filtered_tile_items_of_views_are_equal_when_they_expand_on_the_same_zoom_level() {
+        // Two points that pass and split long before zoom level 15, and one that fails
+        let supercluster = load(&[(10.0, 50.0, true), (10.5, 50.0, true), (10.2, 50.0, false)]);
+        let tile = |cluster_max_zoom| {
+            supercluster
+                .with_cluster_max_zoom(cluster_max_zoom)
+                .tile_filtered(0, 0, 0, |point| point.keep)
+        };
+        let [lower, higher, lowest] = [tile(15), tile(16), tile(0)];
+
+        assert!(matches!(lower.items[0].item, Item::Cluster(_)));
+        assert!(lower.items[0].expansion_zoom() < Some(15));
+        assert_eq!(lower, higher);
+
+        // A view that clusters up to zoom level 0 expands the cluster on zoom level 1
+        assert_eq!(lowest.items[0].expansion_zoom(), Some(1));
+        assert_ne!(lowest, lower);
     }
 
     #[test]

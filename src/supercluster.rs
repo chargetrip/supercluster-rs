@@ -335,6 +335,7 @@ impl<P> Clone for Item<'_, P> {
 impl<P> Copy for Item<'_, P> {}
 
 /// An item of a tile with its position in the tile.
+#[derive(Debug, PartialEq)]
 #[non_exhaustive]
 pub struct TileItem<'a, P> {
     /// The X position in the tile, in the units of the tile extent.
@@ -346,8 +347,8 @@ pub struct TileItem<'a, P> {
     /// The cluster or point at the position.
     pub item: Item<'a, P>,
 
-    /// The view that built the tile, which finds the expansion zoom.
-    view: SuperclusterView<'a, P>,
+    /// The zoom level at which the cluster expands, or `None` for a point.
+    expansion_zoom: Option<u8>,
 }
 
 impl<P> TileItem<'_, P> {
@@ -373,40 +374,12 @@ impl<P> TileItem<'_, P> {
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
     pub fn expansion_zoom(&self) -> Option<u8> {
-        let Item::Cluster(cluster) = self.item else {
-            return None;
-        };
-
-        // The cluster comes from the supercluster, so finding it does not fail
-        self.view.cluster_expansion_zoom(cluster.id).ok()
+        self.expansion_zoom
     }
 }
 
-// Written by hand, because a derive would print the whole supercluster.
-impl<P: Debug> Debug for TileItem<'_, P> {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("TileItem")
-            .field("x", &self.x)
-            .field("y", &self.y)
-            .field("item", &self.item)
-            .finish_non_exhaustive()
-    }
-}
-
-// Written by hand, because a derive would compare the whole supercluster. Items are equal at the
-// same position with the same cluster or point. Clusters also need views with the same highest
-// zoom level, so they expand on the same zoom level.
-impl<P: PartialEq> PartialEq for TileItem<'_, P> {
-    fn eq(&self, other: &Self) -> bool {
-        self.x == other.x
-            && self.y == other.y
-            && self.item == other.item
-            && (matches!(self.item, Item::Point { .. })
-                || self.view.cluster_max_zoom == other.view.cluster_max_zoom)
-    }
-}
-
+// Written by hand, because a derive would also require the point type to be `Clone` and `Copy`,
+// and an item only holds a reference to a point.
 impl<P> Clone for TileItem<'_, P> {
     fn clone(&self) -> Self {
         *self
@@ -1300,12 +1273,20 @@ impl<'a, P> SuperclusterView<'a, P> {
             (z, x, y),
             |handle, position, origin_x| {
                 let [x, y] = supercluster.tile_position(position, z2, origin_x, tile_y);
+                let item = supercluster.item(handle, position);
+
+                // A lookup in the table of clusters, which does not fail for a cluster of the
+                // supercluster
+                let expansion_zoom = match item {
+                    Item::Cluster(cluster) => self.cluster_expansion_zoom(cluster.id).ok(),
+                    Item::Point { .. } => None,
+                };
 
                 items.push(TileItem {
                     x,
                     y,
-                    item: supercluster.item(handle, position),
-                    view: *self,
+                    item,
+                    expansion_zoom,
                 });
             },
         );
@@ -2153,25 +2134,39 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_items_of_views_with_another_highest_zoom_level_differ() {
-        let supercluster = load_spread_points(500);
+    fn test_tile_items_of_views_that_expand_on_other_zoom_levels_differ() {
+        // Two points that split long after zoom level 0
+        let points = vec![[10.0, 50.0], [10.5, 50.0]];
+        let supercluster =
+            Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))
+                .unwrap();
         let full = supercluster.tile(0, 0, 0);
-        let capped = supercluster.with_cluster_max_zoom(5).tile(0, 0, 0);
+        let capped = supercluster.with_cluster_max_zoom(0).tile(0, 0, 0);
+        let [full_item, capped_item] = [full.items[0], capped.items[0]];
 
-        // The same clusters and points at the same places, which can expand on other zoom levels,
-        // so the items are not equal
-        let places = |tile: &Tile<'_, [f64; 2]>| -> Vec<(f64, f64, Option<u32>)> {
-            tile.items
-                .iter()
-                .map(|item| match item.item {
-                    Item::Cluster(cluster) => (item.x, item.y, Some(cluster.id.get())),
-                    Item::Point { .. } => (item.x, item.y, None),
-                })
-                .collect()
-        };
-
-        assert_eq!(places(&full), places(&capped));
+        // The same cluster at the same place, which expands on another zoom level
+        assert_eq!(
+            (full_item.x, full_item.y, full_item.item),
+            (capped_item.x, capped_item.y, capped_item.item)
+        );
+        assert_eq!(capped_item.expansion_zoom(), Some(1));
+        assert!(full_item.expansion_zoom() > Some(1));
         assert_ne!(full, capped);
+    }
+
+    #[test]
+    fn test_tile_items_of_views_that_expand_on_the_same_zoom_levels_are_equal() {
+        // Two points that split long before zoom level 15
+        let points = vec![[10.0, 50.0], [10.5, 50.0]];
+        let supercluster =
+            Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))
+                .unwrap();
+        let lower = supercluster.with_cluster_max_zoom(15).tile(0, 0, 0);
+        let higher = supercluster.with_cluster_max_zoom(16).tile(0, 0, 0);
+
+        assert!(matches!(lower.items[0].item, Item::Cluster(_)));
+        assert!(lower.items[0].expansion_zoom() < Some(15));
+        assert_eq!(lower, higher);
     }
 
     #[test]
