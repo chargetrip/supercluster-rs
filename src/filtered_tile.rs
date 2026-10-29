@@ -14,7 +14,7 @@ use std::{
     fmt::{self, Debug, Formatter},
     mem,
     ops::Range,
-    slice, vec,
+    ptr, slice, vec,
 };
 
 use crate::{
@@ -79,8 +79,9 @@ pub struct FilteredTileItem<'a, P> {
     /// The Y position in the tile, in the units of the tile extent.
     pub y: f64,
 
-    /// The cluster or the point, as the supercluster has it. The point count of a cluster counts
-    /// all of its points, and `count` the ones that pass the filter.
+    /// The cluster, as the supercluster has it, or the point. A cluster with one point left is
+    /// that point. The point count of a cluster counts all of its points, and `count` the ones that
+    /// pass the filter.
     pub item: Item<'a, P>,
 
     /// The number of points that pass the filter.
@@ -155,6 +156,18 @@ impl<'a, P> FilteredTileItem<'a, P> {
     fn leaves(&self) -> Range<usize> {
         self.leaves.start as usize..self.leaves.end as usize
     }
+
+    /// Check whether two items keep the same points of the same supercluster without reading
+    /// them, which holds when every point passes or they share a selection.
+    fn keeps_the_same_points(&self, other: &Self) -> bool {
+        ptr::eq(self.supercluster, other.supercluster)
+            && self.leaves == other.leaves
+            && match (&self.matches, &other.matches) {
+                (Matches::All, Matches::All) => true,
+                (Matches::Shared(selection), Matches::Shared(other)) => ptr::eq(*selection, *other),
+                _ => false,
+            }
+    }
 }
 
 // Written by hand, because a derive would also require the point type to be `Clone`, and an item
@@ -191,8 +204,9 @@ impl<P: Debug> Debug for FilteredTileItem<'_, P> {
 
 // Written by hand, because a derive would compare the whole supercluster. Items are equal at the
 // same position with the same cluster or point and the same points that pass, counted first, which
-// is cheaper. Clusters also need views with the same highest zoom level, so they expand on the same
-// zoom level.
+// is cheaper, and read one by one only when the items do not keep the same points of the same
+// supercluster. Clusters also need views with the same highest zoom level, so they expand on the
+// same zoom level.
 impl<P: PartialEq> PartialEq for FilteredTileItem<'_, P> {
     fn eq(&self, other: &Self) -> bool {
         self.x == other.x
@@ -201,7 +215,7 @@ impl<P: PartialEq> PartialEq for FilteredTileItem<'_, P> {
             && self.count == other.count
             && (matches!(self.item, Item::Point { .. })
                 || self.cluster_max_zoom == other.cluster_max_zoom)
-            && self.points().eq(other.points())
+            && (self.keeps_the_same_points(other) || self.points().eq(other.points()))
     }
 }
 
@@ -212,7 +226,9 @@ impl<P> Supercluster<P> {
     /// points or shared through them.
     ///
     /// It scans the points in the order they are stored, and does not branch on what the filter
-    /// returns, so it runs the filter about as fast as the filter itself allows.
+    /// returns, so it runs the filter about as fast as the filter itself allows. Then it sums the
+    /// positions of the points that pass, so a tile finds the center of the points left of a
+    /// cluster without reading them.
     ///
     /// # Examples
     ///
@@ -359,22 +375,22 @@ impl<'a, P> SuperclusterView<'a, P> {
 
         // One buffer for the bits of every cluster, which an item takes only when some of its
         // points fail, so a cluster whose points all pass allocates nothing
-        let mut bits = vec![];
-
-        filter_tile(*self, (z, x, y), |leaves| {
+        filter_tile(*self, (z, x, y), |leaves, scratch| {
             let first = leaves.start;
 
             match &points[leaves] {
                 // A point needs no bits
                 [point] => filter(point).then_some((1, Matches::All)),
                 points => {
+                    let bits = scratch.result();
+
                     bits.clear();
                     bits.extend(filter_bits(points, &filter));
 
                     let count = bits.iter().map(|word| word.count_ones()).sum();
 
                     Matches::found(count, points.len(), || Matches::Local {
-                        words: mem::take(&mut bits),
+                        words: mem::take(bits),
                         first,
                     })
                 }
@@ -395,10 +411,9 @@ impl<'a, P> SuperclusterView<'a, P> {
         'a: 's,
     {
         let view: SuperclusterView<'s, P> = *self;
-        let mut scratch = Scratch::default();
 
-        filter_tile(view, (z, x, y), |leaves| {
-            selection.matches(leaves, &mut scratch)
+        filter_tile(view, (z, x, y), |leaves, scratch| {
+            selection.matches(leaves, scratch)
         })
     }
 
@@ -424,22 +439,23 @@ impl<'a, P> SuperclusterView<'a, P> {
 
 /// Build the items of a tile that have a point that passes a filter, and place them. `tile` is the
 /// zoom level, X and Y coordinates of the tile. `find_matches` gets the positions of the points of
-/// an item in the points of the supercluster, and returns how many pass and which ones, or `None`
-/// if none passes.
+/// an item in the points of the supercluster and buffers to reuse, and returns how many pass and
+/// which ones, or `None` if none passes.
 fn filter_tile<'a, P>(
     view: SuperclusterView<'a, P>,
     tile: (u8, u32, u32),
-    mut find_matches: impl FnMut(Range<usize>) -> Option<(u32, Matches<'a>)>,
+    mut find_matches: impl FnMut(Range<usize>, &mut Scratch) -> Option<(u32, Matches<'a>)>,
 ) -> FilteredTile<'a, P> {
     let supercluster = view.supercluster;
     let (z, _, tile_y) = tile;
     let z2 = tiles_per_axis(z);
     let tile_y = f64::from(tile_y);
     let mut items = vec![];
+    let mut scratch = Scratch::default();
 
     supercluster.for_each_in_tile(view.cluster_max_zoom, tile, |handle, position, origin_x| {
         let leaves = supercluster.leaf_range(handle);
-        let Some((count, matches)) = find_matches(leaves.clone()) else {
+        let Some((count, matches)) = find_matches(leaves.clone(), &mut scratch) else {
             return;
         };
 
@@ -451,13 +467,18 @@ fn filter_tile<'a, P>(
         };
 
         let (item, position, leaves, matches) = match supercluster.item(handle, position) {
-            // A cluster with one point left is that point, exactly where it is
-            Item::Cluster(_) if let Some(leaf) = only() => (
-                supercluster.item(leaf as u32, positions[leaf]),
-                positions[leaf],
-                leaf..leaf + 1,
-                Matches::All,
-            ),
+            // A cluster with one point left is that point, exactly where it is, and the next item
+            // reuses its bits
+            Item::Cluster(_) if let Some(leaf) = only() => {
+                scratch.give_back(matches);
+
+                (
+                    supercluster.item(leaf as u32, positions[leaf]),
+                    positions[leaf],
+                    leaf..leaf + 1,
+                    Matches::All,
+                )
+            }
             Item::Cluster(cluster) if count < cluster.point_count => {
                 let center = center_of_left(positions, &matches, leaves.clone(), count);
 
@@ -489,13 +510,21 @@ fn filter_tile<'a, P>(
 /// Find the center of the `count` points at the positions `leaves` that pass, from the sum of their
 /// integer positions, the same way for every kind of filter. When the mean of the integers is the
 /// integers of the first of them, as for points at one place, the cluster goes onto that point
-/// exactly instead.
+/// exactly instead. When one of them is far away, the center comes from their floats.
 fn center_of_left(
     positions: &Positions,
     matches: &Matches<'_>,
     leaves: Range<usize>,
     count: u32,
 ) -> [f64; 2] {
+    // The integers of a point far away are not where it is, so the center of points with one of
+    // them is found from their floats, in the same order on every path
+    let far = positions.far_in(leaves.clone());
+
+    if far.iter().any(|&leaf| matches.any(leaf..leaf + 1)) {
+        return positions.mean(matches.passing(leaves), count);
+    }
+
     let sum = matches.sum(leaves.clone(), count, positions);
     let wide = u128::from(count);
 
@@ -576,13 +605,17 @@ mod tests {
     fn summarize(items: &[FilteredTileItem<'_, TestPoint>]) -> Vec<Summary> {
         items
             .iter()
-            .map(|tile_item| {
-                let id = match tile_item.item {
+            .map(|filtered_tile_item| {
+                let id = match filtered_tile_item.item {
                     Item::Cluster(cluster) => cluster.id.get() as usize,
                     Item::Point { index, .. } => index,
                 };
 
-                (id, tile_item.count(), [tile_item.x, tile_item.y])
+                (
+                    id,
+                    filtered_tile_item.count(),
+                    [filtered_tile_item.x, filtered_tile_item.y],
+                )
             })
             .collect()
     }
@@ -1064,6 +1097,78 @@ mod tests {
     }
 
     #[test]
+    fn test_tile_filtered_centers_a_cluster_with_points_past_the_range() {
+        // A radius wider than the range makes clusters with points far past it
+        let range = DataRange::new(0.0, 0.0, 100.0, 100.0);
+        let options = SuperclusterOptions::builder()
+            .coordinate_system(CoordinateSystem::Cartesian { range })
+            .radius(3000.0)
+            .build()
+            .unwrap();
+        let cases = [
+            // One point that passes is past the range
+            (
+                vec![
+                    (50.0, 50.0, true),
+                    (52.0, 50.0, true),
+                    (500.0, 50.0, true),
+                    (60.0, 50.0, false),
+                ],
+                [602.0 / 3.0, 50.0],
+            ),
+            // Every point is past the range, on both axes
+            (
+                vec![
+                    (500.0, 500.0, true),
+                    (502.0, 500.0, true),
+                    (504.0, 510.0, false),
+                ],
+                [501.0, 500.0],
+            ),
+            // The points that pass are at one place past the range
+            (
+                vec![
+                    (500.3, 500.7, true),
+                    (500.3, 500.7, true),
+                    (504.0, 510.0, false),
+                ],
+                [500.3, 500.7],
+            ),
+        ];
+
+        for (points, center) in cases {
+            let supercluster =
+                Supercluster::load(options.clone(), points, |point| Some([point.0, point.1]))
+                    .unwrap();
+            let selection = supercluster.select(|point| point.2);
+            let all = supercluster.select(|_| true);
+            let computed = selection.and(&all).compute();
+            let ways = [
+                supercluster.tile_filtered(0, 0, 0, |point| point.2).items,
+                supercluster.tile_selected(0, 0, 0, &selection).items,
+                supercluster
+                    .tile_selected(0, 0, 0, selection.and(&all))
+                    .items,
+                supercluster.tile_selected(0, 0, 0, &computed).items,
+            ];
+
+            for items in &ways {
+                let [x, y] = items[0].coordinates();
+
+                assert_eq!(items.len(), 1);
+                assert!(matches!(items[0].item, Item::Cluster(_)));
+                assert!(
+                    (x - center[0]).abs() < 1e-9 && (y - center[1]).abs() < 1e-9,
+                    "{x}, {y}"
+                );
+
+                // Every way of filtering finds the same center, to the bit
+                assert_eq!(items[0].coordinates(), ways[0][0].coordinates());
+            }
+        }
+    }
+
+    #[test]
     fn test_tile_filtered_centers_the_points_left_like_loading() {
         let supercluster = load(&[(10.0, 50.0, true), (10.0, 55.0, false), (10.0, 60.0, true)]);
         let items = supercluster
@@ -1165,7 +1270,9 @@ mod tests {
             .items;
 
         assert_eq!(unclustered.len(), 2);
-        assert!(unclustered.iter().all(|tile_item| tile_item.count() == 1));
+        assert!(unclustered
+            .iter()
+            .all(|filtered_tile_item| filtered_tile_item.count() == 1));
     }
 
     #[test]

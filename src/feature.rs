@@ -229,13 +229,13 @@ impl<'a> FilteredTile<'a, Feature> {
     /// };
     /// let features = vec![feature(-77.032, true), feature(-77.033, false)];
     /// let supercluster = Supercluster::load_features(SuperclusterOptions::default(), features)?;
-    /// let tile = supercluster.tile_filtered(0, 0, 0, |feature| {
+    /// let filtered_tile = supercluster.tile_filtered(0, 0, 0, |feature| {
     ///     feature.property("available") == Some(&true.into())
     /// });
     ///
-    /// let json = serde_json::to_string(&tile.as_feature_collection())?;
+    /// let json = serde_json::to_string(&filtered_tile.as_feature_collection())?;
     ///
-    /// assert_eq!(json, serde_json::to_string(&tile.to_feature_collection())?);
+    /// assert_eq!(json, serde_json::to_string(&filtered_tile.to_feature_collection())?);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn as_feature_collection(&self) -> FeatureCollectionView<'_, 'a> {

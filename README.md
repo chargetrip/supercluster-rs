@@ -284,7 +284,7 @@ The [`filtered_tile` example](https://github.com/chargetrip/supercluster-rs/blob
 Make one selection per condition with `select`, and combine them per request with `and`, `or` and `and_not`. A combination borrows the selections and computes nothing, and the query evaluates it on the points of its tile only. The items borrow the selections, not the combination, so you can pass the combination straight to the query. `compute` turns a combination into a selection of its own, which you can cache.
 
 ```rust
-use supercluster::{Supercluster, SuperclusterError, SuperclusterOptions};
+use supercluster::{Item, Supercluster, SuperclusterError, SuperclusterOptions};
 
 struct Station {
     lng: f64,
@@ -311,7 +311,8 @@ fn main() -> Result<(), SuperclusterError> {
     // Per request: combine what the request asks for, which the query evaluates on its tile only
     let items = supercluster.tile_selected(0, 0, 0, fast.and(&available)).items;
 
-    // The cluster holds the one fast charger that is available
+    // One station is fast and available, so the cluster becomes that station
+    assert!(matches!(items[0].item, Item::Point { index: 0, .. }));
     assert_eq!(items[0].count(), 1);
 
     Ok(())

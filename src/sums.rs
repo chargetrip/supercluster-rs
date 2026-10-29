@@ -19,8 +19,9 @@ const FRACTION_BITS: i32 = 50;
 const BLOCK_WORDS: usize = 64;
 
 /// The normalized area the integers cover: the area of the coordinate system, from 0 to 1, and its
-/// width again on every side. A point further out counts as on the edge of the area, for centers
-/// only, so a point far away does not make every center less precise.
+/// width again on every side. A point further out does not make every center less precise, because
+/// its integers stop at the edge of what they span, and a center of points with one of them is
+/// found from floats instead.
 const AREA: [f64; 2] = [-1.0, 2.0];
 
 /// The highest integer a position turns into, which keeps every sum within its type.
@@ -74,7 +75,7 @@ impl Quantizer {
     /// Turn a normalized position into integers.
     pub(crate) fn quantize(&self, [x, y]: [f64; 2]) -> [u64; 2] {
         // Turning a float into an integer gives 0 below 0, and a position past the area stops at
-        // `TOP`, so a point far away counts as at the edge, with one comparison per axis
+        // `TOP`, with one comparison per axis
         [
             (((x - self.origin[0]) * self.factor).round() as u64).min(TOP),
             (((y - self.origin[1]) * self.factor).round() as u64).min(TOP),
@@ -100,7 +101,7 @@ impl Quantizer {
 }
 
 /// The normalized positions of the points that were clustered, in leaf order, with what turns
-/// them into integers and their running sums. A supercluster holds them in an `Arc`, and its
+/// them into integers, their running sums and the points the integers do not hold. A supercluster holds them in an `Arc`, and its
 /// selections keep a weak reference. So a computed combination reaches the positions it sums
 /// without the supercluster, a query tells whether the running sums of a selection are of its own
 /// positions, and a selection does not keep them after the supercluster is dropped. Only the
@@ -115,6 +116,10 @@ pub(crate) struct Positions {
 
     /// The running sums of all the positions, which give the sum of the positions of a cluster.
     sums: Sums,
+
+    /// The positions in leaf order of the points past `AREA`, whose integers are not where they
+    /// are.
+    far: Vec<usize>,
 }
 
 impl Positions {
@@ -128,10 +133,22 @@ impl Positions {
             |leaf| quantizer.quantize(positions[leaf]),
         );
 
+        let far = positions
+            .iter()
+            .enumerate()
+            .filter(|(_, position)| {
+                position
+                    .iter()
+                    .any(|value| !(AREA[0]..=AREA[1]).contains(value))
+            })
+            .map(|(leaf, _)| leaf)
+            .collect();
+
         Positions {
             positions,
             quantizer,
             sums,
+            far,
         }
     }
 
@@ -156,6 +173,36 @@ impl Positions {
     /// their center.
     pub(crate) fn center(&self, sum: [u128; 2], count: u32) -> [f64; 2] {
         self.quantizer.center(sum, count)
+    }
+
+    /// Get the positions in leaf order of the points of `range` whose integers are not where they
+    /// are.
+    pub(crate) fn far_in(&self, range: Range<usize>) -> &[usize] {
+        let start = self.far.partition_point(|&leaf| leaf < range.start);
+        let end = self.far.partition_point(|&leaf| leaf < range.end);
+
+        &self.far[start..end]
+    }
+
+    /// Find the normalized position of the center of the `count` points at `leaves` from their
+    /// floats, added in the order of `leaves`, for points the integers do not hold. Points at one
+    /// place give that place.
+    pub(crate) fn mean(&self, leaves: impl Iterator<Item = usize>, count: u32) -> [f64; 2] {
+        let mut sum = [0.0, 0.0];
+        let mut place = None;
+        let mut one_place = true;
+
+        for leaf in leaves {
+            let position = self.positions[leaf];
+
+            sum = add(sum, position);
+            one_place &= *place.get_or_insert(position) == position;
+        }
+
+        match place {
+            Some(place) if one_place => place,
+            _ => sum.map(|value| value / f64::from(count)),
+        }
     }
 }
 

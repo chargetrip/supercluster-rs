@@ -420,6 +420,24 @@ pub struct Scratch {
     stack: Vec<Vec<u64>>,
 }
 
+impl Scratch {
+    /// Get the first buffer, which holds the words of a result.
+    pub(crate) fn result(&mut self) -> &mut Vec<u64> {
+        if self.stack.is_empty() {
+            self.stack.push(vec![]);
+        }
+
+        &mut self.stack[0]
+    }
+
+    /// Take back the words of matches that an item does not keep, so the next item reuses them.
+    pub(crate) fn give_back(&mut self, matches: Matches<'_>) {
+        if let Matches::Local { words, .. } = matches {
+            *self.result() = words;
+        }
+    }
+}
+
 /// Evaluate a combination on the words that hold the positions of `range`, from the word of its
 /// first position, into the first buffer of `scratch`. Returns the number of points of `range`
 /// that pass, and the position of the first bit of the words.

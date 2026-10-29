@@ -45,21 +45,26 @@ fn main() -> Result<(), SuperclusterError> {
         .tile_filtered(0, 0, 0, |station| station.available)
         .items
         .into_iter()
-        .map(|tile_item| {
-            let names: Vec<_> = tile_item.points().map(|station| station.name).collect();
-            let [lng, lat] = tile_item.coordinates();
+        .map(|filtered_tile_item| {
+            let names: Vec<_> = filtered_tile_item
+                .points()
+                .map(|station| station.name)
+                .collect();
+            let [lng, lat] = filtered_tile_item.coordinates();
 
-            match tile_item.item {
+            match filtered_tile_item.item {
                 Item::Cluster(cluster) => {
                     // The zoom level a map zooms in to, counting the available stations only
-                    let expansion = tile_item.expansion_zoom().map_or(String::new(), |zoom| {
-                        format!(", expands on zoom level {zoom}")
-                    });
+                    let expansion = filtered_tile_item
+                        .expansion_zoom()
+                        .map_or(String::new(), |zoom| {
+                            format!(", expands on zoom level {zoom}")
+                        });
 
                     format!(
                         "cluster {} with {} of {} stations {:?} at {lng}, {lat}{expansion}",
                         cluster.id.get(),
-                        tile_item.count(),
+                        filtered_tile_item.count(),
                         cluster.point_count,
                         names,
                     )
@@ -76,11 +81,11 @@ fn main() -> Result<(), SuperclusterError> {
     // changes. The tiles then cost the same however many stations they hold.
     let available = supercluster.select(|station| station.available);
 
-    for tile_item in supercluster.tile_selected(0, 0, 0, &available).items {
+    for filtered_tile_item in supercluster.tile_selected(0, 0, 0, &available).items {
         println!(
             "{} available station(s), zoom in to {:?}",
-            tile_item.count(),
-            tile_item.expansion_zoom()
+            filtered_tile_item.count(),
+            filtered_tile_item.expansion_zoom()
         );
     }
 
