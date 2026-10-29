@@ -21,7 +21,15 @@ This README is for Rust developers who show many points on a map or a chart. For
 - [Install](#install)
 - [Cluster your points](#cluster-your-points)
 - [Filter what a tile shows](#filter-what-a-tile-shows)
+  - [Choose how to filter](#choose-how-to-filter)
+  - [Filter with a closure](#filter-with-a-closure)
+  - [Filter with selections](#filter-with-selections)
 - [More ways to use it](#more-ways-to-use-it)
+  - [Expand a cluster that a user clicks](#expand-a-cluster-that-a-user-clicks)
+  - [Map and reduce the points](#map-and-reduce-the-points)
+  - [Load and return GeoJSON](#load-and-return-geojson)
+  - [Cluster data that is not on a map](#cluster-data-that-is-not-on-a-map)
+  - [Lower the zoom level for one request](#lower-the-zoom-level-for-one-request)
 - [API quick reference](#api-quick-reference)
   - [Load points](#load-points)
   - [Query the clusters](#query-the-clusters)
@@ -362,6 +370,56 @@ fn main() -> Result<(), SuperclusterError> {
 ```
 
 The numbers change from one load to the next. After you load new points, a number from before can name no cluster, which gives `ClusterNotFound`, or name another cluster. On a filtered map, `cluster_expansion_zoom_filtered` and `cluster_expansion_zoom_selected` find the zoom level for the points that pass.
+
+### Map and reduce the points
+
+Mapbox’s supercluster combines the values of points into clusters while it loads, with `map` and `reduce`. Here you combine them when you need them, which also works on filtered tiles:
+
+- **`map`:** points are your own type, so read their fields.
+- **`reduce` to count matching points:** filter the tile, and read each item's `count()`.
+- **`reduce` to combine other values:** compute them from `supercluster.leaves(cluster.id)`, or from `filtered_tile_item.leaves()` for the points that pass.
+
+```rust
+use supercluster::{Item, Supercluster, SuperclusterError, SuperclusterOptions};
+
+struct Station {
+    lng: f64,
+    lat: f64,
+    capacity: u32,
+    available: bool,
+}
+
+fn main() -> Result<(), SuperclusterError> {
+    let supercluster = Supercluster::load(
+        SuperclusterOptions::default(),
+        vec![
+            Station { lng: 4.9, lat: 52.37, capacity: 4, available: true },
+            Station { lng: 4.91, lat: 52.37, capacity: 2, available: true },
+            Station { lng: 4.92, lat: 52.37, capacity: 8, available: false },
+            Station { lng: -74.0, lat: 40.71, capacity: 3, available: true },
+        ],
+        |station| Some([station.lng, station.lat]),
+    )?;
+    let mut capacities = vec![];
+
+    // The capacity of the stations that are available, per item
+    for filtered_tile_item in &supercluster.tile_filtered(0, 0, 0, |station| station.available).items {
+        let capacity: u32 = match filtered_tile_item.item {
+            // Instead of map: a point is your own type, so read its fields
+            Item::Point { point, .. } => point.capacity,
+            // Instead of reduce: combine the fields of the points of the cluster that pass
+            Item::Cluster(_) => filtered_tile_item.leaves().map(|station| station.capacity).sum(),
+        };
+
+        capacities.push(capacity);
+    }
+
+    capacities.sort();
+    assert_eq!(capacities, [3, 6]);
+
+    Ok(())
+}
+```
 
 ### Load and return GeoJSON
 
