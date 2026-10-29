@@ -148,7 +148,7 @@ fn main() -> Result<(), SuperclusterError> {
 
 A filtered tile keeps only the points that pass a filter, for example the ones that match a search. A cluster without any point left is left out, a cluster with one point left becomes that point, and a cluster with more points left moves to the exact center of the points left.
 
-Each item has `count()` and `points()` for the points that pass, `coordinates()` for its position in your coordinate system, and `expansion_zoom()` for the zoom level where a cluster splits, counting only the points that pass. Map the items to the type of your response with an iterator.
+Each item has `count()` and `leaves()` for the points that pass, `coordinates()` for its position in your coordinate system, and `expansion_zoom()` for the zoom level where a cluster splits, counting only the points that pass. Map the items to the type of your response with an iterator.
 
 ### Choose how to filter
 
@@ -161,7 +161,7 @@ There are three ways to filter a tile, and a combination can also be computed an
 | A combination of selections, such as `a.or(&b).and(&c)` | Nothing of its own. It reads the selections it combines, which are cached. | The combination, on the points under the tile only. Like a closure, it reads positions to find the center of a cluster with points that fail. | Never. Refresh the selections it combines instead. |
 | A computed combination, made with `compute` | The result of the combination for every point, as a selection. | A count of the points of each cluster that pass, and their center, with a few lookups, like a selection. | After you refresh one of the selections it combines. |
 
-Within one request, the items keep what the query found, so their `points()` and `expansion_zoom()` do not run the filter or combine the selections again.
+Within one request, the items keep what the query found, so their `leaves()` and `expansion_zoom()` do not run the filter or combine the selections again.
 
 | If your filter | Use | Because |
 | --- | --- | --- |
@@ -489,12 +489,12 @@ Selections combine with the methods below, and `count()` gives the number of poi
 | Type | What it holds | Methods |
 | --- | --- | --- |
 | `Tile` | `items`, a list of `TileItem`. | `is_empty()` |
-| `TileItem` | `x` and `y`, the position in the tile, and `item`. | `expansion_zoom()` |
+| `TileItem` | `x` and `y`, the position in the tile, and `item`. | `count()` for its points, and `expansion_zoom()` |
 | `Item` | `Item::Cluster(Cluster)`, or `Item::Point { index, point }`, a point with its index in the list that was loaded. | None |
 | `Cluster` | `id` and `point_count`. | `coordinates()` for its center, and `point_count_abbreviated()`, such as `1.5k` |
 | `ClusterId` | The ID of a cluster, as a `u32`. `ClusterId::new(number)` makes one from a `u32`. | `get()` returns the `u32` |
 | `FilteredTile` | `items`, a list of `FilteredTileItem`. | `is_empty()` |
-| `FilteredTileItem` | `x`, `y` and `item`, like a `TileItem`. | `coordinates()`, `count()` and `points()` for the points that pass, and `expansion_zoom()` |
+| `FilteredTileItem` | `x`, `y` and `item`, like a `TileItem`. | `coordinates()`, `count()` and `leaves()` for the points that pass, and `expansion_zoom()` |
 
 ### Convert to GeoJSON
 

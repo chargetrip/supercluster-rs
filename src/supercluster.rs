@@ -335,7 +335,7 @@ impl<P> Clone for Item<'_, P> {
 impl<P> Copy for Item<'_, P> {}
 
 /// An item of a tile with its position in the tile.
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 #[non_exhaustive]
 pub struct TileItem<'a, P> {
     /// The X position in the tile, in the units of the tile extent.
@@ -352,6 +352,14 @@ pub struct TileItem<'a, P> {
 }
 
 impl<P> TileItem<'_, P> {
+    /// Get the number of points of the item: the point count of a cluster, or 1 for a point.
+    pub fn count(&self) -> u32 {
+        match self.item {
+            Item::Cluster(cluster) => cluster.point_count,
+            Item::Point { .. } => 1,
+        }
+    }
+
     /// Determine the zoom level at which the cluster expands, like
     /// `Supercluster::cluster_expansion_zoom`, up to the highest zoom level of the view that built
     /// the tile.
@@ -375,6 +383,20 @@ impl<P> TileItem<'_, P> {
     /// ```
     pub fn expansion_zoom(&self) -> Option<u8> {
         self.expansion_zoom
+    }
+}
+
+// Written by hand, so it prints like a filtered tile item, in the same order, without the
+// coordinates that only a filtered tile item has.
+impl<P: Debug> Debug for TileItem<'_, P> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TileItem")
+            .field("x", &self.x)
+            .field("y", &self.y)
+            .field("item", &self.item)
+            .field("count", &self.count())
+            .finish_non_exhaustive()
     }
 }
 
@@ -2131,6 +2153,29 @@ mod tests {
         assert!(!tile.is_empty());
         assert_eq!(borrowed, tile.items);
         assert_eq!(tile.clone().into_iter().collect::<Vec<_>>(), tile.items);
+    }
+
+    #[test]
+    fn test_count_and_debug_of_tile_items() {
+        let points = vec![[10.0, 50.0], [10.001, 50.0], [-100.0, -30.0]];
+        let supercluster =
+            Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))
+                .unwrap();
+        let mut items = supercluster.tile(0, 0, 0).items;
+
+        items.sort_by_key(|item| item.count());
+
+        // A point counts itself, and a cluster its points
+        assert!(matches!(items[0].item, Item::Point { .. }));
+        assert_eq!(items[0].count(), 1);
+        assert!(matches!(items[1].item, Item::Cluster(_)));
+        assert_eq!(items[1].count(), 2);
+
+        // The output is like the one of a filtered tile item
+        let debug = format!("{:?}", items[1]);
+
+        assert!(debug.starts_with("TileItem { x:"));
+        assert!(debug.ends_with("count: 2, .. }"));
     }
 
     #[test]

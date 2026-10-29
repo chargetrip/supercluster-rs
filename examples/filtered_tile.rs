@@ -47,7 +47,7 @@ fn main() -> Result<(), SuperclusterError> {
         .into_iter()
         .map(|filtered_tile_item| {
             let names: Vec<_> = filtered_tile_item
-                .points()
+                .leaves()
                 .map(|station| station.name)
                 .collect();
             let [lng, lat] = filtered_tile_item.coordinates();

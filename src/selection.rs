@@ -771,7 +771,7 @@ mod tests {
                     item.x,
                     item.y,
                     item.count(),
-                    item.points().count(),
+                    item.leaves().count(),
                     expansion_zoom,
                 )
             })

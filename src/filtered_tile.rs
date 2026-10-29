@@ -122,12 +122,12 @@ impl<'a, P> FilteredTileItem<'a, P> {
 
     /// Iterate over the points that pass the filter: the points of the cluster, in the order
     /// `Supercluster::leaves` returns them, or the point itself. The first point is
-    /// `points().next()`.
-    pub fn points(&self) -> impl Iterator<Item = &'a P> + '_ {
+    /// `leaves().next()`.
+    pub fn leaves(&self) -> impl Iterator<Item = &'a P> + '_ {
         let points = self.view.supercluster.points();
 
         self.matches
-            .passing(self.leaves())
+            .passing(self.leaf_range())
             .map(move |leaf| &points[leaf])
     }
 
@@ -152,7 +152,7 @@ impl<'a, P> FilteredTileItem<'a, P> {
     }
 
     /// Get the positions of the points of the item in the points of the supercluster.
-    fn leaves(&self) -> Range<usize> {
+    fn leaf_range(&self) -> Range<usize> {
         self.leaves.start as usize..self.leaves.end as usize
     }
 
@@ -213,7 +213,7 @@ impl<P: PartialEq> PartialEq for FilteredTileItem<'_, P> {
             && self.count == other.count
             && (self.view.cluster_max_zoom == other.view.cluster_max_zoom
                 || self.expansion_zoom() == other.expansion_zoom())
-            && (self.keeps_the_same_points(other) || self.points().eq(other.points()))
+            && (self.keeps_the_same_points(other) || self.leaves().eq(other.leaves()))
     }
 }
 
@@ -898,7 +898,7 @@ mod tests {
 
         assert_eq!(filtered[0].count(), 2);
         assert_eq!(
-            coordinates_of(filtered[0].points().collect()),
+            coordinates_of(filtered[0].leaves().collect()),
             coordinates_of(kept)
         );
 
@@ -907,7 +907,7 @@ mod tests {
 
         assert_eq!(unfiltered[0].count(), 3);
         assert_eq!(
-            coordinates_of(unfiltered[0].points().collect()),
+            coordinates_of(unfiltered[0].leaves().collect()),
             coordinates_of(leaves)
         );
     }
@@ -1040,7 +1040,7 @@ mod tests {
                 .all(|item| matches!(item.item, Item::Point { .. })));
             assert_eq!(item.count(), 1);
             assert_eq!(item.coordinates(), point);
-            assert_eq!(item.points().count(), 1);
+            assert_eq!(item.leaves().count(), 1);
             assert_eq!(item.expansion_zoom(), None);
         }
     }
@@ -1215,7 +1215,7 @@ mod tests {
 
         assert_eq!(items.len(), 2);
         assert!(items.iter().all(|item| item.expansion_zoom().is_none()));
-        assert!(items.iter().all(|item| item.points().count() == 1));
+        assert!(items.iter().all(|item| item.leaves().count() == 1));
     }
 
     #[test]
@@ -1254,7 +1254,7 @@ mod tests {
         let items = supercluster.tile_filtered(0, 0, 0, filter).items;
 
         assert_eq!(items[0].count(), 129);
-        assert!(items[0].points().all(|point| *point != failing));
+        assert!(items[0].leaves().all(|point| *point != failing));
         assert_eq!(
             items[0].expansion_zoom(),
             supercluster
@@ -1394,14 +1394,14 @@ mod tests {
                             for (selected, filtered) in selected.iter().zip(&filtered) {
                                 assert_eq!(selected.coordinates(), filtered.coordinates());
                                 assert_eq!(selected.expansion_zoom(), filtered.expansion_zoom());
-                                assert!(same_points(selected.points(), filtered.points()));
+                                assert!(same_points(selected.leaves(), filtered.leaves()));
 
                                 if let Item::Cluster(cluster) = selected.item {
                                     // The points that pass, in the order of the leaves
                                     let leaves = supercluster.leaves(cluster.id).unwrap();
 
                                     assert!(same_points(
-                                        selected.points(),
+                                        selected.leaves(),
                                         leaves.iter().filter(|point| filter(point))
                                     ));
 
@@ -1443,7 +1443,7 @@ mod tests {
 
         // The items mean nothing, but the queries do not panic
         for item in large.tile_selected(0, 0, 0, &selection).items {
-            assert!(item.points().count() <= item.count() as usize);
+            assert!(item.leaves().count() <= item.count() as usize);
             item.expansion_zoom();
         }
     }
