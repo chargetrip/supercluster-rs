@@ -40,7 +40,7 @@ a test file with `#![cfg(feature = "...")]`. An example or benchmark that needs 
 - Keep the API consistent. A variant of a type or a query is named after the original and has the
   same fields, methods and trait impls under the same names, unless it cannot. Docs and examples
   name a value after its type.
-- Prefer a closure over a trait for what a user supplies, as `load` and `tile_filtered` do. A
+- Prefer a closure over a trait for what a user supplies, as `load`, `filter` and `cache_filter` do. A
   per-request setting goes on `SuperclusterView` (`with_cluster_max_zoom`), not into a `_with`
   variant of a query.
 - Keep `rust-version` in `Cargo.toml` equal to the toolchain in `rust-toolchain.toml` and in the two
@@ -58,7 +58,11 @@ a test file with `#![cfg(feature = "...")]`. An example or benchmark that needs 
   which numbers its clusters another way, so the tests compare them without the cluster IDs.
 - Only loading logs (feature `tracing`). Queries never log.
 - All GeoJSON code lives in `feature.rs`. The core knows nothing about GeoJSON.
-- Deserialized data is not validated, so data that the crate did not write can make queries panic.
+- A deserialized supercluster is checked to hold together, so queries cannot panic or loop on it,
+  but not that its clusters are right. Raise `VERSION` in the `format` module of `supercluster.rs`
+  with every change to what a supercluster writes, and check any new field in `inconsistency`.
+  `tests/test_format.rs` fails until you do. Then write the new format into
+  `tests/common/supercluster-format.json`, whose `version` must change with it.
 
 ## Concurrency
 
@@ -104,7 +108,8 @@ are the reference.
   `thiserror` and has a variant only for a failure a caller can see. Build a message from the
   constant it describes (`MAX_ZOOM_LIMIT`).
 - Validate input where it enters and return an error: the options in
-  `SuperclusterOptionsBuilder::build`, which serde also runs, and the points in `load`. Never panic
+  `SuperclusterOptionsBuilder::build`, which serde also runs, the points in `load`, a supercluster
+  that serde reads, and the filters a query gets. Never panic
   on options or data a caller passes. Points with missing or non-finite coordinates are left out,
   and with the `tracing` feature one `warn` event reports how many.
 - Propagate errors with `?`. Don't log an error and return `None` or a default instead. A function

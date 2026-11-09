@@ -1,13 +1,15 @@
-//! Serve filtered tiles from state that every request shares, and refresh a selection when the data
-//! it reads changes. A web server keeps `State` in its application state and calls `handle_tile`
-//! from its tile route.
+//! Serve filtered tiles from state that every request shares, and refresh a cached filter when the
+//! data it reads changes. A web server keeps `State` in its application state and calls
+//! `handle_tile` from its tile route.
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex, PoisonError, RwLock,
 };
 
-use supercluster::{Combination, Selection, Supercluster, SuperclusterError, SuperclusterOptions};
+use supercluster::{
+    CachedFilter, CombinedFilter, Supercluster, SuperclusterError, SuperclusterOptions,
+};
 
 /// A charging station.
 struct Station {
@@ -17,21 +19,21 @@ struct Station {
     power_kw: u32,
 
     /// Whether the station is free. It changes after loading, so it is shared through the station,
-    /// and the selection that reads it is made again when it changes.
+    /// and the cached filter that reads it is made again when it changes.
     available: AtomicBool,
 }
 
-/// What every request reads: the supercluster and the selections made from it. They are replaced
-/// together, so a selection never meets another supercluster.
+/// What every request reads: the supercluster and the cached filters made from it. They are
+/// replaced together, so a cached filter never meets another supercluster.
 struct Index {
     supercluster: Arc<Supercluster<Station>>,
 
-    /// The fast stations. The power of a station does not change, so this selection stays valid,
-    /// and a refresh shares it with the new index instead of copying it.
-    fast: Arc<Selection>,
+    /// The fast stations. The power of a station does not change, so this cached filter stays
+    /// valid, and a refresh shares it with the new index instead of copying it.
+    fast: Arc<CachedFilter>,
 
     /// The free stations, made again when the availability changes.
-    available: Selection,
+    available: CachedFilter,
 }
 
 /// The state that every request shares.
@@ -54,29 +56,34 @@ fn current(state: &State) -> Arc<Index> {
 }
 
 /// Answer a tile request: the position and the number of stations of every item, counting only
-/// the free stations, and only the fast ones if the request asks for that.
-fn handle_tile(state: &State, (z, x, y): (u8, u32, u32), only_fast: bool) -> Vec<([f64; 2], u32)> {
+/// the free stations, and only the fast ones if the request asks for that. The cached filters come
+/// from the supercluster of the same index, so the query does not return `ForeignCachedFilter`.
+fn handle_tile(
+    state: &State,
+    (z, x, y): (u8, u32, u32),
+    only_fast: bool,
+) -> Result<Vec<([f64; 2], u32)>, SuperclusterError> {
     let index = current(state);
 
-    // A combination per request, which the query evaluates on the stations of the tile only. The
-    // fast selection is behind an `Arc`, which the operators take as it is.
+    // A combined filter per request, which the query evaluates on the stations of the tile only.
+    // The fast cached filter is behind an `Arc`, which the operators take as it is.
     let wanted = if only_fast {
         index.available.and(&index.fast)
     } else {
-        Combination::from(&index.available)
+        CombinedFilter::from(&index.available)
     };
 
-    index
+    Ok(index
         .supercluster
-        .tile_selected(z, x, y, wanted)
+        .tile_filtered(z, x, y, wanted)?
         .items
         .iter()
         .map(|item| (item.coordinates(), item.count()))
-        .collect()
+        .collect())
 }
 
-/// Make the selection of free stations again, after their availability changed, and swap it in.
-/// Requests that already hold the old index finish with it.
+/// Make the cached filter of free stations again, after their availability changed, and swap it
+/// in. Requests that already hold the old index finish with it.
 fn refresh_availability(state: &State) {
     let _change = state.changes.lock().unwrap_or_else(PoisonError::into_inner);
     let index = current(state);
@@ -85,7 +92,7 @@ fn refresh_availability(state: &State) {
     // is how the change starts the refresh, for example through a channel or a lock
     let available = index
         .supercluster
-        .select(|station| station.available.load(Ordering::Relaxed));
+        .cache_filter(|station| station.available.load(Ordering::Relaxed));
     let refreshed = Index {
         supercluster: Arc::clone(&index.supercluster),
         fast: Arc::clone(&index.fast),
@@ -113,8 +120,8 @@ fn main() -> Result<(), SuperclusterError> {
         |station| Some([station.lng, station.lat]),
     )?);
     let index = Index {
-        fast: Arc::new(supercluster.select(|station| station.power_kw >= 50)),
-        available: supercluster.select(|station| station.available.load(Ordering::Relaxed)),
+        fast: Arc::new(supercluster.cache_filter(|station| station.power_kw >= 50)),
+        available: supercluster.cache_filter(|station| station.available.load(Ordering::Relaxed)),
         supercluster,
     };
     let state = State {
@@ -122,8 +129,8 @@ fn main() -> Result<(), SuperclusterError> {
         changes: Mutex::new(()),
     };
 
-    println!("Free: {:?}", handle_tile(&state, (0, 0, 0), false));
-    println!("Free and fast: {:?}", handle_tile(&state, (0, 0, 0), true));
+    println!("Free: {:?}", handle_tile(&state, (0, 0, 0), false)?);
+    println!("Free and fast: {:?}", handle_tile(&state, (0, 0, 0), true)?);
 
     // Vondelpark becomes free, and the requests after the refresh count it. The points are in the
     // order of the clusters, so the station is found by its name.
@@ -142,7 +149,7 @@ fn main() -> Result<(), SuperclusterError> {
 
     println!(
         "Free and fast after the refresh: {:?}",
-        handle_tile(&state, (0, 0, 0), true)
+        handle_tile(&state, (0, 0, 0), true)?
     );
 
     Ok(())

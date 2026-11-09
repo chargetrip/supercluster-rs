@@ -40,32 +40,29 @@ fn main() -> Result<(), SuperclusterError> {
         |station| Some([station.lng, station.lat]),
     )?;
 
-    // The cluster keeps the available stations only and moves to their center, Rotterdam is left out
+    // A filter runs on each request, on the stations of the tile only. The cluster keeps the
+    // available stations only and moves to their center, and Rotterdam is left out
+    let available = supercluster.filter(|station| station.available);
     let descriptions = supercluster
-        .tile_filtered(0, 0, 0, |station| station.available)
+        .tile_filtered(0, 0, 0, &available)?
         .items
         .into_iter()
-        .map(|filtered_tile_item| {
-            let names: Vec<_> = filtered_tile_item
-                .leaves()
-                .map(|station| station.name)
-                .collect();
-            let [lng, lat] = filtered_tile_item.coordinates();
+        .map(|tile_item| {
+            let names: Vec<_> = tile_item.leaves().map(|station| station.name).collect();
+            let [lng, lat] = tile_item.coordinates();
 
-            match filtered_tile_item.item {
+            match tile_item.item() {
                 Item::Cluster(cluster) => {
                     // The zoom level a map zooms in to, counting the available stations only
-                    let expansion = filtered_tile_item
-                        .expansion_zoom()
-                        .map_or(String::new(), |zoom| {
-                            format!(", expands on zoom level {zoom}")
-                        });
+                    let expansion = tile_item.expansion_zoom().map_or(String::new(), |zoom| {
+                        format!(", expands on zoom level {zoom}")
+                    });
 
                     format!(
                         "cluster {} with {} of {} stations {:?} at {lng}, {lat}{expansion}",
                         cluster.id.get(),
-                        filtered_tile_item.count(),
-                        cluster.point_count,
+                        tile_item.count(),
+                        cluster.total_count,
                         names,
                     )
                 }
@@ -79,13 +76,13 @@ fn main() -> Result<(), SuperclusterError> {
 
     // To filter many tiles the same way, run the filter once and reuse it until the availability
     // changes. The tiles then cost the same however many stations they hold.
-    let available = supercluster.select(|station| station.available);
+    let cached = supercluster.cache_filter(|station| station.available);
 
-    for filtered_tile_item in supercluster.tile_selected(0, 0, 0, &available).items {
+    for tile_item in supercluster.tile_filtered(0, 0, 0, &cached)?.items {
         println!(
             "{} available station(s), zoom in to {:?}",
-            filtered_tile_item.count(),
-            filtered_tile_item.expansion_zoom()
+            tile_item.count(),
+            tile_item.expansion_zoom()
         );
     }
 

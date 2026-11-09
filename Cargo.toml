@@ -25,6 +25,9 @@ tracing = { version = "0.1.41", default-features = false, features = ["std", "lo
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
 log = "0.4.31"
+# A format that writes values in order, without their names, like the binary formats a user may
+# save a supercluster with, which must read it back too
+postcard = { version = "1.1.3", default-features = false, features = ["alloc"] }
 # Without float_roundtrip, reading a supercluster back from JSON changes some of its numbers
 serde_json = { version = "1.0.150", features = ["float_roundtrip"] }
 # Version 3.0.8, the last release of version 3, which the v3 comparison benchmark measures against,

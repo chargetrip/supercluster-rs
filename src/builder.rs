@@ -13,10 +13,15 @@ use crate::{CoordinateSystem, SuperclusterError, MAX_ZOOM_LIMIT};
 /// Their fields are private, so read them with the methods of the same names, and they cannot
 /// change once they are checked.
 #[derive(Clone, Debug)]
+// Written as the builder they are read as, so a format that reads values in the order they were
+// written, without their names, reads back the same types
 #[cfg_attr(
     feature = "serde",
     derive(Deserialize, Serialize),
-    serde(try_from = "SuperclusterOptionsBuilder")
+    serde(
+        try_from = "SuperclusterOptionsBuilder",
+        into = "SuperclusterOptionsBuilder"
+    )
 )]
 #[non_exhaustive]
 pub struct SuperclusterOptions {
@@ -37,8 +42,8 @@ pub struct SuperclusterOptions {
     pub(crate) radius: f64,
 
     /// Tile extent (radius is calculated relative to it).
-    /// The default value is 512.0.
-    pub(crate) extent: f64,
+    /// The default value is 512.
+    pub(crate) extent: u32,
 
     /// Size of the KD-tree leaf node, affects performance.
     /// The default value is 64.
@@ -64,7 +69,7 @@ impl SuperclusterOptions {
     ///
     /// assert_eq!(options.radius(), 60.0);
     /// // The extent keeps its default
-    /// assert_eq!(options.extent(), 512.0);
+    /// assert_eq!(options.extent(), 512);
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
     pub fn builder() -> SuperclusterOptionsBuilder {
@@ -92,7 +97,7 @@ impl SuperclusterOptions {
     }
 
     /// Get the size of a tile, in pixels, which the radius is relative to.
-    pub fn extent(&self) -> f64 {
+    pub fn extent(&self) -> u32 {
         self.extent
     }
 
@@ -115,7 +120,7 @@ impl Default for SuperclusterOptions {
             max_zoom: 16,
             min_points: 2,
             radius: 40.0,
-            extent: 512.0,
+            extent: 512,
             node_size: 64,
             coordinate_system: CoordinateSystem::LatLng,
         }
@@ -139,7 +144,7 @@ pub struct SuperclusterOptionsBuilder {
     radius: Option<f64>,
 
     /// Tile extent (radius is calculated relative to it).
-    extent: Option<f64>,
+    extent: Option<u32>,
 
     /// Size of the KD-tree leaf node.
     node_size: Option<usize>,
@@ -174,7 +179,7 @@ impl SuperclusterOptionsBuilder {
     }
 
     /// Set the tile extent (radius is calculated relative to it).
-    pub fn extent(mut self, extent: f64) -> Self {
+    pub fn extent(mut self, extent: u32) -> Self {
         self.extent = Some(extent);
         self
     }
@@ -197,8 +202,9 @@ impl SuperclusterOptionsBuilder {
     ///
     /// - `InvalidMaxZoom` if the maximum zoom level is above `MAX_ZOOM_LIMIT`.
     /// - `InvalidMinZoom` if the minimum zoom level is above the maximum zoom level.
-    /// - `InvalidRadius` or `InvalidExtent` if the radius or the extent is not a finite number
-    ///   above 0.
+    /// - `InvalidRadius` if the radius is not a finite number above 0, or if the extent plus the
+    ///   radius is above `i32::MAX`, which the positions in a tile could then not hold.
+    /// - `InvalidExtent` if the extent is 0 or above `i32::MAX`.
     /// - `InvalidNodeSize` if the node size is 0.
     /// - `InvalidDataRange` if the `DataRange` of the `Cartesian` coordinate system cannot scale the
     ///   data.
@@ -226,8 +232,14 @@ impl SuperclusterOptionsBuilder {
             return Err(SuperclusterError::InvalidRadius);
         }
 
-        if !is_positive(options.extent) {
+        if options.extent == 0 || options.extent > i32::MAX as u32 {
             return Err(SuperclusterError::InvalidExtent);
+        }
+
+        // An item of a tile is at most the radius outside it, apart from a filtered cluster that
+        // moved, and its position is an `i32`, so the extent plus the radius must fit one
+        if f64::from(options.extent) + options.radius > f64::from(i32::MAX) {
+            return Err(SuperclusterError::InvalidRadius);
         }
 
         if options.node_size == 0 {
@@ -250,6 +262,22 @@ impl TryFrom<SuperclusterOptionsBuilder> for SuperclusterOptions {
 
     fn try_from(builder: SuperclusterOptionsBuilder) -> Result<Self, Self::Error> {
         builder.build()
+    }
+}
+
+// The builder with every value of the options set, which the options are written as
+#[cfg(feature = "serde")]
+impl From<SuperclusterOptions> for SuperclusterOptionsBuilder {
+    fn from(options: SuperclusterOptions) -> Self {
+        SuperclusterOptionsBuilder {
+            min_zoom: Some(options.min_zoom),
+            max_zoom: Some(options.max_zoom),
+            min_points: Some(options.min_points),
+            radius: Some(options.radius),
+            extent: Some(options.extent),
+            node_size: Some(options.node_size),
+            coordinate_system: Some(options.coordinate_system),
+        }
     }
 }
 
@@ -284,7 +312,7 @@ mod tests {
         assert_eq!(options.max_zoom, 16);
         assert_eq!(options.min_points, 2);
         assert_eq!(options.radius, 40.0);
-        assert_eq!(options.extent, 512.0);
+        assert_eq!(options.extent, 512);
         assert_eq!(options.node_size, 64);
         assert_eq!(options.coordinate_system, CoordinateSystem::LatLng);
     }
@@ -305,7 +333,7 @@ mod tests {
             .max_zoom(10)
             .min_points(5)
             .radius(50.0)
-            .extent(1024.0)
+            .extent(1024)
             .node_size(128)
             .coordinate_system(CoordinateSystem::LatLng)
             .build()
@@ -315,7 +343,7 @@ mod tests {
         assert_eq!(options.max_zoom, 10);
         assert_eq!(options.min_points, 5);
         assert_eq!(options.radius, 50.0);
-        assert_eq!(options.extent, 1024.0);
+        assert_eq!(options.extent, 1024);
         assert_eq!(options.node_size, 128);
         assert_eq!(options.coordinate_system, CoordinateSystem::LatLng);
     }
@@ -355,12 +383,31 @@ mod tests {
 
     #[test]
     fn test_build_with_invalid_extent() {
-        for extent in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        for extent in [0, i32::MAX as u32 + 1, u32::MAX] {
             assert_eq!(
                 SuperclusterOptions::builder().extent(extent).build().err(),
                 Some(SuperclusterError::InvalidExtent)
             );
         }
+    }
+
+    #[test]
+    fn test_build_with_positions_past_an_i32() {
+        let build = |extent: u32, radius: f64| {
+            SuperclusterOptions::builder()
+                .extent(extent)
+                .radius(radius)
+                .build()
+                .err()
+        };
+
+        // The positions of a tile reach the extent plus the radius
+        assert_eq!(
+            build(i32::MAX as u32, 1.0),
+            Some(SuperclusterError::InvalidRadius)
+        );
+        assert_eq!(build(512, 3e9), Some(SuperclusterError::InvalidRadius));
+        assert_eq!(build(i32::MAX as u32 - 40, 40.0), None);
     }
 
     #[test]
@@ -401,7 +448,7 @@ mod tests {
         let options: SuperclusterOptions = serde_json::from_str(
             r#"{
                 "radius": 40.0,
-                "extent": 512.0,
+                "extent": 512,
                 "min_points": 1,
                 "node_size": 64,
                 "min_zoom": 2,

@@ -5,7 +5,9 @@ mod common;
 use common::{
     get_data_range, load_cartesian, load_places, load_tile_places, load_tile_places_with_min_5,
 };
-use geojson::{feature::Id, Feature, Geometry, JsonObject};
+use std::fs;
+
+use geojson::{feature::Id, Feature, FeatureCollection, Geometry, JsonObject, JsonValue};
 use supercluster::{
     ClusterId, CoordinateSystem, Item, Supercluster, SuperclusterError, SuperclusterOptions,
 };
@@ -14,7 +16,7 @@ use supercluster::{
 fn create_options() -> SuperclusterOptions {
     SuperclusterOptions::builder()
         .radius(40.0)
-        .extent(512.0)
+        .extent(512)
         .min_points(2)
         .max_zoom(16)
         .coordinate_system(CoordinateSystem::LatLng)
@@ -26,7 +28,7 @@ fn create_options() -> SuperclusterOptions {
 fn create_options_with_low_max_zoom() -> SuperclusterOptions {
     SuperclusterOptions::builder()
         .radius(60.0)
-        .extent(256.0)
+        .extent(256)
         .min_points(2)
         .max_zoom(4)
         .coordinate_system(CoordinateSystem::LatLng)
@@ -45,14 +47,13 @@ fn load_supercluster(options: SuperclusterOptions) -> Supercluster<Feature> {
 /// Get the number of points a child holds.
 fn get_point_count(item: &Item<'_, Feature>) -> usize {
     match item {
-        Item::Cluster(cluster) => cluster.point_count as usize,
+        Item::Cluster(cluster) => cluster.total_count as usize,
         Item::Point { .. } => 1,
     }
 }
 
 /// Get the ID of the cluster at `index` in the clusters of the whole world at `zoom`. The tests
-/// find a cluster where it is, because the fixtures come from the JavaScript supercluster, which
-/// numbers its clusters another way.
+/// find a cluster where it is, because the fixtures number their clusters another way.
 fn get_cluster_id(supercluster: &Supercluster<Feature>, zoom: u8, index: usize) -> ClusterId {
     match supercluster.clusters(WORLD, zoom)[index] {
         Item::Cluster(cluster) => cluster.id,
@@ -61,11 +62,11 @@ fn get_cluster_id(supercluster: &Supercluster<Feature>, zoom: u8, index: usize) 
 }
 
 /// The clusters the tests check: their zoom level and index in the clusters of the whole world.
-/// The JavaScript supercluster has the IDs 164, 196, 581, 1157 and 4134 for them.
+/// The fixtures have the IDs 164, 196, 581, 1157 and 4134 for them.
 const CLUSTERS: [(u8, usize); 5] = [(0, 0), (0, 1), (0, 8), (0, 19), (0, 31)];
 
-/// Remove the IDs of the clusters, which this crate numbers another way than the JavaScript
-/// supercluster the fixtures come from. Everything else must match.
+/// Remove the IDs of the clusters, which this crate numbers another way than the fixtures.
+/// Everything else must match.
 fn without_cluster_ids(features: Vec<Feature>) -> Vec<Feature> {
     features
         .into_iter()
@@ -121,11 +122,33 @@ fn test_tile_as_feature_collection() {
         supercluster.tile(0, 0, 0),
         supercluster.with_cluster_max_zoom(0).tile(1, 0, 0),
     ] {
+        let json = serde_json::to_string(&tile.as_feature_collection()).unwrap();
+
         assert_eq!(
-            serde_json::to_string(&tile.as_feature_collection()).unwrap(),
-            serde_json::to_string(&tile.to_feature_collection()).unwrap()
+            serde_json::from_str::<FeatureCollection>(&json).unwrap(),
+            tile.to_feature_collection()
         );
     }
+}
+
+#[test]
+fn test_as_feature_collection_writes_the_geometries_of_the_fixture() {
+    let supercluster = load_supercluster(create_options());
+    let json = serde_json::to_value(supercluster.tile(0, 0, 0).as_feature_collection()).unwrap();
+    let fixture: JsonValue =
+        serde_json::from_str(&fs::read_to_string("./tests/common/places-tile-0-0-0.json").unwrap())
+            .unwrap();
+    let geometries = |collection: &JsonValue| -> Vec<JsonValue> {
+        collection["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|feature| feature["geometry"].clone())
+            .collect()
+    };
+
+    // The fixture has whole numbers, which read back as integers, not floats
+    assert_eq!(geometries(&json), geometries(&fixture));
 }
 
 #[test]
@@ -153,7 +176,7 @@ fn test_tile_with_cluster_max_zoom() {
             assert!(tile
                 .items
                 .iter()
-                .all(|tile_item| matches!(tile_item.item, Item::Point { .. })));
+                .all(|tile_item| matches!(tile_item.item(), Item::Point { .. })));
 
             unclustered += tile.items.len();
         }
@@ -169,7 +192,7 @@ fn test_generate_clusters_with_min_points() {
 
     let options = SuperclusterOptions::builder()
         .radius(40.0)
-        .extent(512.0)
+        .extent(512)
         .min_points(5)
         .max_zoom(16)
         .coordinate_system(CoordinateSystem::LatLng)
@@ -229,7 +252,7 @@ fn test_cluster_expansion_zoom() {
 fn test_cluster_expansion_zoom_for_max_zoom() {
     let supercluster = load_supercluster(create_options_with_low_max_zoom());
 
-    // The JavaScript supercluster has the ID 2504 for this cluster
+    // The fixtures have the ID 2504 for this cluster
     let cluster_id = get_cluster_id(&supercluster, 4, 56);
 
     assert_eq!(supercluster.cluster_expansion_zoom(cluster_id), Ok(5));
@@ -243,7 +266,7 @@ fn test_cluster_expansion_zoom_filtered_accepting_all() {
         let cluster_id = get_cluster_id(&supercluster, zoom, index);
 
         assert_eq!(
-            supercluster.cluster_expansion_zoom_filtered(cluster_id, |_| true),
+            supercluster.cluster_expansion_zoom_filtered(cluster_id, supercluster.filter(|_| true)),
             supercluster.cluster_expansion_zoom(cluster_id)
         );
     }
@@ -288,7 +311,7 @@ fn test_cluster_expansion_zoom_filtered() {
         let cluster_id = get_cluster_id(&supercluster, zoom, index);
         let expansion_zoom = supercluster.cluster_expansion_zoom(cluster_id).unwrap();
         let filtered_expansion_zoom = supercluster
-            .cluster_expansion_zoom_filtered(cluster_id, filter)
+            .cluster_expansion_zoom_filtered(cluster_id, supercluster.filter(filter))
             .unwrap();
 
         assert!(filtered_expansion_zoom >= expansion_zoom);
@@ -349,7 +372,7 @@ fn test_leaves_matches_point_count_and_children() {
                 let leaves: Vec<&Feature> =
                     supercluster.leaves(cluster.id).unwrap().iter().collect();
 
-                assert_eq!(leaves.len(), cluster.point_count as usize);
+                assert_eq!(leaves.len(), cluster.total_count as usize);
 
                 // The leaves are the points of the children, in the order of the children
                 let children_leaves: Vec<&Feature> = supercluster
@@ -451,7 +474,7 @@ fn test_cartesian_coordinates() {
 
     let options = SuperclusterOptions::builder()
         .radius(20.0)
-        .extent(512.0)
+        .extent(512)
         .min_points(2)
         .max_zoom(16)
         .coordinate_system(CoordinateSystem::Cartesian { range })

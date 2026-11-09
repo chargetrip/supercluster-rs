@@ -23,12 +23,16 @@ pub enum SuperclusterError {
     #[error("The minimum zoom level cannot be above the maximum zoom level.")]
     InvalidMinZoom,
 
-    /// The cluster radius is not a finite number above 0.
-    #[error("The radius must be a finite number above 0.")]
+    /// The cluster radius is not a finite number above 0, or the extent plus the radius is above
+    /// `i32::MAX`, which the positions in a tile could then not hold.
+    #[error(
+        "The radius must be a finite number above 0, and the extent plus the radius cannot be above {}.",
+        i32::MAX
+    )]
     InvalidRadius,
 
-    /// The tile extent is not a finite number above 0.
-    #[error("The extent must be a finite number above 0.")]
+    /// The tile extent is 0 or above `i32::MAX`.
+    #[error("The extent must be from 1 to {}.", i32::MAX)]
     InvalidExtent,
 
     /// The data range of the `Cartesian` coordinate system cannot normalize coordinates.
@@ -44,6 +48,11 @@ pub enum SuperclusterError {
     /// There are more points than the index can address.
     #[error("The number of points cannot be above {}.", MAX_POINTS)]
     TooManyPoints,
+
+    /// A cached filter that a query got, on its own or in a combined filter, comes from another
+    /// supercluster.
+    #[error("The cached filter comes from another supercluster.")]
+    ForeignCachedFilter,
 }
 
 #[cfg(test)]
@@ -67,18 +76,21 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_radius_message() {
+    fn test_invalid_radius_message_has_the_limit() {
         assert_eq!(
             SuperclusterError::InvalidRadius.to_string(),
-            "The radius must be a finite number above 0."
+            format!(
+                "The radius must be a finite number above 0, and the extent plus the radius cannot be above {}.",
+                i32::MAX
+            )
         );
     }
 
     #[test]
-    fn test_invalid_extent_message() {
+    fn test_invalid_extent_message_has_the_limit() {
         assert_eq!(
             SuperclusterError::InvalidExtent.to_string(),
-            "The extent must be a finite number above 0."
+            format!("The extent must be from 1 to {}.", i32::MAX)
         );
     }
 
@@ -103,6 +115,14 @@ mod tests {
         assert_eq!(
             SuperclusterError::TooManyPoints.to_string(),
             format!("The number of points cannot be above {}.", MAX_POINTS)
+        );
+    }
+
+    #[test]
+    fn test_foreign_cached_filter_message() {
+        assert_eq!(
+            SuperclusterError::ForeignCachedFilter.to_string(),
+            "The cached filter comes from another supercluster."
         );
     }
 }

@@ -13,8 +13,8 @@ use serde::{ser::SerializeMap, Serialize, Serializer};
 use std::fmt::Display;
 
 use crate::{
-    supercluster::Cluster, FilteredTile, FilteredTileItem, Item, Supercluster, SuperclusterError,
-    SuperclusterOptions, Tile, TileItem,
+    supercluster::Cluster, Item, Supercluster, SuperclusterError, SuperclusterOptions, Tile,
+    TileItem,
 };
 
 impl Supercluster<Feature> {
@@ -92,7 +92,7 @@ impl Cluster<'_> {
 
     /// Convert the cluster into a GeoJSON feature, with its center as the geometry.
     pub fn to_feature(&self) -> Feature {
-        self.feature_at(Geometry::new_point(self.coordinates()), self.point_count)
+        self.feature_at(Geometry::new_point(self.coordinates()), self.total_count)
     }
 
     /// Convert the cluster into a GeoJSON feature with the geometry, so a tile does not compute
@@ -119,43 +119,33 @@ impl Item<'_, Feature> {
 }
 
 impl TileItem<'_, Feature> {
-    /// Convert the item into a GeoJSON feature, with its position in the tile as the geometry.
+    /// Convert the item into a GeoJSON feature, with its position in the tile as the geometry: the
+    /// point with its ID and properties, or the cluster with `count` as its `point_count`, which
+    /// in a filtered tile counts the points that pass.
     pub fn to_feature(&self) -> Feature {
-        feature_in_tile(self.x, self.y, &self.item, None)
-    }
-}
+        let geometry = Geometry::new_point([f64::from(self.x), f64::from(self.y)]);
 
-impl FilteredTileItem<'_, Feature> {
-    /// Convert the item into a GeoJSON feature, like `TileItem::to_feature`: with its position in
-    /// the tile as the geometry, and the properties of the point, or of the cluster with the
-    /// points that pass as its `point_count`.
-    pub fn to_feature(&self) -> Feature {
-        feature_in_tile(self.x, self.y, &self.item, Some(self.count()))
-    }
-}
-
-/// Convert an item of a tile into a GeoJSON feature, with its position in the tile as the
-/// geometry. A cluster has `passing` points, the ones that pass for a filtered tile, or all of
-/// them.
-fn feature_in_tile(x: f64, y: f64, item: &Item<'_, Feature>, passing: Option<u32>) -> Feature {
-    let geometry = Geometry::new_point([x, y]);
-
-    match item {
-        Item::Cluster(cluster) => {
-            cluster.feature_at(geometry, passing.unwrap_or(cluster.point_count))
+        match self.item() {
+            Item::Cluster(cluster) => cluster.feature_at(geometry, self.count()),
+            Item::Point { point, .. } => Feature {
+                id: point.id.clone(),
+                bbox: None,
+                geometry: Some(geometry),
+                properties: point.properties.clone(),
+                foreign_members: None,
+            },
         }
-        Item::Point { point, .. } => Feature {
-            id: point.id.clone(),
-            bbox: None,
-            geometry: Some(geometry),
-            properties: point.properties.clone(),
-            foreign_members: None,
-        },
     }
 }
 
 impl<'a> Tile<'a, Feature> {
-    /// Convert the tile into a GeoJSON feature collection.
+    /// Convert the tile into a GeoJSON feature collection, with the position of each item in the
+    /// tile as its geometry. In a filtered tile, a cluster is at the center of the points that
+    /// pass, and its `point_count` counts the points that pass. Use it to change the features
+    /// before you send them.
+    ///
+    /// A `geojson` geometry holds floats, so the positions serialize as `150.0`. To send a tile
+    /// with whole numbers, such as `150`, serialize `as_feature_collection` instead.
     pub fn to_feature_collection(&self) -> FeatureCollection {
         FeatureCollection {
             bbox: None,
@@ -164,14 +154,16 @@ impl<'a> Tile<'a, Feature> {
         }
     }
 
-    /// Get a view of the tile as a GeoJSON feature collection, which serializes to the same JSON
+    /// Get a view of the tile as a GeoJSON feature collection, which serializes to the same GeoJSON
     /// as `to_feature_collection` but borrows the properties of the features instead of copying
-    /// them. Use it to send a tile as GeoJSON, for example with `serde_json::to_writer`.
+    /// them. It writes the positions in the tile as whole numbers, such as `150`, where a
+    /// `geojson` geometry holds floats and writes `150.0`. Use it to send a tile as GeoJSON, for
+    /// example with `serde_json::to_writer`.
     ///
     /// # Examples
     ///
     /// ```
-    /// use geojson::{Feature, Geometry};
+    /// use geojson::{Feature, FeatureCollection, Geometry};
     /// use supercluster::{Supercluster, SuperclusterOptions};
     ///
     /// let features = vec![Feature::from(Geometry::new_point([-77.032, 38.913]))];
@@ -180,84 +172,21 @@ impl<'a> Tile<'a, Feature> {
     ///
     /// let json = serde_json::to_string(&tile.as_feature_collection())?;
     ///
-    /// assert_eq!(json, serde_json::to_string(&tile.to_feature_collection())?);
+    /// assert_eq!(serde_json::from_str::<FeatureCollection>(&json)?, tile.to_feature_collection());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn as_feature_collection(&self) -> FeatureCollectionView<'_, 'a> {
-        FeatureCollectionView {
-            items: TileItems::Tile(&self.items),
-        }
+        FeatureCollectionView { items: &self.items }
     }
 }
 
-impl<'a> FilteredTile<'a, Feature> {
-    /// Convert the filtered tile into a GeoJSON feature collection, like
-    /// `Tile::to_feature_collection`. A cluster is at the center of the points that pass, and its
-    /// `point_count` counts the points that pass.
-    pub fn to_feature_collection(&self) -> FeatureCollection {
-        FeatureCollection {
-            bbox: None,
-            features: self.items.iter().map(|item| item.to_feature()).collect(),
-            foreign_members: None,
-        }
-    }
-
-    /// Get a view of the filtered tile as a GeoJSON feature collection, like
-    /// `Tile::as_feature_collection`, which serializes to the same JSON as
-    /// `to_feature_collection` without copying the features.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use geojson::{Feature, Geometry, JsonObject};
-    /// use supercluster::{Supercluster, SuperclusterOptions};
-    ///
-    /// // Two features close together, one of which is available
-    /// let feature = |lng: f64, available: bool| {
-    ///     let mut properties = JsonObject::new();
-    ///
-    ///     properties.insert("available".to_string(), available.into());
-    ///
-    ///     Feature {
-    ///         properties: Some(properties),
-    ///         ..Feature::from(Geometry::new_point([lng, 38.913]))
-    ///     }
-    /// };
-    /// let features = vec![feature(-77.032, true), feature(-77.033, false)];
-    /// let supercluster = Supercluster::load_features(SuperclusterOptions::default(), features)?;
-    /// let filtered_tile = supercluster.tile_filtered(0, 0, 0, |feature| {
-    ///     feature.property("available") == Some(&true.into())
-    /// });
-    ///
-    /// let json = serde_json::to_string(&filtered_tile.as_feature_collection())?;
-    ///
-    /// assert_eq!(json, serde_json::to_string(&filtered_tile.to_feature_collection())?);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn as_feature_collection(&self) -> FeatureCollectionView<'_, 'a> {
-        FeatureCollectionView {
-            items: TileItems::Filtered(&self.items),
-        }
-    }
-}
-
-/// A view of a tile as a GeoJSON feature collection, which `Tile::as_feature_collection` and
-/// `FilteredTile::as_feature_collection` return. It serializes like the feature collection that
-/// `to_feature_collection` returns, without copying the features.
+/// A view of a tile as a GeoJSON feature collection, which `Tile::as_feature_collection` returns.
+/// It serializes to the same GeoJSON as the feature collection that `to_feature_collection`
+/// returns, without copying the features, and writes the positions in the tile as whole numbers.
 #[derive(Clone, Copy, Debug)]
 pub struct FeatureCollectionView<'t, 'a> {
     /// The items of the tile to serialize.
-    items: TileItems<'t, 'a>,
-}
-
-/// The items of a tile or of a filtered tile.
-#[derive(Clone, Copy, Debug)]
-enum TileItems<'t, 'a> {
-    /// The items of a tile.
-    Tile(&'t [TileItem<'a, Feature>]),
-
-    /// The items of a filtered tile.
-    Filtered(&'t [FilteredTileItem<'a, Feature>]),
+    items: &'t [TileItem<'a, Feature>],
 }
 
 impl Serialize for FeatureCollectionView<'_, '_> {
@@ -265,37 +194,32 @@ impl Serialize for FeatureCollectionView<'_, '_> {
         let mut map = serializer.serialize_map(Some(2))?;
 
         map.serialize_entry("type", "FeatureCollection")?;
-        map.serialize_entry("features", &self.items)?;
+        map.serialize_entry("features", &FeatureViews(self.items))?;
         map.end()
     }
 }
 
-// The items serialize as a list of GeoJSON features.
-impl Serialize for TileItems<'_, '_> {
+/// The items of a tile, which serialize as a list of GeoJSON features.
+struct FeatureViews<'t, 'a>(&'t [TileItem<'a, Feature>]);
+
+impl Serialize for FeatureViews<'_, '_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            TileItems::Tile(items) => serializer.collect_seq(
-                items
-                    .iter()
-                    .map(|item| FeatureView(item.x, item.y, &item.item, None)),
-            ),
-            TileItems::Filtered(items) => serializer.collect_seq(
-                items
-                    .iter()
-                    .map(|item| FeatureView(item.x, item.y, &item.item, Some(item.count()))),
-            ),
-        }
+        serializer.collect_seq(
+            self.0
+                .iter()
+                .map(|item| FeatureView(item.x, item.y, item.item(), item.count())),
+        )
     }
 }
 
 /// An item of a tile at its position in the tile, which serializes like `TileItem::to_feature`
 /// returns it: the fields in the order of `geojson`, with the position in the tile as the geometry.
-/// A cluster has the number of points that pass for a filtered tile, or all of them.
-struct FeatureView<'i, 'a>(f64, f64, &'i Item<'a, Feature>, Option<u32>);
+/// A cluster has the count of the item, which in a filtered tile counts the points that pass.
+struct FeatureView<'a>(i32, i32, Item<'a, Feature>, u32);
 
-impl Serialize for FeatureView<'_, '_> {
+impl Serialize for FeatureView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let FeatureView(x, y, item, passing) = self;
+        let FeatureView(x, y, item, count) = self;
 
         // The type, the geometry, the properties, and the ID, which a point may not have
         let length = match item {
@@ -310,9 +234,7 @@ impl Serialize for FeatureView<'_, '_> {
         match item {
             Item::Cluster(cluster) => {
                 map.serialize_entry("id", &DisplayView(cluster.id.get()))?;
-                let point_count = passing.unwrap_or(cluster.point_count);
-
-                map.serialize_entry("properties", &ClusterPropertiesView(cluster, point_count))?;
+                map.serialize_entry("properties", &ClusterPropertiesView(cluster, *count))?;
             }
             Item::Point { point, .. } => {
                 if let Some(id) = &point.id {
@@ -327,8 +249,9 @@ impl Serialize for FeatureView<'_, '_> {
     }
 }
 
-/// A point geometry, which serializes like `Geometry::new_point`.
-struct PointView([f64; 2]);
+/// A point geometry at a position in a tile, which serializes like `Geometry::new_point`, with
+/// whole numbers.
+struct PointView([i32; 2]);
 
 impl Serialize for PointView {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -616,6 +539,11 @@ mod tests {
         serde_json::to_string(value).unwrap()
     }
 
+    /// Serialize a view of a tile and read it back as a feature collection.
+    fn read_back(view: FeatureCollectionView<'_, '_>) -> FeatureCollection {
+        serde_json::from_str(&to_json(&view)).unwrap()
+    }
+
     #[test]
     fn test_as_feature_collection_serializes_like_to_feature_collection() {
         let mut features: Vec<Feature> = (0..1500)
@@ -637,8 +565,8 @@ mod tests {
 
         assert_eq!(tile.items.len(), 3);
         assert_eq!(
-            to_json(&tile.as_feature_collection()),
-            to_json(&tile.to_feature_collection())
+            read_back(tile.as_feature_collection()),
+            tile.to_feature_collection()
         );
 
         // Only points, with their properties
@@ -646,9 +574,24 @@ mod tests {
 
         assert!(tile.items.len() > 2);
         assert_eq!(
-            to_json(&tile.as_feature_collection()),
-            to_json(&tile.to_feature_collection())
+            read_back(tile.as_feature_collection()),
+            tile.to_feature_collection()
         );
+    }
+
+    #[test]
+    fn test_as_feature_collection_writes_whole_numbers() {
+        let supercluster = load_features();
+        let tile = supercluster.with_cluster_max_zoom(0).tile(1, 1, 0);
+        let json = serde_json::to_value(tile.as_feature_collection()).unwrap();
+        let features = json["features"].as_array().unwrap();
+
+        // Written as whole numbers, such as `150` and not `150.0`
+        assert_eq!(features.len(), 2);
+        assert!(features
+            .iter()
+            .flat_map(|feature| feature["geometry"]["coordinates"].as_array().unwrap())
+            .all(|value| value.is_i64()));
     }
 
     #[test]
@@ -670,26 +613,27 @@ mod tests {
         // The western half of the cluster passes, so the cluster moves, and so do the points
         let west =
             |feature: &Feature| get_coordinates(feature).is_some_and(|[lng, _]| lng < 10.000075);
-        let tile = supercluster.tile_filtered(0, 0, 0, |feature| {
+        let kept = supercluster.filter(|feature| {
             west(feature) || feature.id.is_none() || feature.id == Some(Id::Number(7.into()))
         });
+        let tile = supercluster.tile_filtered(0, 0, 0, &kept).unwrap();
         let unfiltered = supercluster.tile(0, 0, 0);
 
         assert_eq!(tile.items.len(), 3);
         assert_eq!(
-            to_json(&tile.as_feature_collection()),
-            to_json(&tile.to_feature_collection())
+            read_back(tile.as_feature_collection()),
+            tile.to_feature_collection()
         );
 
         // A cluster counts the points left, at their center, with the ID it has without a filter
         for (item, feature) in tile.items.iter().zip(tile.to_feature_collection().features) {
-            let Item::Cluster(cluster) = item.item else {
+            let Item::Cluster(cluster) = item.item() else {
                 continue;
             };
             let plain = unfiltered
                 .items
                 .iter()
-                .find(|plain| matches!(plain.item, Item::Cluster(c) if c.id == cluster.id))
+                .find(|plain| matches!(plain.item(), Item::Cluster(c) if c.id == cluster.id))
                 .unwrap()
                 .to_feature();
 
@@ -699,7 +643,7 @@ mod tests {
             assert_eq!(feature.id, plain.id);
             assert_eq!(
                 feature.geometry,
-                Some(Geometry::new_point([item.x, item.y]))
+                Some(Geometry::new_point([f64::from(item.x), f64::from(item.y)]))
             );
             assert_ne!(item.coordinates(), cluster.coordinates());
         }

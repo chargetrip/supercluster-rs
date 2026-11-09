@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let options = serde_json::from_str(
         r#"{
             "radius": 40.0,
-            "extent": 512.0,
+            "extent": 512,
             "min_points": 1,
             "node_size": 64,
             "min_zoom": 2,

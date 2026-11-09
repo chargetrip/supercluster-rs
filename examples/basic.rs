@@ -25,7 +25,7 @@ fn main() -> Result<(), SuperclusterError> {
     // Set the configuration settings
     let options = SuperclusterOptions::builder()
         .radius(40.0)
-        .extent(512.0)
+        .extent(512)
         .min_points(2)
         .max_zoom(16)
         .coordinate_system(CoordinateSystem::LatLng)

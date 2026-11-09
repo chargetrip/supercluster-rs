@@ -1,7 +1,7 @@
 //! Time one request for a busy tile at every zoom level from 0 to 30, for "CCS or CHAdeMO, at least
-//! 50 kW, available", four ways: a closure, cached selections computed into a combination per
-//! request, cached selections combined lazily per request, and a cached combination. It prints the
-//! tables of "What a request costs" in the README. Run it with:
+//! 50 kW, available", four ways: a `Filter`, cached filters combined and cached per request, cached
+//! filters combined lazily per request, and a cached combined filter. It prints the table that
+//! "What a request costs" in the README sums up. Run it with:
 //!
 //! ```sh
 //! cargo bench --bench request_cost_bench
@@ -13,7 +13,13 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use supercluster::{FilteredTileItem, Item, Supercluster, SuperclusterOptions};
+use supercluster::{Item, Supercluster, SuperclusterOptions};
+
+// Only `read_items` of the shared helpers serves this benchmark, which makes its own points
+#[allow(dead_code)]
+mod common;
+
+use common::read_items;
 
 const TYPE2: u8 = 1;
 const CCS: u8 = 2;
@@ -129,14 +135,21 @@ fn thousands(number: u64) -> String {
     text
 }
 
-/// Write a duration in microseconds with three significant digits, and a comma every three digits.
+/// Write a duration of `micros` microseconds in the unit that reads best, milliseconds, microseconds
+/// or nanoseconds, with three significant digits.
 fn duration(micros: f64) -> String {
-    if micros >= 100.0 {
-        format!("{} µs", thousands(micros.round() as u64))
+    if micros >= 10_000.0 {
+        format!("{:.1} ms", micros / 1000.0)
+    } else if micros >= 1000.0 {
+        format!("{:.2} ms", micros / 1000.0)
+    } else if micros >= 100.0 {
+        format!("{} µs", micros.round())
     } else if micros >= 10.0 {
         format!("{micros:.1} µs")
-    } else {
+    } else if micros >= 1.0 {
         format!("{micros:.2} µs")
+    } else {
+        format!("{} ns", (micros * 1000.0).round())
     }
 }
 
@@ -186,15 +199,15 @@ fn main() {
         station.connectors & (CCS | CHADEMO) != 0 && station.power_kw >= 50 && station.available
     };
 
-    // Cached, for example every 30 seconds: one selection per connector type, power and
+    // Cached, for example every 30 seconds: one cached filter per connector type, power and
     // availability
-    let ccs = supercluster.select(|station| station.connectors & CCS != 0);
-    let chademo = supercluster.select(|station| station.connectors & CHADEMO != 0);
-    let fast = supercluster.select(|station| station.power_kw >= 50);
-    let available = supercluster.select(|station| station.available);
-    let cached = ccs.or(&chademo).and(&fast).and(&available).compute();
+    let ccs = supercluster.cache_filter(|station| station.connectors & CCS != 0);
+    let chademo = supercluster.cache_filter(|station| station.connectors & CHADEMO != 0);
+    let fast = supercluster.cache_filter(|station| station.power_kw >= 50);
+    let available = supercluster.cache_filter(|station| station.available);
+    let cached = ccs.or(&chademo).and(&fast).and(&available).cache();
 
-    println!("| Zoom | Points under the tile | Closure | Computed per query | Lazy combination | Cached selection |");
+    println!("| Zoom | Points under the tile | Filter | Cached per query | Combined filter | Cached filter |");
     println!("| ---: | ---: | ---: | ---: | ---: | ---: |");
 
     for z in 0..=max_zoom.min(30) {
@@ -203,31 +216,49 @@ fn main() {
             .tile(z, x, y)
             .items
             .iter()
-            .map(|tile_item| match tile_item.item {
-                Item::Cluster(cluster) => u64::from(cluster.point_count),
+            .map(|tile_item| match tile_item.item() {
+                Item::Cluster(cluster) => u64::from(cluster.total_count),
                 Item::Point { .. } => 1,
             })
             .sum();
-        let expansion_zooms = |items: Vec<FilteredTileItem<'_, Station>>| {
-            items
-                .iter()
-                .filter_map(|item| item.expansion_zoom())
-                .map(u32::from)
-                .sum::<u32>()
-        };
 
-        let closure = time(|| expansion_zooms(supercluster.tile_filtered(z, x, y, wanted).items));
+        let closure = time(|| {
+            read_items(
+                &supercluster
+                    .tile_filtered(z, x, y, supercluster.filter(wanted))
+                    .unwrap()
+                    .items,
+                true,
+            )
+        });
         let computed = time(|| {
-            let selection = ccs.or(&chademo).and(&fast).and(&available).compute();
+            let cached_now = ccs.or(&chademo).and(&fast).and(&available).cache();
 
-            expansion_zooms(supercluster.tile_selected(z, x, y, &selection).items)
+            read_items(
+                &supercluster
+                    .tile_filtered(z, x, y, &cached_now)
+                    .unwrap()
+                    .items,
+                true,
+            )
         });
         let lazy = time(|| {
-            let combination = ccs.or(&chademo).and(&fast).and(&available);
+            let combined = ccs.or(&chademo).and(&fast).and(&available);
 
-            expansion_zooms(supercluster.tile_selected(z, x, y, &combination).items)
+            read_items(
+                &supercluster
+                    .tile_filtered(z, x, y, &combined)
+                    .unwrap()
+                    .items,
+                true,
+            )
         });
-        let reused = time(|| expansion_zooms(supercluster.tile_selected(z, x, y, &cached).items));
+        let reused = time(|| {
+            read_items(
+                &supercluster.tile_filtered(z, x, y, &cached).unwrap().items,
+                true,
+            )
+        });
 
         println!(
             "| {z} | {} | {} | {} | {} | {} |",

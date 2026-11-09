@@ -1,10 +1,10 @@
-use supercluster::{CoordinateSystem, SuperclusterOptions};
+use supercluster::{CoordinateSystem, Item, SuperclusterOptions, TileItem};
 
 /// Create the options the benchmarks use.
 pub fn create_options() -> SuperclusterOptions {
     SuperclusterOptions::builder()
         .radius(40.0)
-        .extent(512.0)
+        .extent(512)
         .min_points(2)
         .max_zoom(16)
         .coordinate_system(CoordinateSystem::LatLng)
@@ -28,4 +28,25 @@ pub fn create_points(count: usize) -> Vec<[f64; 2]> {
 /// check, which takes too long and too much memory for a million points.
 pub fn runs_under_cargo_bench() -> bool {
     std::env::args().any(|argument| argument == "--bench")
+}
+
+/// Read what a server reads from the items of a tile: the cluster or point of every item, and with
+/// `expansion_zooms`, the zoom level where every cluster splits. Every benchmark of a tile reads its
+/// items with it, so it measures what a request pays for, not only building the tile.
+pub fn read_items<P>(items: &[TileItem<'_, P>], expansion_zooms: bool) -> u32 {
+    items
+        .iter()
+        .map(|tile_item| {
+            let read = match tile_item.item() {
+                Item::Cluster(cluster) => cluster.total_count,
+                Item::Point { index, .. } => index as u32,
+            };
+            let expansion_zoom = match expansion_zooms {
+                true => tile_item.expansion_zoom().map_or(0, u32::from),
+                false => 0,
+            };
+
+            read + expansion_zoom
+        })
+        .sum()
 }

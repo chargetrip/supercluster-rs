@@ -9,7 +9,7 @@ use std::{
     ops::{Add, Deref, Range, Sub},
 };
 
-use crate::selection::range_words;
+use crate::filter::range_words;
 
 /// The number of bits after the binary point of a position turned into an integer. A block of
 /// 4096 positions of at most 2^50 each sums to less than 2^63, so the sum of a block fits a `u64`.
@@ -100,14 +100,14 @@ impl Quantizer {
     }
 }
 
-/// The normalized positions of the points that were clustered, in leaf order, with what turns
-/// them into integers, their running sums and the points the integers do not hold. A supercluster holds them in an `Arc`, and its
-/// selections keep a weak reference. So a computed combination reaches the positions it sums
-/// without the supercluster, a query tells whether the running sums of a selection are of its own
-/// positions, and a selection does not keep them after the supercluster is dropped. Only the
-/// positions are written with `serde`, and reading builds the rest again, so it always matches
-/// them.
-pub(crate) struct Positions {
+/// The normalized positions of the points that were clustered, in leaf order, with what turns them
+/// into integers, their running sums and the points the integers do not hold. A supercluster holds
+/// them in an `Arc`, and its cached filters keep a weak reference. So a cached combined filter
+/// reaches the positions it sums without the supercluster, a query tells whether a cached filter
+/// belongs to its supercluster, and a cached filter does not keep them after the supercluster is
+/// dropped. Only the positions are written with `serde`, and reading builds the rest again, so it
+/// always matches them.
+pub struct Positions {
     /// The position of every point that was clustered.
     positions: Vec<[f64; 2]>,
 
@@ -161,12 +161,9 @@ impl Positions {
         )
     }
 
-    /// Get the position of the point at `leaf` as integers, for exact sums. A point past the last
-    /// one, which only a selection of another supercluster reaches, counts as 0.
+    /// Get the position of the point at `leaf` as integers, for exact sums.
     pub(crate) fn quantized(&self, leaf: usize) -> [u64; 2] {
-        self.positions
-            .get(leaf)
-            .map_or([0, 0], |&position| self.quantizer.quantize(position))
+        self.quantizer.quantize(self.positions[leaf])
     }
 
     /// Turn the sum of the integer positions of `count` points into the normalized position of
@@ -412,7 +409,7 @@ mod tests {
         let words = [u64::MAX];
         let sums = Sums::new(words.len(), |index| words[index], position);
 
-        // A selection of a smaller supercluster ends early, and the rest counts as no bit set
+        // A cached filter of a smaller supercluster ends early, and the rest counts as no bit set
         assert_eq!(
             sums.sum(0..200, |index| words[index], position),
             brute_force(&words, 0..64)

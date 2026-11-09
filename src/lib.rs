@@ -29,13 +29,15 @@ mod range;
 /// This module contains the supercluster implementation for the supercluster crate.
 mod supercluster;
 
-/// Filtered tile module.
-/// This module contains the queries that build a tile from the points that pass a filter.
-mod filtered_tile;
+/// Tile module.
+/// This module contains the items of a tile, and the queries that build a tile, with or without a
+/// filter.
+mod tile;
 
-/// Selection module.
-/// This module contains the selection of the points that pass a filter, which queries reuse.
-mod selection;
+/// Filter module.
+/// This module contains the filters that the filtered queries take: a closure that runs on each
+/// query, the cached result of a closure, which queries reuse, and combined filters of those.
+mod filter;
 
 /// Sums module.
 /// This module contains the running sums of positions that find the center of filtered clusters.
@@ -50,7 +52,7 @@ pub use builder::*;
 pub use error::*;
 #[cfg(feature = "geojson")]
 pub use feature::*;
-pub use filtered_tile::*;
+pub use filter::{AsFilter, CachedFilter, CombinedFilter, Filter};
 pub use range::*;
-pub use selection::{Combination, Select, Selection};
 pub use supercluster::*;
+pub use tile::*;

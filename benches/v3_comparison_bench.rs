@@ -19,7 +19,7 @@ use supercluster_v3::{
 
 mod common;
 
-use common::{create_options, create_points, runs_under_cargo_bench};
+use common::{create_options, create_points, read_items, runs_under_cargo_bench};
 
 /// The bounding box of the whole world.
 const WORLD: [f64; 4] = [-180.0, -90.0, 180.0, 90.0];
@@ -74,7 +74,7 @@ fn find_cluster<P>(supercluster: &Supercluster<P>) -> (ClusterId, u64) {
         .clusters(WORLD, 0)
         .iter()
         .find_map(|item| match item {
-            Item::Cluster(cluster) => Some((cluster.id, u64::from(cluster.point_count))),
+            Item::Cluster(cluster) => Some((cluster.id, u64::from(cluster.total_count))),
             Item::Point { .. } => None,
         })
         .expect("the points form a cluster on zoom level 0")
@@ -160,7 +160,14 @@ fn compare_one_million_points(c: &mut Criterion) {
     });
 
     group.bench_function("v4 points", |b| {
-        b.iter(|| v4_points.tile(black_box(6), black_box(32), black_box(21)))
+        b.iter(|| {
+            read_items(
+                &v4_points
+                    .tile(black_box(6), black_box(32), black_box(21))
+                    .items,
+                false,
+            )
+        })
     });
 
     group.finish();
