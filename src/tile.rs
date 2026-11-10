@@ -124,7 +124,7 @@ impl<'a, P> TileItem<'a, P> {
     }
 
     /// Get the position in the coordinate system of the supercluster, the longitude and latitude
-    /// for `LatLng`. It is the center of a cluster, the position of a point, or in a filtered tile,
+    /// for `LngLat`. It is the center of a cluster, the position of a point, or in a filtered tile,
     /// the center of the points that pass for a cluster with points that fail. Unlike `x` and `y`,
     /// it is not on the grid of the tile, and a copy of an item across the antimeridian keeps its
     /// own coordinates. It is converted on each call, so a query that does not need it does not
@@ -1098,7 +1098,7 @@ mod tests {
                 ]
             })
             .collect();
-        let lat_lng = CoordinateSystem::LatLng;
+        let lng_lat = CoordinateSystem::LngLat;
 
         // Half of them pass, then most of them, which sums the points that fail instead
         for west in [10.095, 10.015] {
@@ -1110,13 +1110,13 @@ mod tests {
             let kept: Vec<[f64; 2]> = grid
                 .iter()
                 .filter(|&&[lng, _]| lng > west)
-                .map(|&point| lat_lng.normalize(point))
+                .map(|&point| lng_lat.normalize(point))
                 .collect();
             let count = kept.len() as f64;
             let sum = kept
                 .iter()
                 .fold([0.0, 0.0], |sum, [x, y]| [sum[0] + x, sum[1] + y]);
-            let center = lat_lng.denormalize([sum[0] / count, sum[1] / count]);
+            let center = lng_lat.denormalize([sum[0] / count, sum[1] / count]);
 
             let items = supercluster
                 .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
@@ -1163,8 +1163,8 @@ mod tests {
             (-179.0, -80.0, true),
             (179.0, 80.0, true),
         ]);
-        let lat_lng = CoordinateSystem::LatLng;
-        let point = lat_lng.denormalize(lat_lng.normalize([10.0137, 50.0071]));
+        let lng_lat = CoordinateSystem::LngLat;
+        let point = lng_lat.denormalize(lng_lat.normalize([10.0137, 50.0071]));
         let cached_filter = supercluster.cache_filter(|point| point.keep);
         let all = supercluster.cache_filter(|_| true);
         let cached_combined = cached_filter.and(&all).cache();
@@ -1215,8 +1215,8 @@ mod tests {
             (-179.0, -80.0, true),
             (179.0, 80.0, true),
         ]);
-        let lat_lng = CoordinateSystem::LatLng;
-        let place = lat_lng.denormalize(lat_lng.normalize([10.0137, 50.0071]));
+        let lng_lat = CoordinateSystem::LngLat;
+        let place = lng_lat.denormalize(lng_lat.normalize([10.0137, 50.0071]));
         let cached_filter = supercluster.cache_filter(|point| point.keep);
         let all = supercluster.cache_filter(|_| true);
         let cached_combined = cached_filter.and(&all).cache();
@@ -1376,10 +1376,10 @@ mod tests {
 
         // Loading averages the normalized positions, where latitudes are not evenly spread, so the
         // center of the points at 50 and 60 is north of 55
-        let lat_lng = CoordinateSystem::LatLng;
-        let [south, north] = [[10.0, 50.0], [10.0, 60.0]].map(|point| lat_lng.normalize(point));
+        let lng_lat = CoordinateSystem::LngLat;
+        let [south, north] = [[10.0, 50.0], [10.0, 60.0]].map(|point| lng_lat.normalize(point));
         let center =
-            lat_lng.denormalize([(south[0] + north[0]) / 2.0, (south[1] + north[1]) / 2.0]);
+            lng_lat.denormalize([(south[0] + north[0]) / 2.0, (south[1] + north[1]) / 2.0]);
         let [lng, lat] = items[0].coordinates();
 
         assert_eq!(items.len(), 1);

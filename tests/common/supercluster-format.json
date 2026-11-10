@@ -7,7 +7,7 @@
     "radius": 40.0,
     "extent": 512,
     "node_size": 64,
-    "coordinate_system": "LatLng"
+    "coordinate_system": "LngLat"
   },
   "points": [
     [

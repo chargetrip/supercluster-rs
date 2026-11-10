@@ -14,7 +14,7 @@ fn main() -> Result<(), SuperclusterError> {
         .extent(512)
         .min_points(2)
         .max_zoom(16)
-        .coordinate_system(CoordinateSystem::LatLng)
+        .coordinate_system(CoordinateSystem::LngLat)
         .build()?;
 
     // Load the features into a new supercluster

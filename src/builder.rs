@@ -50,7 +50,7 @@ pub struct SuperclusterOptions {
     pub(crate) node_size: usize,
 
     /// Type of coordinate system for clustering.
-    /// The default value is `CoordinateSystem::LatLng`.
+    /// The default value is `CoordinateSystem::LngLat`.
     pub(crate) coordinate_system: CoordinateSystem,
 }
 
@@ -122,7 +122,7 @@ impl Default for SuperclusterOptions {
             radius: 40.0,
             extent: 512,
             node_size: 64,
-            coordinate_system: CoordinateSystem::LatLng,
+            coordinate_system: CoordinateSystem::LngLat,
         }
     }
 }
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(options.radius, 40.0);
         assert_eq!(options.extent, 512);
         assert_eq!(options.node_size, 64);
-        assert_eq!(options.coordinate_system, CoordinateSystem::LatLng);
+        assert_eq!(options.coordinate_system, CoordinateSystem::LngLat);
     }
 
     #[test]
@@ -335,7 +335,7 @@ mod tests {
             .radius(50.0)
             .extent(1024)
             .node_size(128)
-            .coordinate_system(CoordinateSystem::LatLng)
+            .coordinate_system(CoordinateSystem::LngLat)
             .build()
             .unwrap();
 
@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(options.radius, 50.0);
         assert_eq!(options.extent, 1024);
         assert_eq!(options.node_size, 128);
-        assert_eq!(options.coordinate_system, CoordinateSystem::LatLng);
+        assert_eq!(options.coordinate_system, CoordinateSystem::LngLat);
     }
 
     #[test]
@@ -453,7 +453,7 @@ mod tests {
                 "node_size": 64,
                 "min_zoom": 2,
                 "max_zoom": 16,
-                "coordinate_system": "LatLng"
+                "coordinate_system": "LngLat"
             }"#,
         )
         .unwrap();
@@ -461,6 +461,6 @@ mod tests {
         assert_eq!(options.min_zoom, 2);
         assert_eq!(options.max_zoom, 16);
         assert_eq!(options.min_points, 1);
-        assert_eq!(options.coordinate_system, CoordinateSystem::LatLng);
+        assert_eq!(options.coordinate_system, CoordinateSystem::LngLat);
     }
 }

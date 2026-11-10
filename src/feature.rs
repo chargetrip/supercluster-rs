@@ -10,7 +10,6 @@ use geojson::{
     feature::Id, Feature, FeatureCollection, Geometry, GeometryValue, JsonObject, JsonValue,
 };
 use serde::{ser::SerializeMap, Serialize, Serializer};
-use std::fmt::Display;
 
 use crate::{
     supercluster::Cluster, Item, Supercluster, SuperclusterError, SuperclusterOptions, Tile,
@@ -99,7 +98,7 @@ impl Cluster<'_> {
     /// a center it replaces with the position in the tile, and with `point_count` points.
     fn feature_at(&self, geometry: Geometry, point_count: u32) -> Feature {
         Feature {
-            id: Some(Id::String(self.id.get().to_string())),
+            id: Some(Id::Number(self.id.get().into())),
             bbox: None,
             geometry: Some(geometry),
             properties: Some(self.get_properties(point_count)),
@@ -233,7 +232,7 @@ impl Serialize for FeatureView<'_> {
 
         match item {
             Item::Cluster(cluster) => {
-                map.serialize_entry("id", &DisplayView(cluster.id.get()))?;
+                map.serialize_entry("id", &cluster.id.get())?;
                 map.serialize_entry("properties", &ClusterPropertiesView(cluster, *count))?;
             }
             Item::Point { point, .. } => {
@@ -304,15 +303,6 @@ impl Serialize for ClusterProperty {
             ClusterProperty::Flag(flag) => serializer.serialize_bool(*flag),
             ClusterProperty::Number(number) => serializer.serialize_u32(*number),
         }
-    }
-}
-
-/// A value that serializes as the string `Display` writes, without allocating it.
-struct DisplayView<T>(T);
-
-impl<T: Display> Serialize for DisplayView<T> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&self.0)
     }
 }
 
@@ -439,7 +429,7 @@ mod tests {
         let feature = cluster.to_feature();
         let id = cluster.id.get();
 
-        assert_eq!(feature.id, Some(Id::String(id.to_string())));
+        assert_eq!(feature.id, Some(Id::Number(id.into())));
         assert_eq!(
             feature.geometry,
             Some(Geometry::new_point(cluster.coordinates()))

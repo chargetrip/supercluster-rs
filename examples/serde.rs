@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "node_size": 64,
             "min_zoom": 2,
             "max_zoom": 16,
-            "coordinate_system": "LatLng"
+            "coordinate_system": "LngLat"
         }"#,
     )?;
 

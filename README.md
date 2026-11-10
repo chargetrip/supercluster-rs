@@ -134,7 +134,7 @@ fn main() -> Result<(), SuperclusterError> {
 | `min_zoom` | `0` | The lowest zoom level to cluster on. |
 | `max_zoom` | `16` | The highest zoom level to cluster on, up to `30`. Above it, a tile shows the points instead of clusters. |
 | `node_size` | `64` | The number of points in a leaf of the KD-tree, which affects speed. |
-| `coordinate_system` | `LatLng` | `LatLng` for longitudes and latitudes, or `Cartesian` for other 2D data. See [Cluster data that is not on a map](#cluster-data-that-is-not-on-a-map). |
+| `coordinate_system` | `LngLat` | `LngLat` for longitudes and latitudes, or `Cartesian` for other 2D data. See [Cluster data that is not on a map](#cluster-data-that-is-not-on-a-map). |
 
 ```rust
 use supercluster::{SuperclusterError, SuperclusterOptions};
@@ -406,7 +406,7 @@ The [API documentation on docs.rs](https://docs.rs/supercluster) describes every
 | `Supercluster::load_features(options, features)` | `Result<Supercluster<Feature>, _>` | Clusters GeoJSON features, with the `geojson` feature. |
 | `SuperclusterOptions::default()` | `SuperclusterOptions` | The default options, listed in [Set the options](#set-the-options). |
 | `SuperclusterOptions::builder()` | `SuperclusterOptionsBuilder` | Sets the options one by one. Its `build()` checks them and returns `Result<SuperclusterOptions, _>`. |
-| `CoordinateSystem::LatLng` | `CoordinateSystem` | Longitudes and latitudes. This is the default. |
+| `CoordinateSystem::LngLat` | `CoordinateSystem` | Longitudes and latitudes. This is the default. |
 | `CoordinateSystem::Cartesian { range }` | `CoordinateSystem` | Other 2D data, within the bounds of a `DataRange`. |
 | `DataRange::new(min_x, min_y, max_x, max_y)` | `DataRange` | The bounds of the data for the `Cartesian` coordinate system. |
 
@@ -510,6 +510,8 @@ let options = SuperclusterOptions::builder().radius(40.0).max_zoom(16).build()?;
 let options = SuperclusterOptions::default();
 ```
 
+`CoordinateSystem::LatLng` is now `LngLat`, which names the coordinates in the order they come in, `[lng, lat]`, as in GeoJSON. Options saved with serde need `"LngLat"` too, because `"LatLng"` no longer reads.
+
 A `DataRange` for the `Cartesian` coordinate system has no `offset` and `scale` fields, and no public `normalize` and `denormalize` anymore. A `match` on `CoordinateSystem` needs a `_` arm.
 
 ```rust,ignore
@@ -568,11 +570,11 @@ let zoom: u8 = supercluster.cluster_expansion_zoom(cluster_id)?;
 - `children` returns an iterator, which reads the children that loading recorded.
 - `cluster_expansion_zoom` returns a `u8`, like the other zoom levels, and an error for an unknown cluster.
 - `children`, `leaves` and `cluster_expansion_zoom` give `ClusterNotFound` for an unknown cluster. `TreeNotFound` and `TileNotFound` are gone.
-- `tile` does not show items from the opposite edge of the data on the first and last tile for the `Cartesian` coordinate system, because the two ends of its range are not next to each other. `LatLng` still does.
+- `tile` does not show items from the opposite edge of the data on the first and last tile for the `Cartesian` coordinate system, because the two ends of its range are not next to each other. `LngLat` still does.
 
 ### Typed results and GeoJSON
 
-The queries return `Item`s and a `Tile`. Match on them, or convert them into GeoJSON with the `geojson` feature. The geometry of a tile feature holds the position in the tile, as in version 3.
+The queries return `Item`s and a `Tile`. Match on them, or convert them into GeoJSON with the `geojson` feature. The geometry of a tile feature holds the position in the tile, as in version 3. The `id` of a cluster feature is a number, the same as its `cluster_id` property, where version 3 wrote it as a string.
 
 ```rust,ignore
 // Version 3

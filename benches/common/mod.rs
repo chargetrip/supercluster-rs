@@ -7,7 +7,7 @@ pub fn create_options() -> SuperclusterOptions {
         .extent(512)
         .min_points(2)
         .max_zoom(16)
-        .coordinate_system(CoordinateSystem::LatLng)
+        .coordinate_system(CoordinateSystem::LngLat)
         .build()
         .unwrap()
 }

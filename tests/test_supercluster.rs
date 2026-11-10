@@ -19,7 +19,7 @@ fn create_options() -> SuperclusterOptions {
         .extent(512)
         .min_points(2)
         .max_zoom(16)
-        .coordinate_system(CoordinateSystem::LatLng)
+        .coordinate_system(CoordinateSystem::LngLat)
         .build()
         .unwrap()
 }
@@ -31,7 +31,7 @@ fn create_options_with_low_max_zoom() -> SuperclusterOptions {
         .extent(256)
         .min_points(2)
         .max_zoom(4)
-        .coordinate_system(CoordinateSystem::LatLng)
+        .coordinate_system(CoordinateSystem::LngLat)
         .build()
         .unwrap()
 }
@@ -94,7 +94,7 @@ fn assert_cluster_ids_find_their_clusters(
         let id = ClusterId::new(id.as_u64().unwrap() as u32);
         let point_count = feature.property("point_count").unwrap().as_u64().unwrap();
 
-        assert_eq!(feature.id, Some(Id::String(id.get().to_string())));
+        assert_eq!(feature.id, Some(Id::Number(id.get().into())));
         assert_eq!(supercluster.leaves(id).unwrap().len() as u64, point_count);
     }
 }
@@ -195,7 +195,7 @@ fn test_generate_clusters_with_min_points() {
         .extent(512)
         .min_points(5)
         .max_zoom(16)
-        .coordinate_system(CoordinateSystem::LatLng)
+        .coordinate_system(CoordinateSystem::LngLat)
         .build()
         .unwrap();
     let supercluster = load_supercluster(options);

@@ -10,7 +10,7 @@
 //!
 //! The module also contains the `CoordinateSystem` enum, which defines the coordinate system for clustering.
 //!
-//! The `CoordinateSystem` enum has two variants: `LatLng` for latitude and longitude coordinates and
+//! The `CoordinateSystem` enum has two variants: `LngLat` for longitude and latitude coordinates and
 //! `Cartesian` for Cartesian coordinates.
 //!
 //! Every zoom level has a KD-tree of its items, and an item of a tree is a `u32` handle: a point
@@ -176,8 +176,8 @@ impl Clusters {
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[non_exhaustive]
 pub enum CoordinateSystem {
-    /// Latitude and longitude coordinates. Used for geo-spatial data.
-    LatLng,
+    /// Longitude and latitude coordinates, in that order, as in GeoJSON. Used for geospatial data.
+    LngLat,
 
     /// Cartesian coordinates. Used for non-geospatial (i.e. microscopy, etc.) data.
     Cartesian {
@@ -192,7 +192,7 @@ impl CoordinateSystem {
     pub(crate) fn normalize(&self, [x, y]: [f64; 2]) -> [f64; 2] {
         match self {
             CoordinateSystem::Cartesian { range } => [range.normalize(x), range.normalize(y)],
-            CoordinateSystem::LatLng => [
+            CoordinateSystem::LngLat => [
                 convert_longitude_to_spherical_mercator(x),
                 convert_latitude_to_spherical_mercator(y),
             ],
@@ -203,7 +203,7 @@ impl CoordinateSystem {
     pub(crate) fn denormalize(&self, [x, y]: [f64; 2]) -> [f64; 2] {
         match self {
             CoordinateSystem::Cartesian { range } => [range.denormalize(x), range.denormalize(y)],
-            CoordinateSystem::LatLng => [
+            CoordinateSystem::LngLat => [
                 convert_spherical_mercator_to_longitude(x),
                 convert_spherical_mercator_to_latitude(y),
             ],
@@ -264,7 +264,7 @@ pub struct Cluster<'a> {
 
 impl Cluster<'_> {
     /// Get the coordinates of the center of the cluster, in the coordinate system of the
-    /// supercluster: the longitude and latitude for `LatLng`. They are computed on each call, so a
+    /// supercluster: the longitude and latitude for `LngLat`. They are computed on each call, so a
     /// query that does not need them does not pay for them.
     pub fn coordinates(&self) -> [f64; 2] {
         self.coordinate_system.denormalize(self.position)
@@ -578,7 +578,7 @@ impl<P> Supercluster<P> {
     /// zoom levels, which results in a cluster hierarchy across zoom levels.
     ///
     /// `get_coordinates` returns the coordinates of a point in the coordinate system of the options,
-    /// the longitude and latitude for `LatLng`. It runs once for every point, in order. A point that
+    /// the longitude and latitude for `LngLat`. It runs once for every point, in order. A point that
     /// gets `None`, or coordinates that are not finite numbers, is left out of the clustering.
     ///
     /// The points move into leaf order, where the points of a cluster are next to each other.
@@ -738,7 +738,7 @@ impl<P> Supercluster<P> {
 
     /// Retrieve the items of the tile at zoom level `z`, `x` tiles from the left and `y` tiles from
     /// the top. The items also include the ones of a buffer around the tile, so clusters and points
-    /// on its edge are not cut off. For `LatLng`, the first and last tile also hold the items of the
+    /// on its edge are not cut off. For `LngLat`, the first and last tile also hold the items of the
     /// opposite edge, across the antimeridian. `Cartesian` does not wrap, because the two ends of
     /// its `DataRange` are not next to each other. A tile with nothing in it has no items.
     ///
@@ -924,9 +924,9 @@ impl<P> Supercluster<P> {
 
         visit_range((x - p) / z2, (x + 1.0 + p) / z2, x);
 
-        // For `LatLng`, the first and last tile also show the other edge.
+        // For `LngLat`, the first and last tile also show the other edge.
         // The two ends of a `Cartesian` range are not next to each other, so they do not wrap.
-        if self.options.coordinate_system == CoordinateSystem::LatLng {
+        if self.options.coordinate_system == CoordinateSystem::LngLat {
             if x == 0.0 {
                 visit_range(1.0 - p / z2, 1.0, z2);
             }
@@ -1312,7 +1312,7 @@ impl<'a, P> SuperclusterView<'a, P> {
                 range.normalize(bbox[3]),
                 add,
             ),
-            CoordinateSystem::LatLng => {
+            CoordinateSystem::LngLat => {
                 let mut min_lng = ((((bbox[0] + 180.0) % 360.0) + 360.0) % 360.0) - 180.0;
                 let min_lat = bbox[1].clamp(-90.0, 90.0);
                 let mut max_lng = if bbox[2] == 180.0 {
