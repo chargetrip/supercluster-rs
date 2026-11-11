@@ -98,6 +98,13 @@ struct Clusters {
     /// The handles of the children of every cluster, one cluster after the other, in the order the
     /// neighbor search found them.
     children: Vec<u32>,
+
+    /// How far the points of every cluster can be from its center, in steps of `spread_step` of
+    /// the zoom level it formed on, or `UNKNOWN_SPREAD`. The center of any of its points is as
+    /// close, so a filtered tile skips a cluster that is further from the tile. Reading a
+    /// supercluster finds them again from the children.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    spreads: Vec<u8>,
 }
 
 impl Clusters {
@@ -110,6 +117,7 @@ impl Clusters {
             leaf_starts: vec![],
             child_starts: vec![0],
             children: vec![],
+            spreads: vec![],
         }
     }
 
@@ -156,6 +164,36 @@ impl Clusters {
                 }
             }
         }
+    }
+
+    /// Find how far the points of every cluster are from its center. `positions` holds the points
+    /// in leaf order, and `step` gets the length of one step of the spread of a cluster that formed
+    /// on a zoom level.
+    fn set_spreads(&mut self, positions: &[[f64; 2]], step: impl Fn(u8) -> f64) {
+        let mut spreads: Vec<u8> = Vec::with_capacity(self.len());
+
+        for cluster in 0..self.len() {
+            let start = self.leaf_starts[cluster] as usize;
+            let leaves = &positions[start..start + self.point_counts[cluster] as usize];
+            let [x, y] = self.positions[cluster];
+
+            // The farthest point, by the square of its distance, which saves a root per point
+            let farthest = leaves.iter().fold(0.0_f64, |farthest, &[leaf_x, leaf_y]| {
+                farthest.max((leaf_x - x).powi(2) + (leaf_y - y).powi(2))
+            });
+
+            // Loading keeps every spread below four radii, so only data that was read can have one
+            // too wide to hold, and its clusters are then always checked
+            let steps = (farthest.sqrt() / step(self.zooms[cluster])).ceil();
+
+            spreads.push(if steps < f64::from(UNKNOWN_SPREAD) {
+                steps as u8
+            } else {
+                UNKNOWN_SPREAD
+            });
+        }
+
+        self.spreads = spreads;
     }
 
     /// Free the room the vectors grew into but do not use.
@@ -338,6 +376,10 @@ pub struct Supercluster<P> {
 
     /// The clusters of every zoom level.
     clusters: Clusters,
+
+    /// How far past a tile a filtered tile searches each KD-tree, to find every cluster that can
+    /// move into it: the widest spread of a cluster in the tree, normalized.
+    reaches: Vec<f64>,
 }
 
 /// Writes a supercluster with `serde` and reads it back. The data is written with the version of
@@ -450,20 +492,33 @@ mod format {
     impl<'de, P: Deserialize<'de>> Deserialize<'de> for Supercluster<P> {
         fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
             let read = Read::deserialize(deserializer)?;
-            let supercluster = Supercluster {
+            let mut supercluster = Supercluster {
                 options: read.options,
                 points: read.points,
                 indexes: read.indexes,
                 positions: Arc::new(Positions::new(read.positions)),
                 trees: read.trees,
                 clusters: read.clusters,
+                reaches: vec![],
             };
 
             match supercluster.inconsistency() {
                 Some(reason) => Err(D::Error::custom(format_args!(
                     "The supercluster data does not hold together: {reason}."
                 ))),
-                None => Ok(supercluster),
+                None => {
+                    let options = &supercluster.options;
+
+                    supercluster
+                        .clusters
+                        .set_spreads(&supercluster.positions, |zoom| {
+                            super::spread_step(options, zoom)
+                        });
+
+                    supercluster.set_reaches();
+
+                    Ok(supercluster)
+                }
             }
         }
     }
@@ -628,6 +683,7 @@ impl<P> Supercluster<P> {
             positions: Arc::new(Positions::new(vec![])),
             trees: vec![],
             clusters: Clusters::new(),
+            reaches: vec![],
         };
 
         supercluster.index(get_coordinates);
@@ -800,6 +856,47 @@ impl<P> Supercluster<P> {
         }
     }
 
+    /// Check whether an item of a KD-tree at `position` can end up in `bounds` when a filter moves
+    /// it to the center of some of its points. A point stays where it is, and a cluster stays
+    /// within its spread.
+    pub(crate) fn can_end_up_in(&self, handle: u32, position: [f64; 2], bounds: Bounds) -> bool {
+        bounds.contains(position)
+            || match self.handle(handle) {
+                Handle::Cluster(cluster) => bounds.distance_to(position) <= self.spread_of(cluster),
+                Handle::Point(_) => false,
+            }
+    }
+
+    /// Get how far the center of some points of a cluster can be from its center, normalized, or
+    /// infinity when its spread is unknown.
+    fn spread_of(&self, cluster: usize) -> f64 {
+        match self.clusters.spreads[cluster] {
+            UNKNOWN_SPREAD => f64::INFINITY,
+            spread => spread_length(
+                spread,
+                spread_step(&self.options, self.clusters.zooms[cluster]),
+            ),
+        }
+    }
+
+    /// Find how far past a tile a filtered tile searches each KD-tree: the widest spread of a
+    /// cluster in it. The tree of the points that are not clustered has no clusters, so 0.
+    fn set_reaches(&mut self) {
+        self.reaches = self
+            .trees
+            .iter()
+            .map(|tree| {
+                tree.ids
+                    .iter()
+                    .filter_map(|&handle| match self.handle(handle) {
+                        Handle::Cluster(cluster) => Some(self.spread_of(cluster)),
+                        Handle::Point(_) => None,
+                    })
+                    .fold(0.0, f64::max)
+            })
+            .collect();
+    }
+
     /// Get the normalized position of an item of a KD-tree, from the table of clusters or of the
     /// points.
     fn position(&self, handle: u32) -> [f64; 2] {
@@ -900,26 +997,49 @@ impl<P> Supercluster<P> {
     }
 
     /// Call `visit` with the handle and the normalized position of every item of the tile at zoom
-    /// level `z`, `x` tiles from the left and `y` tiles from the top, and with the X of the tile the
-    /// position is relative to. That X is a world width away from `x` for the items that the first
-    /// and last tile show from across the antimeridian.
+    /// level `z`, `x` tiles from the left and `y` tiles from the top, with the X of the tile the
+    /// position is relative to, and with the bounds of the tile and its buffer. That X is a world
+    /// width away from `x` for the items that the first and last tile show from across the
+    /// antimeridian.
+    ///
+    /// `items` tells whether the caller moves clusters. If it does, it also gets the clusters close
+    /// enough to move into the bounds, and keeps the items that end up in them.
     pub(crate) fn for_each_in_tile(
         &self,
         cluster_max_zoom: u8,
         (z, x, y): (u8, u32, u32),
-        mut visit: impl FnMut(u32, [f64; 2], f64),
+        items: TileItems,
+        mut visit: impl FnMut(u32, [f64; 2], f64, Bounds),
     ) {
-        let tree = &self.trees[self.tree_index(z, cluster_max_zoom)];
+        let index = self.tree_index(z, cluster_max_zoom);
+        let tree = &self.trees[index];
         let (x, y) = (f64::from(x), f64::from(y));
         let z2 = tiles_per_axis(z);
         let p = self.options.radius / f64::from(self.options.extent);
         let top = (y - p) / z2;
         let bottom = (y + 1.0 + p) / z2;
 
+        // A moved cluster is at most its spread from where the KD-tree has it
+        let reach = match items {
+            TileItems::StayInPlace => 0.0,
+            TileItems::MoveClusters => self.reaches[index],
+        };
+
         let mut visit_range = |min_x: f64, max_x: f64, origin_x: f64| {
-            tree.range(min_x, top, max_x, bottom, |position| {
-                visit(tree.ids[position], tree.coords[position], origin_x)
-            });
+            let bounds = Bounds {
+                min_x,
+                min_y: top,
+                max_x,
+                max_y: bottom,
+            };
+
+            tree.range(
+                min_x - reach,
+                top - reach,
+                max_x + reach,
+                bottom + reach,
+                |position| visit(tree.ids[position], tree.coords[position], origin_x, bounds),
+            );
         };
 
         visit_range((x - p) / z2, (x + 1.0 + p) / z2, x);
@@ -940,9 +1060,7 @@ impl<P> Supercluster<P> {
     /// Get the position, on the grid of the tile extent, of a point that is normalized to the
     /// [0..1] range, in the tile at `tile_x`, `tile_y`, where `z2` is the number of tiles per axis.
     /// It rounds to the nearest whole number, and rounds up at a half, so -2.5 is -2. An item of a
-    /// tile is usually at most the radius outside it, but a filtered cluster that moved to the
-    /// center of the points that pass can be further out, and a position past the range of an `i32`
-    /// saturates.
+    /// tile is at most the radius outside it, which `build` checks an `i32` holds.
     pub(crate) fn tile_position(
         &self,
         [x, y]: [f64; 2],
@@ -1033,10 +1151,12 @@ impl<P> Supercluster<P> {
 
         self.move_into_leaf_order(&entries, &mut trees, &mut clusters);
 
+        clusters.set_spreads(&self.positions, |zoom| spread_step(&self.options, zoom));
         clusters.shrink_to_fit();
 
         self.trees = trees;
         self.clusters = clusters;
+        self.set_reaches();
 
         #[cfg(feature = "tracing")]
         tracing::debug!(
@@ -1068,8 +1188,7 @@ impl<P> Supercluster<P> {
         zoom: u8,
         clusters: &mut Clusters,
     ) -> Vec<Entry> {
-        let r =
-            self.options.radius / (f64::from(self.options.extent) * (2.0_f64).powi(zoom as i32));
+        let r = cluster_radius(&self.options, zoom);
         let min_points = self.options.min_points;
 
         let mut processed = vec![false; entries.len()];
@@ -1367,6 +1486,79 @@ impl<'a, P> SuperclusterView<'a, P> {
 /// Get the number of tiles per axis at a zoom level.
 pub(crate) fn tiles_per_axis(z: u8) -> f64 {
     2f64.powi(z as i32)
+}
+
+/// Whether the items of a tile stay where the KD-tree has them.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum TileItems {
+    /// Every item stays where it is, so the search of the tile and its buffer finds them all.
+    StayInPlace,
+
+    /// A cluster moves to the center of some of its points, so the search also finds the clusters
+    /// that can move into the tile and its buffer.
+    MoveClusters,
+}
+
+/// The normalized bounds of a tile and its buffer, edges included, as a KD-tree searches them.
+#[derive(Clone, Copy)]
+pub(crate) struct Bounds {
+    /// The left edge.
+    min_x: f64,
+
+    /// The top edge.
+    min_y: f64,
+
+    /// The right edge.
+    max_x: f64,
+
+    /// The bottom edge.
+    max_y: f64,
+}
+
+impl Bounds {
+    /// Check whether a normalized position is in the bounds, the same way a KD-tree checks it.
+    pub(crate) fn contains(&self, [x, y]: [f64; 2]) -> bool {
+        x >= self.min_x && x <= self.max_x && y >= self.min_y && y <= self.max_y
+    }
+
+    /// Get the distance from a normalized position to the nearest point of the bounds, or 0 when
+    /// it is in them.
+    fn distance_to(&self, [x, y]: [f64; 2]) -> f64 {
+        let dx = (self.min_x - x).max(x - self.max_x).max(0.0);
+        let dy = (self.min_y - y).max(y - self.max_y).max(0.0);
+
+        dx.hypot(dy)
+    }
+}
+
+/// The steps of the spread of a cluster per radius it formed within. The children of a cluster are
+/// at most the radius from the first of them, and so from its center, which lies between them, at
+/// most twice the radius. Their points are as far from them again, at half the radius per zoom
+/// level, so the points of a cluster are less than four radii from its center. Its spread takes at
+/// most 252 steps, which fits a `u8` with room to round up.
+const SPREAD_STEPS_PER_RADIUS: f64 = 63.0;
+
+/// The spread of a cluster that is too wide to hold in steps, which only data that was read can
+/// have. A cluster with it is always checked.
+const UNKNOWN_SPREAD: u8 = u8::MAX;
+
+/// How far past its spread the center of some points of a cluster can be, because that center is
+/// found from integers that are up to the width of the area over 2^50 off.
+const SPREAD_PADDING: f64 = 1.0 / (1u64 << 40) as f64;
+
+/// Get the normalized radius that clusters form within on a zoom level.
+fn cluster_radius(options: &SuperclusterOptions, zoom: u8) -> f64 {
+    options.radius / (f64::from(options.extent) * tiles_per_axis(zoom))
+}
+
+/// Get the length of one step of the spread of a cluster that formed on a zoom level.
+fn spread_step(options: &SuperclusterOptions, zoom: u8) -> f64 {
+    cluster_radius(options, zoom) / SPREAD_STEPS_PER_RADIUS
+}
+
+/// Get the normalized length of a spread, with room for how far a center can be off.
+fn spread_length(spread: u8, step: f64) -> f64 {
+    f64::from(spread) * step + SPREAD_PADDING
 }
 
 /// Convert longitude to spherical mercator in the [0..1] range.
@@ -1707,6 +1899,79 @@ mod tests {
         }
 
         assert!(clusters > 0);
+    }
+
+    #[test]
+    fn test_load_finds_how_far_the_points_of_every_cluster_spread() {
+        let distance = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
+        let supercluster = load_spread_points(2000);
+        let clusters = &supercluster.clusters;
+
+        assert!(clusters.len() > 0);
+        assert_eq!(clusters.spreads.len(), clusters.len());
+
+        for (cluster, &spread) in clusters.spreads.iter().enumerate() {
+            let handle = (supercluster.points.len() + cluster) as u32;
+            let step = spread_step(&supercluster.options, clusters.zooms[cluster]);
+
+            // Below four radii, so it is never unknown
+            assert!(spread <= 252);
+
+            for &position in &supercluster.positions[supercluster.leaf_range(handle)] {
+                assert!(
+                    distance(clusters.positions[cluster], position) <= spread_length(spread, step)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_tile_filtered_finds_the_items_that_a_search_of_every_cluster_finds() {
+        let supercluster = load_spread_points(3000);
+        let mut everywhere = supercluster.clone();
+
+        // A search of the whole of every tree
+        for reach in &mut everywhere.reaches {
+            *reach = f64::INFINITY;
+        }
+
+        let summarize = |supercluster: &Supercluster<[f64; 2]>, z, x, y| {
+            let filter = supercluster.filter(|point: &[f64; 2]| point[0] > point[1]);
+            let mut items: Vec<(i32, i32, u32)> = supercluster
+                .tile_filtered(z, x, y, filter)
+                .unwrap()
+                .items
+                .iter()
+                .map(|tile_item| (tile_item.x, tile_item.y, tile_item.count()))
+                .collect();
+
+            // A wider search visits the items in another order
+            items.sort_unstable();
+            items
+        };
+
+        for z in 0..=5 {
+            for x in 0..1 << z {
+                for y in 0..1 << z {
+                    assert_eq!(
+                        summarize(&supercluster, z, x, y),
+                        summarize(&everywhere, z, x, y),
+                        "tile {z}/{x}/{y}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_deserialize_finds_the_spreads_of_the_clusters_again() {
+        let supercluster = load_spread_points(300);
+        let json = serde_json::to_string(&supercluster).unwrap();
+        let restored: Supercluster<[f64; 2]> = serde_json::from_str(&json).unwrap();
+
+        assert!(!restored.clusters.spreads.is_empty());
+        assert_eq!(restored.clusters.spreads, supercluster.clusters.spreads);
     }
 
     #[test]

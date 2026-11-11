@@ -236,8 +236,8 @@ impl SuperclusterOptionsBuilder {
             return Err(SuperclusterError::InvalidExtent);
         }
 
-        // An item of a tile is at most the radius outside it, apart from a filtered cluster that
-        // moved, and its position is an `i32`, so the extent plus the radius must fit one
+        // An item of a tile is at most the radius outside it, and its position is an `i32`, so the
+        // extent plus the radius must fit one
         if f64::from(options.extent) + options.radius > f64::from(i32::MAX) {
             return Err(SuperclusterError::InvalidRadius);
         }

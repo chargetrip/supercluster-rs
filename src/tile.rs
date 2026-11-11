@@ -21,7 +21,7 @@ use std::{
 use crate::{
     filter::{filter_bits, Matches, Scratch},
     sums::Positions,
-    supercluster::tiles_per_axis,
+    supercluster::{tiles_per_axis, Bounds, TileItems},
     AsFilter, CachedFilter, ClusterId, Filter, Item, Supercluster, SuperclusterError,
     SuperclusterView,
 };
@@ -499,12 +499,15 @@ struct Placed<'a> {
 
 /// Build the items of a tile and place them. `tile` is the zoom level, X and Y coordinates of the
 /// tile. `place` gets the handle and the normalized position of every item of the KD-tree in the
-/// tile, and buffers to reuse, and returns what the item keeps, or `None` to leave it out. Every
-/// tile is built through it, so a tile with and without a filter place their items the same way.
+/// tile, the bounds of the tile and its buffer, and buffers to reuse, and returns what the item
+/// keeps, or `None` to leave it out. `kind` tells whether `place` moves clusters, and if so, it also
+/// gets the clusters that can move into the bounds. Every tile is built through it, so a tile with and without a
+/// filter place their items the same way, and keep the ones that end up in the bounds.
 fn build_tile<'a, P>(
     view: SuperclusterView<'a, P>,
     tile: (u8, u32, u32),
-    mut place: impl FnMut(u32, [f64; 2], &mut Scratch) -> Option<Placed<'a>>,
+    kind: TileItems,
+    mut place: impl FnMut(u32, [f64; 2], Bounds, &mut Scratch) -> Option<Placed<'a>>,
 ) -> Tile<'a, P> {
     let supercluster = view.supercluster;
     let (z, _, tile_y) = tile;
@@ -513,26 +516,37 @@ fn build_tile<'a, P>(
     let mut items = vec![];
     let mut scratch = Scratch::default();
 
-    supercluster.for_each_in_tile(view.cluster_max_zoom, tile, |handle, position, origin_x| {
-        let Some(placed) = place(handle, position, &mut scratch) else {
-            return;
-        };
+    supercluster.for_each_in_tile(
+        view.cluster_max_zoom,
+        tile,
+        kind,
+        |handle, position, origin_x, bounds| {
+            let Some(placed) = place(handle, position, bounds, &mut scratch) else {
+                return;
+            };
 
-        // A copy of the item across the antimeridian is placed by the origin of its copy of the
-        // world, so it keeps its own position
-        let [x, y] = supercluster.tile_position(placed.position, z2, origin_x, tile_y);
+            if !bounds.contains(placed.position) {
+                scratch.give_back(placed.matches);
 
-        items.push(TileItem {
-            x,
-            y,
-            count: placed.count,
-            supercluster,
-            cluster_max_zoom: view.cluster_max_zoom,
-            handle: placed.handle,
-            matches: placed.matches,
-            position: placed.position,
-        });
-    });
+                return;
+            }
+
+            // A copy of the item across the antimeridian is placed by the origin of its copy of the
+            // world, so it keeps its own position
+            let [x, y] = supercluster.tile_position(placed.position, z2, origin_x, tile_y);
+
+            items.push(TileItem {
+                x,
+                y,
+                count: placed.count,
+                supercluster,
+                cluster_max_zoom: view.cluster_max_zoom,
+                handle: placed.handle,
+                matches: placed.matches,
+                position: placed.position,
+            });
+        },
+    );
 
     Tile { items }
 }
@@ -548,47 +562,58 @@ fn filter_tile<'a, P>(
 ) -> Tile<'a, P> {
     let supercluster = view.supercluster;
 
-    build_tile(view, tile, |handle, position, scratch| {
-        let leaves = supercluster.leaf_range(handle);
-        let (count, matches) = find_matches(leaves.clone(), scratch)?;
-        let positions = supercluster.positions();
-        let only = || {
-            (count == 1)
-                .then(|| matches.first(leaves.clone()))
-                .flatten()
-        };
+    build_tile(
+        view,
+        tile,
+        TileItems::MoveClusters,
+        |handle, position, bounds, scratch| {
+            let leaves = supercluster.leaf_range(handle);
 
-        let placed = if count as usize == leaves.len() {
-            Placed {
-                count,
-                handle,
-                matches,
-                position,
+            // An item outside the bounds is only worth filtering if it can move into them
+            if !supercluster.can_end_up_in(handle, position, bounds) {
+                return None;
             }
-        } else if let Some(leaf) = only() {
-            // A cluster with one point left is that point, exactly where it is, and the next item
-            // reuses its bits
-            scratch.give_back(matches);
 
-            Placed {
-                count,
-                handle: leaf as u32,
-                matches: Matches::All,
-                position: positions[leaf],
-            }
-        } else {
-            let center = center_of_left(positions, &matches, leaves.clone(), count);
+            let (count, matches) = find_matches(leaves.clone(), scratch)?;
+            let positions = supercluster.positions();
+            let only = || {
+                (count == 1)
+                    .then(|| matches.first(leaves.clone()))
+                    .flatten()
+            };
 
-            Placed {
-                count,
-                handle,
-                matches,
-                position: center,
-            }
-        };
+            let placed = if count as usize == leaves.len() {
+                Placed {
+                    count,
+                    handle,
+                    matches,
+                    position,
+                }
+            } else if let Some(leaf) = only() {
+                // A cluster with one point left is that point, exactly where it is, and the next item
+                // reuses its bits
+                scratch.give_back(matches);
 
-        Some(placed)
-    })
+                Placed {
+                    count,
+                    handle: leaf as u32,
+                    matches: Matches::All,
+                    position: positions[leaf],
+                }
+            } else {
+                let center = center_of_left(positions, &matches, leaves.clone(), count);
+
+                Placed {
+                    count,
+                    handle,
+                    matches,
+                    position: center,
+                }
+            };
+
+            Some(placed)
+        },
+    )
 }
 
 /// Build the items of a tile where every point passes. `tile` is the zoom level, X and Y
@@ -600,14 +625,19 @@ pub(crate) fn every_point_tile<P>(
 ) -> Tile<'_, P> {
     let supercluster = view.supercluster;
 
-    build_tile(view, tile, |handle, position, _| {
-        Some(Placed {
-            count: supercluster.leaf_range(handle).len() as u32,
-            handle,
-            matches: Matches::All,
-            position,
-        })
-    })
+    build_tile(
+        view,
+        tile,
+        TileItems::StayInPlace,
+        |handle, position, _, _| {
+            Some(Placed {
+                count: supercluster.leaf_range(handle).len() as u32,
+                handle,
+                matches: Matches::All,
+                position,
+            })
+        },
+    )
 }
 
 /// Find the center of the `count` points at the positions `leaves` that pass, from the sum of their
@@ -804,6 +834,64 @@ mod tests {
         // The cluster becomes the point, which stays right of the tile
         assert_eq!(filtered[0].2[0], 515);
         assert_eq!(filtered[0].2[1], unfiltered[0].2[1]);
+    }
+
+    #[test]
+    fn test_tile_filtered_with_a_cluster_that_moves_into_the_next_tile() {
+        let points = create_points_of_a_cluster_that_moves();
+
+        // The point is in the buffer of the left tile, and in the right tile itself
+        assert_eq!(tile_filtered(&points, (1, 0, 0)), [(101, 1, [515, 483])]);
+        assert_eq!(tile_filtered(&points, (1, 1, 0)), [(101, 1, [3, 483])]);
+    }
+
+    /// Create points whose cluster at zoom 1 forms around the failing ones, more than the radius
+    /// left of the edge between the two tiles, while the only point that passes is just right of
+    /// that edge.
+    fn create_points_of_a_cluster_that_moves() -> Vec<(f64, f64, bool)> {
+        let mut points = vec![(-15.0, 10.0, false); 100];
+
+        points.extend([(-6.0, 10.0, false), (0.9, 10.0, true)]);
+
+        points
+    }
+
+    #[test]
+    fn test_tile_filtered_shows_every_point_that_passes_once_in_the_tiles() {
+        let extent = SuperclusterOptions::default().extent as i32;
+
+        for points in [
+            create_spread_points(2000),
+            create_points_of_a_cluster_that_moves(),
+        ] {
+            let supercluster = load(&points);
+            let filter = supercluster.filter(|point| point.keep);
+            let passing = points.iter().filter(|(_, _, keep)| *keep).count();
+
+            // Without the buffers, the tiles of a zoom level split the world, so they hold every
+            // point that passes once, wherever the filter moves a cluster to
+            for z in 0..=4 {
+                let mut shown = 0;
+
+                for x in 0..1 << z {
+                    for y in 0..1 << z {
+                        shown += supercluster
+                            .tile_filtered(z, x, y, &filter)
+                            .unwrap()
+                            .items
+                            .iter()
+                            .filter(|tile_item| {
+                                (0..extent).contains(&tile_item.x)
+                                    && (0..extent).contains(&tile_item.y)
+                            })
+                            .map(|tile_item| tile_item.count() as usize)
+                            .sum::<usize>();
+                    }
+                }
+
+                assert_eq!(shown, passing, "zoom {z}");
+            }
+        }
     }
 
     #[test]
