@@ -37,7 +37,7 @@ fn main() -> Result<(), SuperclusterError> {
     // Get a tile
     let tile = supercluster.tile(0, 0, 0).to_feature_collection();
 
-    println!("Tile: {:?}", tile);
+    println!("Tile: {tile:?}");
 
     for feature in tile.features {
         assert!(feature.properties.is_some());

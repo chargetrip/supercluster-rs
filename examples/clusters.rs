@@ -34,14 +34,14 @@ fn main() -> Result<(), SuperclusterError> {
                     cluster.total_count,
                 )
             }
-            Item::Point { index, .. } => println!("Point {}", index),
+            Item::Point { index, .. } => println!("Point {index}"),
         }
     }
 
     // Convert them into GeoJSON features
     let features: Vec<_> = clusters.iter().map(Item::to_feature).collect();
 
-    println!("Clusters: {:?}", features);
+    println!("Clusters: {features:?}");
 
     Ok(())
 }

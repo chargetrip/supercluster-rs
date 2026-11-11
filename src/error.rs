@@ -37,7 +37,7 @@ pub enum SuperclusterError {
 
     /// The data range of the `Cartesian` coordinate system cannot normalize coordinates.
     #[error(
-        "The data range must have finite bounds, no maximum below its minimum and more than one value."
+        "The data range must have finite bounds, no maximum below its minimum, more than one value and a width that an f64 holds."
     )]
     InvalidDataRange,
 
@@ -63,7 +63,7 @@ mod tests {
     fn test_invalid_max_zoom_message_has_the_limit() {
         assert_eq!(
             SuperclusterError::InvalidMaxZoom.to_string(),
-            format!("The maximum zoom level cannot be above {}.", MAX_ZOOM_LIMIT)
+            format!("The maximum zoom level cannot be above {MAX_ZOOM_LIMIT}.")
         );
     }
 
@@ -98,7 +98,7 @@ mod tests {
     fn test_invalid_data_range_message() {
         assert_eq!(
             SuperclusterError::InvalidDataRange.to_string(),
-            "The data range must have finite bounds, no maximum below its minimum and more than one value."
+            "The data range must have finite bounds, no maximum below its minimum, more than one value and a width that an f64 holds."
         );
     }
 
@@ -114,7 +114,7 @@ mod tests {
     fn test_too_many_points_message_has_the_limit() {
         assert_eq!(
             SuperclusterError::TooManyPoints.to_string(),
-            format!("The number of points cannot be above {}.", MAX_POINTS)
+            format!("The number of points cannot be above {MAX_POINTS}.")
         );
     }
 

@@ -127,9 +127,12 @@ impl Default for SuperclusterOptions {
     }
 }
 
-/// Builder of the supercluster options, which checks the values when it builds them.
+/// Builder of the supercluster options, which checks the values when it builds them. Serde reads
+/// the options through it, and rejects a field it does not know, so a misspelled option gives an
+/// error instead of its default.
 #[derive(Clone, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 pub struct SuperclusterOptionsBuilder {
     /// Minimal zoom level to generate clusters on.
     min_zoom: Option<u8>,
@@ -440,6 +443,17 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("The node size cannot be 0."));
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_options_from_json_with_an_unknown_field() {
+        let options = serde_json::from_str::<SuperclusterOptions>(r#"{ "raduis": 80.0 }"#);
+
+        assert!(options
+            .unwrap_err()
+            .to_string()
+            .contains("unknown field `raduis`"));
     }
 
     #[test]

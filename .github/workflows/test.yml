@@ -46,7 +46,9 @@ jobs:
     - name: Run build
       run: cargo build --locked
     - name: Run clippy
-      run: cargo clippy --locked --all-targets --all-features --no-deps -- -D warnings
+      run: |
+        cargo clippy --locked --all-targets --all-features --no-deps -- -D warnings
+        cargo clippy --locked --bench '*' --all-features --no-deps -- -D warnings
     - name: Run lint
       run: cargo fmt -- --check
     - name: Check feature combinations

@@ -555,10 +555,8 @@ mod format {
                 return Some("the number of KD-trees does not match the maximum zoom level");
             }
 
-            // The search of an empty tree stops at once, so only a tree with items needs nodes
             for tree in &self.trees {
                 if tree.ids.len() != tree.coords.len()
-                    || (!tree.ids.is_empty() && tree.node_size == 0)
                     || !tree.ids.iter().all(|&handle| is_handle(handle))
                 {
                     return Some("a KD-tree is not valid or refers to an item that does not exist");
@@ -996,6 +994,21 @@ impl<P> Supercluster<P> {
         }
     }
 
+    /// Call `visit` with the handle and the normalized position of every item of the KD-tree at
+    /// `index` in a box, as the left, top, right and bottom edge, edges included.
+    pub(crate) fn tree_range(
+        &self,
+        index: usize,
+        [min_x, min_y, max_x, max_y]: [f64; 4],
+        mut visit: impl FnMut(u32, [f64; 2]),
+    ) {
+        let tree = &self.trees[index];
+
+        tree.range(self.options.node_size, min_x, min_y, max_x, max_y, |at| {
+            visit(tree.ids[at], tree.coords[at])
+        });
+    }
+
     /// Call `visit` with the handle and the normalized position of every item of the tile at zoom
     /// level `z`, `x` tiles from the left and `y` tiles from the top, with the X of the tile the
     /// position is relative to, and with the bounds of the tile and its buffer. That X is a world
@@ -1012,7 +1025,6 @@ impl<P> Supercluster<P> {
         mut visit: impl FnMut(u32, [f64; 2], f64, Bounds),
     ) {
         let index = self.tree_index(z, cluster_max_zoom);
-        let tree = &self.trees[index];
         let (x, y) = (f64::from(x), f64::from(y));
         let z2 = tiles_per_axis(z);
         let p = self.options.radius / f64::from(self.options.extent);
@@ -1033,12 +1045,10 @@ impl<P> Supercluster<P> {
                 max_y: bottom,
             };
 
-            tree.range(
-                min_x - reach,
-                top - reach,
-                max_x + reach,
-                bottom + reach,
-                |position| visit(tree.ids[position], tree.coords[position], origin_x, bounds),
+            self.tree_range(
+                index,
+                [min_x - reach, top - reach, max_x + reach, bottom + reach],
+                |handle, position| visit(handle, position, origin_x, bounds),
             );
         };
 
@@ -1208,7 +1218,7 @@ impl<P> Supercluster<P> {
 
             let [x, y] = entry.position;
 
-            tree.within_into(x, y, r, &mut stack, &mut neighbors);
+            tree.within_into(self.options.node_size, x, y, r, &mut stack, &mut neighbors);
 
             // Count the points of the neighbors that no other item took yet
             let point_count = entry.point_count
@@ -1418,17 +1428,19 @@ impl<'a, P> SuperclusterView<'a, P> {
     /// Add the clustered items within the bounding box at the zoom level to `items`.
     fn clusters_into(&self, bbox: [f64; 4], zoom: u8, items: &mut Vec<Item<'a, P>>) {
         let supercluster = self.supercluster;
-        let tree = &supercluster.trees[supercluster.tree_index(zoom, self.cluster_max_zoom)];
-        let mut add = |position: usize| {
-            items.push(supercluster.item(tree.ids[position], tree.coords[position]))
-        };
+        let index = supercluster.tree_index(zoom, self.cluster_max_zoom);
+        let mut add =
+            |handle: u32, position: [f64; 2]| items.push(supercluster.item(handle, position));
 
         match &supercluster.options.coordinate_system {
-            CoordinateSystem::Cartesian { range } => tree.range(
-                range.normalize(bbox[0]),
-                range.normalize(bbox[1]),
-                range.normalize(bbox[2]),
-                range.normalize(bbox[3]),
+            CoordinateSystem::Cartesian { range } => supercluster.tree_range(
+                index,
+                [
+                    range.normalize(bbox[0]),
+                    range.normalize(bbox[1]),
+                    range.normalize(bbox[2]),
+                    range.normalize(bbox[3]),
+                ],
                 add,
             ),
             CoordinateSystem::LngLat => {
@@ -1451,11 +1463,14 @@ impl<'a, P> SuperclusterView<'a, P> {
                     return;
                 }
 
-                tree.range(
-                    convert_longitude_to_spherical_mercator(min_lng),
-                    convert_latitude_to_spherical_mercator(max_lat),
-                    convert_longitude_to_spherical_mercator(max_lng),
-                    convert_latitude_to_spherical_mercator(min_lat),
+                supercluster.tree_range(
+                    index,
+                    [
+                        convert_longitude_to_spherical_mercator(min_lng),
+                        convert_latitude_to_spherical_mercator(max_lat),
+                        convert_longitude_to_spherical_mercator(max_lng),
+                        convert_latitude_to_spherical_mercator(min_lat),
+                    ],
                     &mut add,
                 )
             }
@@ -1489,7 +1504,6 @@ pub(crate) fn tiles_per_axis(z: u8) -> f64 {
 }
 
 /// Whether the items of a tile stay where the KD-tree has them.
-#[derive(Clone, Copy, PartialEq)]
 pub(crate) enum TileItems {
     /// Every item stays where it is, so the search of the tile and its buffer finds them all.
     StayInPlace,
@@ -1589,35 +1603,7 @@ fn convert_spherical_mercator_to_latitude(y: f64) -> f64 {
 mod tests {
     use super::*;
 
-    use crate::test_points::{create_spread_points, load_spread_points};
-
-    /// A point that tells whether a filter should keep it.
-    #[derive(Clone, Debug, PartialEq)]
-    struct TestPoint {
-        /// The longitude and latitude, if the point has any.
-        coordinates: Option<[f64; 2]>,
-
-        /// Whether a filter keeps the point.
-        keep: bool,
-    }
-
-    impl TestPoint {
-        /// Create a point at a longitude and latitude.
-        fn new(lng: f64, lat: f64, keep: bool) -> Self {
-            TestPoint {
-                coordinates: Some([lng, lat]),
-                keep,
-            }
-        }
-
-        /// Create a point without coordinates.
-        fn without_coordinates() -> Self {
-            TestPoint {
-                coordinates: None,
-                keep: true,
-            }
-        }
-    }
+    use crate::test_points::{create_spread_points, load_spread_points, TestPoint};
 
     /// Create a supercluster with the points loaded and the default options.
     /// A point is a longitude, a latitude and whether a filter keeps it.
@@ -2079,7 +2065,7 @@ mod tests {
         type Change = fn(&mut serde_json::Value);
 
         // Tree 17 holds the points, after the default maximum zoom level of 16
-        let changes: [(Change, &str); 12] = [
+        let changes: [(Change, &str); 11] = [
             (
                 |json| json["indexes"].as_array_mut().unwrap().truncate(10),
                 "the indexes do not match the points",
@@ -2100,10 +2086,6 @@ mod tests {
             ),
             (
                 |json| json["trees"][17]["ids"][0] = 1_000_000.into(),
-                "a KD-tree is not valid or refers to an item that does not exist",
-            ),
-            (
-                |json| json["trees"][17]["node_size"] = 0.into(),
                 "a KD-tree is not valid or refers to an item that does not exist",
             ),
             (

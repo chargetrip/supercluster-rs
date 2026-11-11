@@ -495,9 +495,11 @@ supercluster = { version = "3", features = ["log", "cluster_metadata"] }
 supercluster = { version = "4.0.0", features = ["geojson", "tracing"] }
 ```
 
+The `geojson` feature takes `geojson` 1.0 instead of 0.24. If your code uses `geojson` too, upgrade it to 1.0, or its types will not match the ones of the supercluster, and port your code to the 1.0 API, such as `GeometryValue::Point { coordinates }`. Version 4 needs Rust 1.96 or later.
+
 ### Options
 
-Build the options with `SuperclusterOptions::builder()`, or take the defaults. `build()` returns a `Result` and rejects values it cannot use, and so does deserializing them. The fields are private, so read them with the methods of the same names, such as `options.max_zoom()`. `min_points` is a `u32` instead of a `u8`, and `extent` a `u32` instead of an `f64`, so write `512` instead of `512.0` in options that serde reads.
+Build the options with `SuperclusterOptions::builder()`, or take the defaults. `build()` returns a `Result` and rejects values it cannot use, and so does deserializing them. Options that serde reads can leave out fields, which take their defaults, and a field it does not know is an error. The fields are private, so read them with the methods of the same names, such as `options.max_zoom()`. `min_points` is a `u32` instead of a `u8`, and `extent` a `u32` instead of an `f64`, so write `512` instead of `512.0` in options that serde reads.
 
 ```rust,ignore
 // Version 3

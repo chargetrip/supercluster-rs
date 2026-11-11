@@ -684,35 +684,10 @@ mod tests {
 
     use std::cell::Cell;
 
-    use crate::{test_points, CoordinateSystem, DataRange, SuperclusterOptions};
-
-    /// A point that tells whether a filter should keep it.
-    #[derive(Debug, PartialEq)]
-    struct TestPoint {
-        /// The longitude and latitude, if the point has any.
-        coordinates: Option<[f64; 2]>,
-
-        /// Whether a filter keeps the point.
-        keep: bool,
-    }
-
-    impl TestPoint {
-        /// Create a point at a longitude and latitude.
-        fn new(lng: f64, lat: f64, keep: bool) -> Self {
-            TestPoint {
-                coordinates: Some([lng, lat]),
-                keep,
-            }
-        }
-
-        /// Create a point without coordinates.
-        fn without_coordinates() -> Self {
-            TestPoint {
-                coordinates: None,
-                keep: true,
-            }
-        }
-    }
+    use crate::{
+        test_points::{self, TestPoint},
+        CoordinateSystem, DataRange, SuperclusterOptions,
+    };
 
     /// The ID or index, the number of points left and the position in the tile of an item.
     type Summary = (usize, u32, [i32; 2]);
@@ -1175,6 +1150,39 @@ mod tests {
         assert_eq!(unfiltered[0].coordinates(), cluster.coordinates());
     }
 
+    /// Call `check` with the items of the tile at zoom level 0 for every kind of filter that keeps
+    /// the points `keep` keeps: a `Filter`, a `CachedFilter`, cached filters combined per query and
+    /// a cached combined filter, which must all give the same items. The items borrow the cached
+    /// filters, so they cannot outlive this function.
+    fn check_world_tile_every_way<P>(
+        supercluster: &Supercluster<P>,
+        keep: fn(&P) -> bool,
+        check: impl FnOnce(&[Vec<TileItem<'_, P>>]),
+    ) {
+        let cached_filter = supercluster.cache_filter(keep);
+        let all = supercluster.cache_filter(|_| true);
+        let cached_combined = cached_filter.and(&all).cache();
+
+        check(&[
+            supercluster
+                .tile_filtered(0, 0, 0, supercluster.filter(keep))
+                .unwrap()
+                .items,
+            supercluster
+                .tile_filtered(0, 0, 0, &cached_filter)
+                .unwrap()
+                .items,
+            supercluster
+                .tile_filtered(0, 0, 0, cached_filter.and(&all))
+                .unwrap()
+                .items,
+            supercluster
+                .tile_filtered(0, 0, 0, &cached_combined)
+                .unwrap()
+                .items,
+        ]);
+    }
+
     #[test]
     fn test_tile_filtered_centers_many_points_left_exactly() {
         // 200 points close together, which form one cluster on zoom level 0
@@ -1217,28 +1225,16 @@ mod tests {
             assert!((lng - center[0]).abs() < 1e-9 && (lat - center[1]).abs() < 1e-9);
 
             // Every way of filtering finds the same center, to the bit
-            let cached_filter = supercluster.cache_filter(|point| point.keep);
-            let all = supercluster.cache_filter(|_| true);
-            let cached_combined = cached_filter.and(&all).cache();
-            let ways = [
-                supercluster
-                    .tile_filtered(0, 0, 0, &cached_filter)
-                    .unwrap()
-                    .items,
-                supercluster
-                    .tile_filtered(0, 0, 0, cached_filter.and(&all))
-                    .unwrap()
-                    .items,
-                supercluster
-                    .tile_filtered(0, 0, 0, &cached_combined)
-                    .unwrap()
-                    .items,
-            ];
-
-            for way in ways {
-                assert_eq!(way[0].coordinates(), items[0].coordinates());
-                assert_eq!((way[0].x, way[0].y), (items[0].x, items[0].y));
-            }
+            check_world_tile_every_way(
+                &supercluster,
+                |point| point.keep,
+                |ways| {
+                    for way in ways {
+                        assert_eq!(way[0].coordinates(), items[0].coordinates());
+                        assert_eq!((way[0].x, way[0].y), (items[0].x, items[0].y));
+                    }
+                },
+            );
         }
     }
 
@@ -1253,44 +1249,28 @@ mod tests {
         ]);
         let lng_lat = CoordinateSystem::LngLat;
         let point = lng_lat.denormalize(lng_lat.normalize([10.0137, 50.0071]));
-        let cached_filter = supercluster.cache_filter(|point| point.keep);
-        let all = supercluster.cache_filter(|_| true);
-        let cached_combined = cached_filter.and(&all).cache();
 
         // Every way of filtering turns the cluster into the point, exactly where it is
-        let ways = [
-            supercluster
-                .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
-                .unwrap()
-                .items,
-            supercluster
-                .tile_filtered(0, 0, 0, &cached_filter)
-                .unwrap()
-                .items,
-            supercluster
-                .tile_filtered(0, 0, 0, cached_filter.and(&all))
-                .unwrap()
-                .items,
-            supercluster
-                .tile_filtered(0, 0, 0, &cached_combined)
-                .unwrap()
-                .items,
-        ];
+        check_world_tile_every_way(
+            &supercluster,
+            |point| point.keep,
+            |ways| {
+                for items in ways {
+                    let item = items
+                        .iter()
+                        .find(|item| matches!(item.item(), Item::Point { index: 0, .. }))
+                        .unwrap();
 
-        for items in ways {
-            let item = items
-                .iter()
-                .find(|item| matches!(item.item(), Item::Point { index: 0, .. }))
-                .unwrap();
-
-            assert!(items
-                .iter()
-                .all(|item| matches!(item.item(), Item::Point { .. })));
-            assert_eq!(item.count(), 1);
-            assert_eq!(item.coordinates(), point);
-            assert_eq!(item.leaves().count(), 1);
-            assert_eq!(item.expansion_zoom(), None);
-        }
+                    assert!(items
+                        .iter()
+                        .all(|item| matches!(item.item(), Item::Point { .. })));
+                    assert_eq!(item.count(), 1);
+                    assert_eq!(item.coordinates(), point);
+                    assert_eq!(item.leaves().count(), 1);
+                    assert_eq!(item.expansion_zoom(), None);
+                }
+            },
+        );
     }
 
     #[test]
@@ -1305,39 +1285,23 @@ mod tests {
         ]);
         let lng_lat = CoordinateSystem::LngLat;
         let place = lng_lat.denormalize(lng_lat.normalize([10.0137, 50.0071]));
-        let cached_filter = supercluster.cache_filter(|point| point.keep);
-        let all = supercluster.cache_filter(|_| true);
-        let cached_combined = cached_filter.and(&all).cache();
 
         // Every way of filtering puts it exactly on the place, not on the mean of the integers
-        let ways = [
-            supercluster
-                .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
-                .unwrap()
-                .items,
-            supercluster
-                .tile_filtered(0, 0, 0, &cached_filter)
-                .unwrap()
-                .items,
-            supercluster
-                .tile_filtered(0, 0, 0, cached_filter.and(&all))
-                .unwrap()
-                .items,
-            supercluster
-                .tile_filtered(0, 0, 0, &cached_combined)
-                .unwrap()
-                .items,
-        ];
+        check_world_tile_every_way(
+            &supercluster,
+            |point| point.keep,
+            |ways| {
+                for items in ways {
+                    let item = items
+                        .iter()
+                        .find(|item| matches!(item.item(), Item::Cluster(_)))
+                        .unwrap();
 
-        for items in ways {
-            let item = items
-                .iter()
-                .find(|item| matches!(item.item(), Item::Cluster(_)))
-                .unwrap();
-
-            assert_eq!(item.count(), 2);
-            assert_eq!(item.coordinates(), place);
-        }
+                    assert_eq!(item.count(), 2);
+                    assert_eq!(item.coordinates(), place);
+                }
+            },
+        );
     }
 
     #[test]
@@ -1416,41 +1380,25 @@ mod tests {
             let supercluster =
                 Supercluster::load(options.clone(), points, |point| Some([point.0, point.1]))
                     .unwrap();
-            let cached_filter = supercluster.cache_filter(|point| point.2);
-            let all = supercluster.cache_filter(|_| true);
-            let cached_combined = cached_filter.and(&all).cache();
-            let ways = [
-                supercluster
-                    .tile_filtered(0, 0, 0, supercluster.filter(|point| point.2))
-                    .unwrap()
-                    .items,
-                supercluster
-                    .tile_filtered(0, 0, 0, &cached_filter)
-                    .unwrap()
-                    .items,
-                supercluster
-                    .tile_filtered(0, 0, 0, cached_filter.and(&all))
-                    .unwrap()
-                    .items,
-                supercluster
-                    .tile_filtered(0, 0, 0, &cached_combined)
-                    .unwrap()
-                    .items,
-            ];
+            check_world_tile_every_way(
+                &supercluster,
+                |point| point.2,
+                |ways| {
+                    for items in ways {
+                        let [x, y] = items[0].coordinates();
 
-            for items in &ways {
-                let [x, y] = items[0].coordinates();
+                        assert_eq!(items.len(), 1);
+                        assert!(matches!(items[0].item(), Item::Cluster(_)));
+                        assert!(
+                            (x - center[0]).abs() < 1e-9 && (y - center[1]).abs() < 1e-9,
+                            "{x}, {y}"
+                        );
 
-                assert_eq!(items.len(), 1);
-                assert!(matches!(items[0].item(), Item::Cluster(_)));
-                assert!(
-                    (x - center[0]).abs() < 1e-9 && (y - center[1]).abs() < 1e-9,
-                    "{x}, {y}"
-                );
-
-                // Every way of filtering finds the same center, to the bit
-                assert_eq!(items[0].coordinates(), ways[0][0].coordinates());
-            }
+                        // Every way of filtering finds the same center, to the bit
+                        assert_eq!(items[0].coordinates(), ways[0][0].coordinates());
+                    }
+                },
+            );
         }
     }
 

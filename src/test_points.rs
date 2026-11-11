@@ -25,3 +25,31 @@ pub(crate) fn load_spread_points(count: usize) -> Supercluster<[f64; 2]> {
     )
     .unwrap()
 }
+
+/// A point that tells whether a filter should keep it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TestPoint {
+    /// The longitude and latitude, if the point has any.
+    pub(crate) coordinates: Option<[f64; 2]>,
+
+    /// Whether a filter keeps the point.
+    pub(crate) keep: bool,
+}
+
+impl TestPoint {
+    /// Create a point at a longitude and latitude.
+    pub(crate) fn new(lng: f64, lat: f64, keep: bool) -> Self {
+        TestPoint {
+            coordinates: Some([lng, lat]),
+            keep,
+        }
+    }
+
+    /// Create a point without coordinates.
+    pub(crate) fn without_coordinates() -> Self {
+        TestPoint {
+            coordinates: None,
+            keep: true,
+        }
+    }
+}

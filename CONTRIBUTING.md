@@ -103,10 +103,11 @@ cargo test --test test_supercluster test_cluster_expansion_zoom
 
 ### Code Quality Checks
 
-Run [clippy](https://github.com/rust-lang/rust-clippy) to lint the code:
+Run [clippy](https://github.com/rust-lang/rust-clippy) to lint the code. `--all-targets` skips the benchmarks that `cargo bench` runs only by name, so the second command lints every benchmark:
 
 ```sh
 cargo clippy --locked --all-targets --all-features --no-deps -- -D warnings
+cargo clippy --locked --bench '*' --all-features --no-deps -- -D warnings
 ```
 
 Run [rustfmt](https://github.com/rust-lang/rustfmt) to format the code:

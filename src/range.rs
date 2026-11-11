@@ -64,14 +64,18 @@ impl DataRange {
     }
 
     /// Check whether the range can normalize coordinates: its bounds are finite, no maximum is below
-    /// its minimum and the scale is above 0.
+    /// its minimum, and the scale is above 0 and finite. Finite bounds far apart, such as -1e308 and
+    /// 1e308, have a scale too wide for an `f64`.
     pub(crate) fn is_valid(&self) -> bool {
+        let scale = self.scale();
+
         [self.min_x, self.min_y, self.max_x, self.max_y]
             .iter()
             .all(|value| value.is_finite())
             && self.max_x >= self.min_x
             && self.max_y >= self.min_y
-            && self.scale() > 0.0
+            && scale > 0.0
+            && scale.is_finite()
     }
 
     /// Get the lowest minimum of the two axes, which normalizes to 0.
@@ -131,5 +135,6 @@ mod tests {
         assert!(!DataRange::new(10.0, 0.0, 0.0, 10.0).is_valid());
         assert!(!DataRange::new(0.0, 0.0, f64::INFINITY, 10.0).is_valid());
         assert!(!DataRange::new(f64::NAN, 0.0, 10.0, 10.0).is_valid());
+        assert!(!DataRange::new(-1e308, -1e308, 1e308, 1e308).is_valid());
     }
 }
