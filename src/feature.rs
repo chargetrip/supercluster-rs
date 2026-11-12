@@ -71,7 +71,7 @@ impl Cluster<'_> {
     fn properties(&self, point_count: u32) -> [(&'static str, ClusterProperty); 3] {
         [
             ("cluster", ClusterProperty::Flag(true)),
-            ("cluster_id", ClusterProperty::Number(self.id.get())),
+            ("cluster_id", ClusterProperty::Number(self.id().get())),
             ("point_count", ClusterProperty::Number(point_count)),
         ]
     }
@@ -91,14 +91,14 @@ impl Cluster<'_> {
 
     /// Convert the cluster into a GeoJSON feature, with its center as the geometry.
     pub fn to_feature(&self) -> Feature {
-        self.feature_at(Geometry::new_point(self.coordinates()), self.total_count)
+        self.feature_at(Geometry::new_point(self.coordinates()), self.total_count())
     }
 
     /// Convert the cluster into a GeoJSON feature with the geometry, so a tile does not compute
     /// a center it replaces with the position in the tile, and with `point_count` points.
     fn feature_at(&self, geometry: Geometry, point_count: u32) -> Feature {
         Feature {
-            id: Some(Id::Number(self.id.get().into())),
+            id: Some(Id::Number(self.id().get().into())),
             bbox: None,
             geometry: Some(geometry),
             properties: Some(self.get_properties(point_count)),
@@ -122,7 +122,7 @@ impl TileItem<'_, Feature> {
     /// point with its ID and properties, or the cluster with `count` as its `point_count`, which
     /// in a filtered tile counts the points that pass.
     pub fn to_feature(&self) -> Feature {
-        let geometry = Geometry::new_point([f64::from(self.x), f64::from(self.y)]);
+        let geometry = Geometry::new_point([f64::from(self.x()), f64::from(self.y())]);
 
         match self.item() {
             Item::Cluster(cluster) => cluster.feature_at(geometry, self.count()),
@@ -206,7 +206,7 @@ impl Serialize for FeatureViews<'_, '_> {
         serializer.collect_seq(
             self.0
                 .iter()
-                .map(|item| FeatureView(item.x, item.y, item.item(), item.count())),
+                .map(|item| FeatureView(item.x(), item.y(), item.item(), item.count())),
         )
     }
 }
@@ -232,7 +232,7 @@ impl Serialize for FeatureView<'_> {
 
         match item {
             Item::Cluster(cluster) => {
-                map.serialize_entry("id", &cluster.id.get())?;
+                map.serialize_entry("id", &cluster.id().get())?;
                 map.serialize_entry("properties", &ClusterPropertiesView(cluster, *count))?;
             }
             Item::Point { point, .. } => {
@@ -427,7 +427,7 @@ mod tests {
             panic!("expected a single cluster");
         };
         let feature = cluster.to_feature();
-        let id = cluster.id.get();
+        let id = cluster.id().get();
 
         assert_eq!(feature.id, Some(Id::Number(id.into())));
         assert_eq!(
@@ -623,7 +623,7 @@ mod tests {
             let plain = unfiltered
                 .items
                 .iter()
-                .find(|plain| matches!(plain.item(), Item::Cluster(c) if c.id == cluster.id))
+                .find(|plain| matches!(plain.item(), Item::Cluster(c) if c.id() == cluster.id()))
                 .unwrap()
                 .to_feature();
 
@@ -633,7 +633,10 @@ mod tests {
             assert_eq!(feature.id, plain.id);
             assert_eq!(
                 feature.geometry,
-                Some(Geometry::new_point([f64::from(item.x), f64::from(item.y)]))
+                Some(Geometry::new_point([
+                    f64::from(item.x()),
+                    f64::from(item.y())
+                ]))
             );
             assert_ne!(item.coordinates(), cluster.coordinates());
         }

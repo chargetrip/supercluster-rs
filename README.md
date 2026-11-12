@@ -103,12 +103,12 @@ fn main() -> Result<(), SuperclusterError> {
         match tile_item.item() {
             Item::Cluster(cluster) => {
                 // The stations of the cluster, ten at most
-                for station in supercluster.leaves(cluster.id)?.iter().take(10) {
-                    println!("{} is in cluster {}", station.name, cluster.id.get());
+                for station in supercluster.leaves(cluster.id())?.iter().take(10) {
+                    println!("{} is in cluster {}", station.name, cluster.id().get());
                 }
             }
-            Item::Point { index, point } => {
-                println!("{} at {}, {} in the tile, loaded at {index}", point.name, tile_item.x, tile_item.y);
+            Item::Point { index, point, .. } => {
+                println!("{} at {}, {} in the tile, loaded at {index}", point.name, tile_item.x(), tile_item.y());
             }
         }
     }
@@ -120,7 +120,7 @@ fn main() -> Result<(), SuperclusterError> {
 - **Points without coordinates are left out.** That is a point the closure returns `None` for, or whose coordinates are not finite numbers.
 - **Points move into cluster order.** `points()` keeps the points of every cluster next to each other, not in the order you loaded them. `Item::Point` has the `index` of a point in the list you loaded.
 - **Send where each cluster splits.** `expansion_zoom()` gives the zoom level where a cluster splits, so the client can zoom the map in to it when the user clicks the cluster.
-- **Cluster IDs go to clients as numbers.** Send `cluster.id.get()`, and turn the number a client sends back into an ID with `ClusterId::new`. With it, `cluster_expansion_zoom` finds where the cluster splits, `children` what it splits into, and `leaves` its points. The numbers change from one load to the next, so an old one can give `ClusterNotFound` or name another cluster.
+- **Cluster IDs go to clients as numbers.** Send `cluster.id().get()`, and turn the number a client sends back into an ID with `ClusterId::new`. With it, `cluster_expansion_zoom` finds where the cluster splits, `children` what it splits into, and `leaves` its points. The numbers change from one load to the next, so an old one can give `ClusterNotFound` or name another cluster.
 
 ### Set the options
 
@@ -158,7 +158,7 @@ A filtered tile keeps only the points that pass a filter, for example the ones t
 
 Pass the filter to `with_filter`, which returns a `FilteredView`. Its `tile` and `cluster_expansion_zoom` work like the ones of the supercluster, on the points that pass. `with_filter` checks the filter once, so the queries of the view cannot fail on it.
 
-Each item's `count()`, its points from `leaves()`, `expansion_zoom()` and `coordinates()` take only the points that pass into account, as does the `point_count` of its GeoJSON. The cluster from `item()` still describes all of its points, in its `total_count` and `coordinates()`.
+Each item's `count()`, its points from `leaves()`, `expansion_zoom()` and `coordinates()` take only the points that pass into account, as does the `point_count` of its GeoJSON. The cluster from `item()` still describes all of its points, in its `total_count()` and `coordinates()`.
 
 ### Choose how to filter
 
@@ -459,9 +459,9 @@ Cached filters combine with the methods below, which chain, as in `a.or(&b).and(
 | Type | What it holds | Methods |
 | --- | --- | --- |
 | `Tile` | `items`, a list of `TileItem`. `tile` returns it, with or without a filter. | `is_empty()` |
-| `TileItem` | `x` and `y`, the position in the tile as whole numbers (`i32`). | `item()` for the cluster or point, `coordinates()`, `count()` and `leaves()` for its points, or in a filtered tile the points that pass, and `expansion_zoom()` |
-| `Item` | `Item::Cluster(Cluster)`, or `Item::Point { index, point }`, a point with its index in the list that was loaded. | None |
-| `Cluster` | `id`, and `total_count`, all of its points, also in a filtered tile. | `coordinates()` for its center |
+| `TileItem` | A cluster or point, with its position in the tile. | `x()` and `y()` for the position in the tile as whole numbers (`i32`), `item()` for the cluster or point, `coordinates()`, `count()` and `leaves()` for its points, or in a filtered tile the points that pass, and `expansion_zoom()` |
+| `Item` | `Item::Cluster(Cluster)`, or `Item::Point { index, point, .. }`, a point with its index in the list that was loaded. A pattern on `Item::Point` needs `..`, because more fields may come. | None |
+| `Cluster` | A cluster of points. | `id()`, `total_count()` for all of its points, also in a filtered tile, and `coordinates()` for its center |
 | `ClusterId` | The ID of a cluster, as a `u32`. `ClusterId::new(number)` makes one from a `u32`. | `get()` returns the `u32` |
 
 ### Convert to GeoJSON
@@ -595,7 +595,7 @@ let tile = supercluster.tile(0, 0, 0).to_feature_collection();
 
 for tile_item in &supercluster.tile(0, 0, 0).items {
     match tile_item.item() {
-        Item::Cluster(cluster) => println!("{} points at {:?}", cluster.total_count, cluster.coordinates()),
+        Item::Cluster(cluster) => println!("{} points at {:?}", cluster.total_count(), cluster.coordinates()),
         Item::Point { index, .. } => println!("point {index}"),
     }
 }
@@ -628,9 +628,9 @@ let mut body = Vec::new();
 serde_json::to_writer(&mut body, &tile)?;
 ```
 
-The `x` and `y` of a `TileItem` are the position in the tile as whole numbers (`i32`) on the grid of the tile extent, as in the GeoJSON of version 3. A position exactly halfway between two numbers rounds up, where version 3 rounded it away from zero, so -2.5 is -2 instead of -3. An item of the buffer around the tile is below 0 or above the extent.
+The `x()` and `y()` of a `TileItem` are the position in the tile as whole numbers (`i32`) on the grid of the tile extent, as in the GeoJSON of version 3. A position exactly halfway between two numbers rounds up, where version 3 rounded it away from zero, so -2.5 is -2 instead of -3. An item of the buffer around the tile is below 0 or above the extent.
 
-A cluster's number of points is `cluster.total_count`, a `u32`, and its center is `cluster.coordinates()`, computed only when you call it. You cannot build `Cluster`, `Tile` or `TileItem` yourself, so we can add fields to them without breaking your code.
+A cluster's ID is `cluster.id()`, its number of points is `cluster.total_count()`, a `u32`, and its center is `cluster.coordinates()`, computed only when you call it. You read `Cluster` and `TileItem` through methods and cannot build `Cluster`, `Tile` or `TileItem` yourself, so we can change how they are stored without breaking your code. For the same reason, a pattern on `Item::Point` needs `..`, as in `Item::Point { index, .. }`, unless it names every field.
 
 ### Cluster IDs
 
@@ -642,7 +642,7 @@ let children = supercluster.get_children(number)?;
 
 // Version 4
 let children = supercluster.children(ClusterId::new(number))?;
-let number: u32 = cluster.id.get();
+let number: u32 = cluster.id().get();
 ```
 
 `ClusterId::from` and `u32::from` convert the same way. The numbers differ from the ones of version 3, and from one load to the next, so do not keep them across loads.

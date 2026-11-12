@@ -913,7 +913,7 @@ mod tests {
                         supercluster
                             .with_filter(cached_filter)
                             .unwrap()
-                            .cluster_expansion_zoom(cluster.id)
+                            .cluster_expansion_zoom(cluster.id())
                             .unwrap(),
                     ),
                     Item::Point { .. } => None,
@@ -922,8 +922,8 @@ mod tests {
                 assert_eq!(item.expansion_zoom(), expansion_zoom);
 
                 (
-                    item.x,
-                    item.y,
+                    item.x(),
+                    item.y(),
                     item.count(),
                     item.leaves().count(),
                     expansion_zoom,
@@ -1094,7 +1094,7 @@ mod tests {
         let summary = |items: &[crate::TileItem<'_, [f64; 2]>]| -> Vec<(i32, i32, u32)> {
             items
                 .iter()
-                .map(|item| (item.x, item.y, item.count()))
+                .map(|item| (item.x(), item.y(), item.count()))
                 .collect()
         };
 

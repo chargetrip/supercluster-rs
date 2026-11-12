@@ -287,11 +287,10 @@ impl From<ClusterId> for u32 {
 #[non_exhaustive]
 pub struct Cluster<'a> {
     /// The unique identifier of the cluster.
-    pub id: ClusterId,
+    id: ClusterId,
 
-    /// The number of all the points of the cluster, also in a filtered tile, where
-    /// `TileItem::count` counts the ones that pass.
-    pub total_count: u32,
+    /// The number of all the points of the cluster.
+    total_count: u32,
 
     /// The center of the cluster, normalized to the [0..1] range the KD-trees use.
     position: [f64; 2],
@@ -301,6 +300,18 @@ pub struct Cluster<'a> {
 }
 
 impl Cluster<'_> {
+    /// Get the unique identifier of the cluster, which `children`, `leaves` and
+    /// `cluster_expansion_zoom` take.
+    pub fn id(&self) -> ClusterId {
+        self.id
+    }
+
+    /// Get the number of all the points of the cluster, also in a filtered tile, where
+    /// `TileItem::count` counts the ones that pass.
+    pub fn total_count(&self) -> u32 {
+        self.total_count
+    }
+
     /// Get the coordinates of the center of the cluster, in the coordinate system of the
     /// supercluster: the longitude and latitude for `LngLat`. They are computed on each call, so a
     /// query that does not need them does not pay for them.
@@ -315,7 +326,9 @@ pub enum Item<'a, P> {
     /// A cluster of points.
     Cluster(Cluster<'a>),
 
-    /// A point that is not clustered.
+    /// A point that is not clustered. More fields may come, so a pattern on it needs `..` unless
+    /// it names every field.
+    #[non_exhaustive]
     Point {
         /// The index of the point in the list that was loaded.
         index: usize,
@@ -778,7 +791,7 @@ impl<P> Supercluster<P> {
     ///
     /// if let Item::Cluster(cluster) = supercluster.tile(0, 0, 0).items[0].item() {
     ///     // The second page of two points holds the last point
-    ///     let page: Vec<_> = supercluster.leaves(cluster.id)?.iter().skip(2).take(2).collect();
+    ///     let page: Vec<_> = supercluster.leaves(cluster.id())?.iter().skip(2).take(2).collect();
     ///
     ///     assert_eq!(page.len(), 1);
     /// }
@@ -807,7 +820,7 @@ impl<P> Supercluster<P> {
     ///
     /// for tile_item in &supercluster.tile(0, 0, 0).items {
     ///     match tile_item.item() {
-    ///         Item::Cluster(cluster) => println!("{} points", cluster.total_count),
+    ///         Item::Cluster(cluster) => println!("{} points", cluster.total_count()),
     ///         Item::Point { index, .. } => println!("point {index}"),
     ///     }
     /// }
@@ -1649,7 +1662,7 @@ mod tests {
     /// Get the ID of the cluster that holds all the points at zoom level 0.
     fn get_top_cluster_id(supercluster: &Supercluster<TestPoint>) -> ClusterId {
         match &supercluster.tile(0, 0, 0).items[0].item() {
-            Item::Cluster(cluster) => cluster.id,
+            Item::Cluster(cluster) => cluster.id(),
             Item::Point { .. } => panic!("expected a cluster"),
         }
     }
@@ -1778,7 +1791,7 @@ mod tests {
             .clusters([-180.0, -90.0, 180.0, 90.0], 0)
             .iter()
             .find_map(|item| match item {
-                Item::Cluster(cluster) => Some(cluster.id),
+                Item::Cluster(cluster) => Some(cluster.id()),
                 Item::Point { .. } => None,
             })
             .unwrap();
@@ -1831,7 +1844,7 @@ mod tests {
     /// Get the number of points an item stands for.
     fn get_point_count(item: &Item<'_, [f64; 2]>) -> usize {
         match item {
-            Item::Cluster(cluster) => cluster.total_count as usize,
+            Item::Cluster(cluster) => cluster.total_count() as usize,
             Item::Point { .. } => 1,
         }
     }
@@ -1865,19 +1878,19 @@ mod tests {
                 };
 
                 let leaves: Vec<&[f64; 2]> =
-                    supercluster.leaves(cluster.id).unwrap().iter().collect();
+                    supercluster.leaves(cluster.id()).unwrap().iter().collect();
                 let mut leaves_of_children: Vec<&[f64; 2]> = vec![];
 
-                for child in supercluster.children(cluster.id).unwrap() {
+                for child in supercluster.children(cluster.id()).unwrap() {
                     match child {
                         Item::Cluster(child) => {
-                            leaves_of_children.extend(supercluster.leaves(child.id).unwrap())
+                            leaves_of_children.extend(supercluster.leaves(child.id()).unwrap())
                         }
                         Item::Point { point, .. } => leaves_of_children.push(point),
                     }
                 }
 
-                assert_eq!(leaves.len(), cluster.total_count as usize);
+                assert_eq!(leaves.len(), cluster.total_count() as usize);
                 assert_eq!(leaves, leaves_of_children);
 
                 clusters += 1;
@@ -1929,7 +1942,7 @@ mod tests {
                 .tile(z, x, y)
                 .items
                 .iter()
-                .map(|tile_item| (tile_item.x, tile_item.y, tile_item.count()))
+                .map(|tile_item| (tile_item.x(), tile_item.y(), tile_item.count()))
                 .collect();
 
             // A wider search visits the items in another order
@@ -2199,7 +2212,7 @@ mod tests {
 
         assert_eq!(tile.items.len(), 1);
         assert!(
-            matches!(&tile.items[0].item(), Item::Cluster(cluster) if cluster.total_count == 2)
+            matches!(&tile.items[0].item(), Item::Cluster(cluster) if cluster.total_count() == 2)
         );
     }
 
@@ -2259,7 +2272,7 @@ mod tests {
         let tile = supercluster.tile(1, 0, 0);
 
         assert_eq!(tile.items.len(), 2);
-        assert!(tile.items.iter().any(|tile_item| tile_item.x < 0));
+        assert!(tile.items.iter().any(|tile_item| tile_item.x() < 0));
     }
 
     #[test]
@@ -2268,7 +2281,7 @@ mod tests {
         let tile = supercluster.tile(0, 0, 0);
 
         assert_eq!(tile.items.len(), 1);
-        assert_eq!((tile.items[0].x, tile.items[0].y), (256, 256));
+        assert_eq!((tile.items[0].x(), tile.items[0].y()), (256, 256));
     }
 
     #[test]
@@ -2286,7 +2299,7 @@ mod tests {
             .tile(0, 0, 0)
             .items
             .iter()
-            .map(|tile_item| tile_item.x)
+            .map(|tile_item| tile_item.x())
             .collect();
 
         // Rounding up gives -2 and 3, where rounding away from zero gives -3 and 3
@@ -2308,7 +2321,7 @@ mod tests {
             .children(get_top_cluster_id(&supercluster))
             .unwrap()
             .map(|item| match item {
-                Item::Cluster(cluster) => cluster.total_count,
+                Item::Cluster(cluster) => cluster.total_count(),
                 Item::Point { .. } => 1,
             })
             .collect();
@@ -2374,7 +2387,7 @@ mod tests {
             .children(get_top_cluster_id(&supercluster))
             .unwrap()
             .find_map(|item| match item {
-                Item::Cluster(cluster) => Some(cluster.id),
+                Item::Cluster(cluster) => Some(cluster.id()),
                 Item::Point { .. } => None,
             })
             .unwrap();
@@ -2613,8 +2626,8 @@ mod tests {
 
         // The same cluster at the same place, which expands on another zoom level
         assert_eq!(
-            (full_item.x, full_item.y, full_item.item()),
-            (capped_item.x, capped_item.y, capped_item.item())
+            (full_item.x(), full_item.y(), full_item.item()),
+            (capped_item.x(), capped_item.y(), capped_item.item())
         );
         assert_eq!(capped_item.expansion_zoom(), Some(1));
         assert!(full_item.expansion_zoom() > Some(1));
@@ -2667,7 +2680,7 @@ mod tests {
             for tile_item in view.tile(0, 0, 0).items {
                 let expected = match tile_item.item() {
                     Item::Cluster(cluster) => {
-                        Some(view.cluster_expansion_zoom(cluster.id).unwrap())
+                        Some(view.cluster_expansion_zoom(cluster.id()).unwrap())
                     }
                     Item::Point { .. } => None,
                 };

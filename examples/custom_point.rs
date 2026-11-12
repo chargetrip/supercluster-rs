@@ -44,13 +44,13 @@ fn main() -> Result<(), SuperclusterError> {
         match tile_item.item() {
             Item::Cluster(cluster) => {
                 let names: Vec<_> = supercluster
-                    .leaves(cluster.id)?
+                    .leaves(cluster.id())?
                     .iter()
                     .take(10)
                     .map(|station| station.name)
                     .collect();
 
-                println!("Cluster of {} stations: {:?}", cluster.total_count, names);
+                println!("Cluster of {} stations: {:?}", cluster.total_count(), names);
             }
             Item::Point { point, .. } => println!("Station {}", point.name),
         }

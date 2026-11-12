@@ -38,7 +38,7 @@ pub fn read_items<P>(items: &[TileItem<'_, P>], expansion_zooms: bool) -> u32 {
         .iter()
         .map(|tile_item| {
             let read = match tile_item.item() {
-                Item::Cluster(cluster) => cluster.total_count,
+                Item::Cluster(cluster) => cluster.total_count(),
                 Item::Point { index, .. } => index as u32,
             };
             let expansion_zoom = match expansion_zooms {

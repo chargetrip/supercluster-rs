@@ -33,16 +33,22 @@ a test file with `#![cfg(feature = "...")]`. An example or benchmark that needs 
 
 - Everything `pub` is a promise to users. Add a public item only when a user needs it. Removing or
   changing one is a breaking change.
-- Mark the error enum and the structs that only the crate builds `#[non_exhaustive]`, so we can add
-  to them later. Derive a trait only when the bounds the derive adds are acceptable. Otherwise write
-  the impl by hand: an item holds a reference to a point, so it must not require the point to be
-  `Clone`.
+- Add `#[non_exhaustive]` to the error enum and to every struct or enum variant that only the crate
+  builds, such as `Cluster` and `Item::Point`. We can then add fields or variants in a minor release.
+- Give a type that describes something in the supercluster, such as `Cluster` and `TileItem`,
+  private fields and a getter for each value, such as `cluster.id()` and `tile_item.x()`. A later
+  version can then compute a value or store it elsewhere without breaking users. Give public fields
+  only to plain data that users build, such as `DataRange`, and to containers they own, such as
+  `Tile::items`.
+- Derive a trait only when the bounds the derive adds are acceptable. Otherwise write the impl by
+  hand: an item holds a reference to a point, so it must not require the point to be `Clone`.
 - Keep the API consistent. A variant of a type or a query is named after the original and has the
   same fields, methods and trait impls under the same names, unless it cannot. Docs and examples
   name a value after its type.
-- Prefer a closure over a trait for what a user supplies, as `load`, `filter` and `cache_filter` do. A
-  per-request setting goes on `SuperclusterView` (`with_cluster_max_zoom`), not into a `_with`
-  variant of a query.
+- Prefer a closure over a trait for what a user supplies, as `load`, `filter` and `cache_filter` do.
+- Make a per-request setting a method that returns a view, like `with_cluster_max_zoom` and
+  `with_filter`. The view then has the same queries, so no query needs a `_with` or `_filtered`
+  variant.
 - Keep `rust-version` in `Cargo.toml` equal to the toolchain in `rust-toolchain.toml` and in the two
   CI workflows, and use no newer language or library feature.
 - Do not edit `version` or `CHANGELOG.md`. The release tooling writes both.

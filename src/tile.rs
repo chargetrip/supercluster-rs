@@ -74,15 +74,11 @@ impl<P> Clone for Tile<'_, P> {
 /// has at least one point that passes the filter.
 #[non_exhaustive]
 pub struct TileItem<'a, P> {
-    /// Horizontal position in the tile, in extent units from the left edge. An item in the buffer
-    /// around the tile can be negative or above the extent. In a filtered tile, a cluster with
-    /// points that fail the filter is placed at the center of the points that pass.
-    pub x: i32,
+    /// Horizontal position in the tile, in extent units from the left edge.
+    x: i32,
 
-    /// Vertical position in the tile, in extent units from the top edge. An item in the buffer
-    /// around the tile can be negative or above the extent. In a filtered tile, a cluster with
-    /// points that fail the filter is placed at the center of the points that pass.
-    pub y: i32,
+    /// Vertical position in the tile, in extent units from the top edge.
+    y: i32,
 
     /// The number of points of the item, or in a filtered tile, the ones that pass the filter.
     count: u32,
@@ -108,6 +104,20 @@ pub struct TileItem<'a, P> {
 }
 
 impl<'a, P> TileItem<'a, P> {
+    /// Get the horizontal position in the tile, in extent units from the left edge. An item in the
+    /// buffer around the tile can be negative or above the extent. In a filtered tile, a cluster
+    /// with points that fail the filter is placed at the center of the points that pass.
+    pub fn x(&self) -> i32 {
+        self.x
+    }
+
+    /// Get the vertical position in the tile, in extent units from the top edge. An item in the
+    /// buffer around the tile can be negative or above the extent. In a filtered tile, a cluster
+    /// with points that fail the filter is placed at the center of the points that pass.
+    pub fn y(&self) -> i32 {
+        self.y
+    }
+
     /// Get the cluster, as the supercluster has it, or the point. In a filtered tile, a cluster
     /// with one point left is that point, and the `total_count` of a cluster counts all of
     /// its points, where `count` counts the ones that pass the filter.
@@ -723,11 +733,11 @@ mod tests {
             .iter()
             .map(|tile_item| {
                 let id = match tile_item.item() {
-                    Item::Cluster(cluster) => cluster.id.get() as usize,
+                    Item::Cluster(cluster) => cluster.id().get() as usize,
                     Item::Point { index, .. } => index,
                 };
 
-                (id, tile_item.count(), [tile_item.x, tile_item.y])
+                (id, tile_item.count(), [tile_item.x(), tile_item.y()])
             })
             .collect()
     }
@@ -866,8 +876,8 @@ mod tests {
                             .items
                             .iter()
                             .filter(|tile_item| {
-                                (0..extent).contains(&tile_item.x)
-                                    && (0..extent).contains(&tile_item.y)
+                                (0..extent).contains(&tile_item.x())
+                                    && (0..extent).contains(&tile_item.y())
                             })
                             .map(|tile_item| tile_item.count() as usize)
                             .sum::<usize>();
@@ -1009,8 +1019,8 @@ mod tests {
             .items;
 
         assert_eq!(
-            (one[0].x, one[0].y, one[0].count()),
-            (other[0].x, other[0].y, 2)
+            (one[0].x(), one[0].y(), one[0].count()),
+            (other[0].x(), other[0].y(), 2)
         );
         assert_eq!(one[0].coordinates(), other[0].coordinates());
         assert_ne!(one[0], other[0]);
@@ -1072,7 +1082,7 @@ mod tests {
                                     Item::Cluster(cluster) => Some(
                                         view.with_filter(supercluster.filter(filter))
                                             .unwrap()
-                                            .cluster_expansion_zoom(cluster.id)
+                                            .cluster_expansion_zoom(cluster.id())
                                             .unwrap(),
                                     ),
                                     Item::Point { .. } => None,
@@ -1101,7 +1111,7 @@ mod tests {
         let Item::Cluster(cluster) = supercluster.tile(0, 0, 0).items[0].item() else {
             panic!("expected a cluster");
         };
-        let leaves: Vec<&TestPoint> = supercluster.leaves(cluster.id).unwrap().iter().collect();
+        let leaves: Vec<&TestPoint> = supercluster.leaves(cluster.id()).unwrap().iter().collect();
         let coordinates_of = |points: Vec<&TestPoint>| -> Vec<Option<[f64; 2]>> {
             points.iter().map(|point| point.coordinates).collect()
         };
@@ -1257,7 +1267,7 @@ mod tests {
                 |ways| {
                     for way in ways {
                         assert_eq!(way[0].coordinates(), items[0].coordinates());
-                        assert_eq!((way[0].x, way[0].y), (items[0].x, items[0].y));
+                        assert_eq!((way[0].x(), way[0].y()), (items[0].x(), items[0].y()));
                     }
                 },
             );
@@ -1498,7 +1508,7 @@ mod tests {
         let Item::Cluster(cluster) = supercluster.tile(0, 0, 0).items[0].item() else {
             panic!("expected a cluster");
         };
-        let failing = supercluster.leaves(cluster.id).unwrap()[100];
+        let failing = supercluster.leaves(cluster.id()).unwrap()[100];
         let filter = |point: &[f64; 2]| *point != failing;
 
         let items = supercluster
@@ -1514,7 +1524,7 @@ mod tests {
             supercluster
                 .with_filter(supercluster.filter(filter))
                 .unwrap()
-                .cluster_expansion_zoom(cluster.id)
+                .cluster_expansion_zoom(cluster.id())
                 .ok()
         );
     }
@@ -1678,7 +1688,7 @@ mod tests {
 
                                 if let Item::Cluster(cluster) = selected.item() {
                                     // The points that pass, in the order of the leaves
-                                    let leaves = supercluster.leaves(cluster.id).unwrap();
+                                    let leaves = supercluster.leaves(cluster.id()).unwrap();
 
                                     assert!(same_points(
                                         selected.leaves(),
@@ -1687,10 +1697,10 @@ mod tests {
 
                                     assert_eq!(
                                         view.with_filter(&cached_filter).and_then(
-                                            |view| view.cluster_expansion_zoom(cluster.id)
+                                            |view| view.cluster_expansion_zoom(cluster.id())
                                         ),
                                         view.with_filter(supercluster.filter(filter)).and_then(
-                                            |view| view.cluster_expansion_zoom(cluster.id)
+                                            |view| view.cluster_expansion_zoom(cluster.id())
                                         )
                                     );
                                 }
@@ -1748,11 +1758,11 @@ mod tests {
         for tile_item in supercluster.tile(0, 0, 0) {
             match tile_item.item() {
                 Item::Cluster(cluster) => {
-                    assert_eq!(tile_item.count(), cluster.total_count);
+                    assert_eq!(tile_item.count(), cluster.total_count());
                     assert_eq!(tile_item.coordinates(), cluster.coordinates());
                     assert!(tile_item
                         .leaves()
-                        .eq(supercluster.leaves(cluster.id).unwrap()));
+                        .eq(supercluster.leaves(cluster.id()).unwrap()));
                 }
                 Item::Point { point, .. } => {
                     assert_eq!(tile_item.count(), 1);
@@ -1812,7 +1822,7 @@ mod tests {
             .items
             .iter()
             .find_map(|tile_item| match tile_item.item() {
-                Item::Cluster(cluster) => Some(cluster.id),
+                Item::Cluster(cluster) => Some(cluster.id()),
                 Item::Point { .. } => None,
             })
             .unwrap();

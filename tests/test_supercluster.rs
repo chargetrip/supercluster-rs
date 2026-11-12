@@ -47,7 +47,7 @@ fn load_supercluster(options: SuperclusterOptions) -> Supercluster<Feature> {
 /// Get the number of points a child holds.
 fn get_point_count(item: &Item<'_, Feature>) -> usize {
     match item {
-        Item::Cluster(cluster) => cluster.total_count as usize,
+        Item::Cluster(cluster) => cluster.total_count() as usize,
         Item::Point { .. } => 1,
     }
 }
@@ -56,7 +56,7 @@ fn get_point_count(item: &Item<'_, Feature>) -> usize {
 /// find a cluster where it is, because the fixtures number their clusters another way.
 fn get_cluster_id(supercluster: &Supercluster<Feature>, zoom: u8, index: usize) -> ClusterId {
     match supercluster.clusters(WORLD, zoom)[index] {
-        Item::Cluster(cluster) => cluster.id,
+        Item::Cluster(cluster) => cluster.id(),
         Item::Point { .. } => panic!("expected a cluster at {index}"),
     }
 }
@@ -375,17 +375,17 @@ fn test_leaves_matches_point_count_and_children() {
         for item in supercluster.clusters([-180.0, -90.0, 180.0, 90.0], zoom) {
             if let Item::Cluster(cluster) = item {
                 let leaves: Vec<&Feature> =
-                    supercluster.leaves(cluster.id).unwrap().iter().collect();
+                    supercluster.leaves(cluster.id()).unwrap().iter().collect();
 
-                assert_eq!(leaves.len(), cluster.total_count as usize);
+                assert_eq!(leaves.len(), cluster.total_count() as usize);
 
                 // The leaves are the points of the children, in the order of the children
                 let children_leaves: Vec<&Feature> = supercluster
-                    .children(cluster.id)
+                    .children(cluster.id())
                     .unwrap()
                     .flat_map(|child| match child {
                         Item::Cluster(child) => {
-                            supercluster.leaves(child.id).unwrap().iter().collect()
+                            supercluster.leaves(child.id()).unwrap().iter().collect()
                         }
                         Item::Point { point, .. } => vec![point],
                     })

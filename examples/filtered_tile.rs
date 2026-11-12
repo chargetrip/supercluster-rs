@@ -61,9 +61,9 @@ fn main() -> Result<(), SuperclusterError> {
 
                     format!(
                         "cluster {} with {} of {} stations {:?} at {lng}, {lat}{expansion}",
-                        cluster.id.get(),
+                        cluster.id().get(),
                         tile_item.count(),
-                        cluster.total_count,
+                        cluster.total_count(),
                         names,
                     )
                 }

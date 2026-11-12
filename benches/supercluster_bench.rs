@@ -89,7 +89,7 @@ fn bench_many_points(c: &mut Criterion) {
         .clusters([-180.0, -90.0, 180.0, 90.0], 0)
         .iter()
         .find_map(|item| match item {
-            Item::Cluster(cluster) => Some(cluster.id),
+            Item::Cluster(cluster) => Some(cluster.id()),
             Item::Point { .. } => None,
         })
         .expect("the points form a cluster on zoom level 0");
@@ -252,7 +252,7 @@ fn bench_one_million_points(c: &mut Criterion) {
         .clusters([-180.0, -90.0, 180.0, 90.0], 0)
         .iter()
         .find_map(|item| match item {
-            Item::Cluster(cluster) => Some(cluster.id),
+            Item::Cluster(cluster) => Some(cluster.id()),
             Item::Point { .. } => None,
         })
         .expect("the points form a cluster on zoom level 0");

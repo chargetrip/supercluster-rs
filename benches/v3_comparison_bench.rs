@@ -74,7 +74,7 @@ fn find_cluster<P>(supercluster: &Supercluster<P>) -> (ClusterId, u64) {
         .clusters(WORLD, 0)
         .iter()
         .find_map(|item| match item {
-            Item::Cluster(cluster) => Some((cluster.id, u64::from(cluster.total_count))),
+            Item::Cluster(cluster) => Some((cluster.id(), u64::from(cluster.total_count()))),
             Item::Point { .. } => None,
         })
         .expect("the points form a cluster on zoom level 0")

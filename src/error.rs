@@ -49,8 +49,8 @@ pub enum SuperclusterError {
     #[error("The number of points cannot be above {}.", MAX_POINTS)]
     TooManyPoints,
 
-    /// A cached filter that a query got, on its own or in a combined filter, comes from another
-    /// supercluster.
+    /// A cached filter that `with_filter` got, on its own or in a combined filter, comes from
+    /// another supercluster.
     #[error("The cached filter comes from another supercluster.")]
     ForeignCachedFilter,
 }

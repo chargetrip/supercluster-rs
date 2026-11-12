@@ -30,8 +30,8 @@ fn main() -> Result<(), SuperclusterError> {
 
                 println!(
                     "Cluster {} with {} points at {lng}, {lat}",
-                    cluster.id.get(),
-                    cluster.total_count,
+                    cluster.id().get(),
+                    cluster.total_count(),
                 )
             }
             Item::Point { index, .. } => println!("Point {index}"),

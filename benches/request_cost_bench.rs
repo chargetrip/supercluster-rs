@@ -217,7 +217,7 @@ fn main() {
             .items
             .iter()
             .map(|tile_item| match tile_item.item() {
-                Item::Cluster(cluster) => u64::from(cluster.total_count),
+                Item::Cluster(cluster) => u64::from(cluster.total_count()),
                 Item::Point { .. } => 1,
             })
             .sum();
