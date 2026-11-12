@@ -259,14 +259,17 @@ fn test_cluster_expansion_zoom_for_max_zoom() {
 }
 
 #[test]
-fn test_cluster_expansion_zoom_filtered_accepting_all() {
+fn test_filtered_cluster_expansion_zoom_accepting_all() {
     let supercluster = load_supercluster(create_options());
 
     for (zoom, index) in CLUSTERS {
         let cluster_id = get_cluster_id(&supercluster, zoom, index);
 
         assert_eq!(
-            supercluster.cluster_expansion_zoom_filtered(cluster_id, supercluster.filter(|_| true)),
+            supercluster
+                .with_filter(supercluster.filter(|_| true))
+                .unwrap()
+                .cluster_expansion_zoom(cluster_id),
             supercluster.cluster_expansion_zoom(cluster_id)
         );
     }
@@ -295,7 +298,7 @@ fn test_cluster_expansion_zoom_with_cluster_max_zoom() {
 }
 
 #[test]
-fn test_cluster_expansion_zoom_filtered() {
+fn test_filtered_cluster_expansion_zoom() {
     let supercluster = load_supercluster(create_options());
 
     // Only the points with a name that starts with a letter after N are left, so some of the
@@ -311,7 +314,9 @@ fn test_cluster_expansion_zoom_filtered() {
         let cluster_id = get_cluster_id(&supercluster, zoom, index);
         let expansion_zoom = supercluster.cluster_expansion_zoom(cluster_id).unwrap();
         let filtered_expansion_zoom = supercluster
-            .cluster_expansion_zoom_filtered(cluster_id, supercluster.filter(filter))
+            .with_filter(supercluster.filter(filter))
+            .unwrap()
+            .cluster_expansion_zoom(cluster_id)
             .unwrap();
 
         assert!(filtered_expansion_zoom >= expansion_zoom);

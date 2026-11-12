@@ -1,6 +1,6 @@
 //! # Filter module
 //!
-//! Contains the filters that the filtered queries take: a `Filter`, which runs a closure on the
+//! Contains the filters that `with_filter` takes: a `Filter`, which runs a closure on the
 //! points of each query, a `CachedFilter`, which `Supercluster::cache_filter` finds once so many
 //! queries can reuse it, and their combined filters, with the bit sets the filtered queries share.
 
@@ -26,7 +26,7 @@ use std::{
 /// of the cluster. A million points take about 445 KB. `and`, `or` and `and_not` combine
 /// cached filters into a `CombinedFilter`.
 ///
-/// A cached filter belongs to the supercluster that made it. A query of another supercluster
+/// A cached filter belongs to the supercluster that made it. `with_filter` on another supercluster
 /// returns `SuperclusterError::ForeignCachedFilter`, even when it holds the same points. See
 /// `Supercluster::cache_filter` for an example.
 #[derive(Clone)]
@@ -113,8 +113,8 @@ impl CachedFilter {
     ///
     /// Combining runs nothing: the combined filter borrows the cached filters, and a query
     /// evaluates it on the points of its tile only, so its cost grows with the points of the tile,
-    /// not with all the points. Both cached filters must come from the supercluster of the query,
-    /// which returns `SuperclusterError::ForeignCachedFilter` otherwise.
+    /// not with all the points. Both cached filters must come from the supercluster that
+    /// `with_filter` is called on, which returns `SuperclusterError::ForeignCachedFilter` otherwise.
     ///
     /// # Examples
     ///
@@ -132,7 +132,7 @@ impl CachedFilter {
     /// let available = supercluster.cache_filter(|station| station.3);
     ///
     /// // The items borrow the cached filters, not the combined filter, so it can be a temporary
-    /// let items = supercluster.tile_filtered(0, 0, 0, fast.and(&available))?.items;
+    /// let items = supercluster.with_filter(fast.and(&available))?.tile(0, 0, 0).items;
     ///
     /// assert_eq!(items[0].count(), 1);
     /// # Ok::<(), supercluster::SuperclusterError>(())
@@ -278,7 +278,7 @@ impl<'s> CombinedFilter<'s> {
     /// constant time, and which does not borrow the cached filters it combines, so a cache can keep
     /// it. It reads the positions of the points that pass, so a query finds the center of the
     /// points of a cluster that pass without reading them again. When the cached filters come from
-    /// different superclusters, or their supercluster was dropped, every query rejects the result
+    /// different superclusters, or their supercluster was dropped, `with_filter` rejects the result
     /// with `SuperclusterError::ForeignCachedFilter`.
     ///
     /// # Examples
@@ -297,7 +297,7 @@ impl<'s> CombinedFilter<'s> {
     /// // A cache can keep it, because it does not borrow `fast` and `available`
     /// let cached: CachedFilter = fast.and(&available).cache();
     ///
-    /// assert_eq!(supercluster.tile_filtered(0, 0, 0, &cached)?.items[0].count(), 1);
+    /// assert_eq!(supercluster.with_filter(&cached)?.tile(0, 0, 0).items[0].count(), 1);
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
     pub fn cache(&self) -> CachedFilter {
@@ -316,7 +316,7 @@ impl<'s> CombinedFilter<'s> {
 
         // The sums are built now from the positions of the supercluster of the cached filters. When
         // the cached filters come from different superclusters, or theirs was dropped, the result
-        // has no positions, so it belongs to no supercluster and every query rejects it
+        // has no positions, so it belongs to no supercluster and `with_filter` rejects it
         let mut cached = self.cached_filters();
         let positions = cached
             .next()
@@ -390,10 +390,10 @@ impl<P, F> Debug for Filter<P, F> {
     }
 }
 
-/// What `tile_filtered` and `cluster_expansion_zoom_filtered` keep the points of: a `Filter`, by
-/// value or by reference, a `CachedFilter`, behind a reference, an `Arc` or a `Box`, or a
-/// `CombinedFilter`, by value or by reference. `'s` is the lifetime of the cached filters, which
-/// the items of a tile borrow, and `P` is the type of the points. Only this crate implements it.
+/// What `with_filter` keeps the points of: a `Filter`, by value or by reference, a `CachedFilter`,
+/// behind a reference, an `Arc` or a `Box`, or a `CombinedFilter`, by value or by reference. `'s`
+/// is the lifetime of the cached filters, which the items of a tile borrow, and `P` is the type of
+/// the points. Only this crate implements it.
 pub trait AsFilter<'s, P>: private::Sealed<'s, P> {}
 
 impl<'s, P, F: Fn(&P) -> bool> AsFilter<'s, P> for Filter<P, F> {}
@@ -892,7 +892,7 @@ mod tests {
     }
 
     /// The position, count, number of points and expansion zoom of every item of a tile, and the
-    /// expansion zoom that `cluster_expansion_zoom_filtered` finds for every cluster.
+    /// expansion zoom that `FilteredView::cluster_expansion_zoom` finds for every cluster.
     type Summary = Vec<(i32, i32, u32, usize, Option<u8>)>;
 
     /// Summarize the items of the tile `z`/`x`/`y` that `cached filter` keeps.
@@ -902,15 +902,18 @@ mod tests {
         cached_filter: S,
     ) -> Summary {
         supercluster
-            .tile_filtered(z, x, y, cached_filter)
+            .with_filter(cached_filter)
             .unwrap()
+            .tile(z, x, y)
             .items
             .iter()
             .map(|item| {
                 let expansion_zoom = match item.item() {
                     Item::Cluster(cluster) => Some(
                         supercluster
-                            .cluster_expansion_zoom_filtered(cluster.id, cached_filter)
+                            .with_filter(cached_filter)
+                            .unwrap()
+                            .cluster_expansion_zoom(cluster.id)
                             .unwrap(),
                     ),
                     Item::Point { .. } => None,
@@ -1068,7 +1071,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_with_a_temporary_combined_filter() {
+    fn test_filtered_tile_with_a_temporary_combined_filter() {
         let supercluster = load_spread_points(500);
         let (third, northern) = (
             supercluster.cache_filter(every_third),
@@ -1076,14 +1079,17 @@ mod tests {
         );
         let selected = supercluster.cache_filter(|point| every_third(point) && north(point));
 
-        // The items borrow the cached filters, not the combined filter, so they outlive it
+        // The items borrow the cached filters, not the view or the combined filter, so they outlive
+        // both
         let items = supercluster
-            .tile_filtered(0, 0, 0, third.and(&northern))
+            .with_filter(third.and(&northern))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
         let expected = supercluster
-            .tile_filtered(0, 0, 0, &selected)
+            .with_filter(&selected)
             .unwrap()
+            .tile(0, 0, 0)
             .items;
         let summary = |items: &[crate::TileItem<'_, [f64; 2]>]| -> Vec<(i32, i32, u32)> {
             items
@@ -1097,7 +1103,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_with_cached_filters_behind_an_arc_or_a_box() {
+    fn test_filtered_tile_with_cached_filters_behind_an_arc_or_a_box() {
         let supercluster = load_spread_points(500);
         let third = Arc::new(supercluster.cache_filter(every_third));
         let northern = Box::new(supercluster.cache_filter(north));
@@ -1131,14 +1137,14 @@ mod tests {
 
         for cached_filter in [&cached_filter, &cached_combined] {
             assert!(matches!(
-                reloaded.tile_filtered(0, 0, 0, cached_filter),
+                reloaded.with_filter(cached_filter),
                 Err(SuperclusterError::ForeignCachedFilter)
             ));
         }
     }
 
     #[test]
-    fn test_tile_filtered_with_a_cached_filter_of_a_clone() {
+    fn test_filtered_tile_with_a_cached_filter_of_a_clone() {
         let supercluster = load_spread_points(500);
         let cached_filter = supercluster.cache_filter(every_third);
         let clone = supercluster.clone();
@@ -1207,11 +1213,11 @@ mod tests {
 
         for supercluster in [&small, &large] {
             assert!(matches!(
-                supercluster.tile_filtered(0, 0, 0, &cached_combined),
+                supercluster.with_filter(&cached_combined),
                 Err(SuperclusterError::ForeignCachedFilter)
             ));
             assert!(matches!(
-                supercluster.tile_filtered(0, 0, 0, small_cached_filter.and(&large_cached_filter)),
+                supercluster.with_filter(small_cached_filter.and(&large_cached_filter)),
                 Err(SuperclusterError::ForeignCachedFilter)
             ));
         }
@@ -1228,8 +1234,9 @@ mod tests {
             "CachedFilter { passing: 0, .. }"
         );
         assert!(supercluster
-            .tile_filtered(0, 0, 0, &combined)
+            .with_filter(&combined)
             .unwrap()
+            .tile(0, 0, 0)
             .items
             .is_empty());
     }

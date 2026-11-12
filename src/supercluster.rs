@@ -1912,7 +1912,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_finds_the_items_that_a_search_of_every_cluster_finds() {
+    fn test_filtered_tile_finds_the_items_that_a_search_of_every_cluster_finds() {
         let supercluster = load_spread_points(3000);
         let mut everywhere = supercluster.clone();
 
@@ -1924,8 +1924,9 @@ mod tests {
         let summarize = |supercluster: &Supercluster<[f64; 2]>, z, x, y| {
             let filter = supercluster.filter(|point: &[f64; 2]| point[0] > point[1]);
             let mut items: Vec<(i32, i32, u32)> = supercluster
-                .tile_filtered(z, x, y, filter)
+                .with_filter(filter)
                 .unwrap()
+                .tile(z, x, y)
                 .items
                 .iter()
                 .map(|tile_item| (tile_item.x, tile_item.y, tile_item.count()))
@@ -1982,8 +1983,9 @@ mod tests {
         let filter = |point: &[f64; 2]| point[0] > 0.0;
         let centers = |supercluster: &Supercluster<[f64; 2]>| -> Vec<[f64; 2]> {
             supercluster
-                .tile_filtered(0, 0, 0, supercluster.filter(filter))
+                .with_filter(supercluster.filter(filter))
                 .unwrap()
+                .tile(0, 0, 0)
                 .items
                 .iter()
                 .map(|item| item.coordinates())
@@ -2412,39 +2414,44 @@ mod tests {
     }
 
     #[test]
-    fn test_cluster_expansion_zoom_filtered_accepting_all() {
-        let supercluster = load_nested_cluster();
-        let cluster_id = get_top_cluster_id(&supercluster);
-
-        assert_eq!(
-            supercluster.cluster_expansion_zoom_filtered(cluster_id, supercluster.filter(|_| true)),
-            Ok(2)
-        );
-    }
-
-    #[test]
-    fn test_cluster_expansion_zoom_filtered_rejecting_a_child() {
-        let supercluster = load_nested_cluster();
-        let cluster_id = get_top_cluster_id(&supercluster);
-
-        // Without the farther point the cluster looks the same until the close points split on zoom level 17.
-        assert_eq!(
-            supercluster.cluster_expansion_zoom_filtered(
-                cluster_id,
-                supercluster.filter(|point| point.keep)
-            ),
-            Ok(17)
-        );
-    }
-
-    #[test]
-    fn test_cluster_expansion_zoom_filtered_rejecting_all() {
+    fn test_filtered_cluster_expansion_zoom_accepting_all() {
         let supercluster = load_nested_cluster();
         let cluster_id = get_top_cluster_id(&supercluster);
 
         assert_eq!(
             supercluster
-                .cluster_expansion_zoom_filtered(cluster_id, supercluster.filter(|_| false)),
+                .with_filter(supercluster.filter(|_| true))
+                .unwrap()
+                .cluster_expansion_zoom(cluster_id),
+            Ok(2)
+        );
+    }
+
+    #[test]
+    fn test_filtered_cluster_expansion_zoom_rejecting_a_child() {
+        let supercluster = load_nested_cluster();
+        let cluster_id = get_top_cluster_id(&supercluster);
+
+        // Without the farther point the cluster looks the same until the close points split on zoom level 17.
+        assert_eq!(
+            supercluster
+                .with_filter(supercluster.filter(|point| point.keep))
+                .unwrap()
+                .cluster_expansion_zoom(cluster_id),
+            Ok(17)
+        );
+    }
+
+    #[test]
+    fn test_filtered_cluster_expansion_zoom_rejecting_all() {
+        let supercluster = load_nested_cluster();
+        let cluster_id = get_top_cluster_id(&supercluster);
+
+        assert_eq!(
+            supercluster
+                .with_filter(supercluster.filter(|_| false))
+                .unwrap()
+                .cluster_expansion_zoom(cluster_id),
             Ok(2)
         );
     }
@@ -2458,31 +2465,33 @@ mod tests {
         assert_eq!(
             supercluster
                 .with_cluster_max_zoom(0)
-                .cluster_expansion_zoom_filtered(cluster_id, supercluster.filter(|_| true)),
+                .with_filter(supercluster.filter(|_| true))
+                .unwrap()
+                .cluster_expansion_zoom(cluster_id),
             Ok(1)
         );
         assert_eq!(
             supercluster
                 .with_cluster_max_zoom(5)
-                .cluster_expansion_zoom_filtered(cluster_id, supercluster.filter(|_| true)),
+                .with_filter(supercluster.filter(|_| true))
+                .unwrap()
+                .cluster_expansion_zoom(cluster_id),
             Ok(2)
         );
         assert_eq!(
             supercluster
                 .with_cluster_max_zoom(5)
-                .cluster_expansion_zoom_filtered(
-                    cluster_id,
-                    supercluster.filter(|point| point.keep)
-                ),
+                .with_filter(supercluster.filter(|point| point.keep))
+                .unwrap()
+                .cluster_expansion_zoom(cluster_id),
             Ok(6)
         );
         assert_eq!(
             supercluster
                 .with_cluster_max_zoom(20)
-                .cluster_expansion_zoom_filtered(
-                    cluster_id,
-                    supercluster.filter(|point| point.keep)
-                ),
+                .with_filter(supercluster.filter(|point| point.keep))
+                .unwrap()
+                .cluster_expansion_zoom(cluster_id),
             Ok(17)
         );
     }

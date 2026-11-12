@@ -606,7 +606,7 @@ mod tests {
         let kept = supercluster.filter(|feature| {
             west(feature) || feature.id.is_none() || feature.id == Some(Id::Number(7.into()))
         });
-        let tile = supercluster.tile_filtered(0, 0, 0, &kept).unwrap();
+        let tile = supercluster.with_filter(&kept).unwrap().tile(0, 0, 0);
         let unfiltered = supercluster.tile(0, 0, 0);
 
         assert_eq!(tile.items.len(), 3);

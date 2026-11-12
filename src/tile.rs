@@ -1,7 +1,7 @@
 //! # Tile module
 //!
-//! Contains the items of a tile, and the queries that build a tile, with or without a filter. A
-//! tile without a filter is a tile where every point passes.
+//! Contains the items of a tile, the queries that build a tile, and the view whose queries keep
+//! only the points that pass a filter. A tile without a filter is a tile where every point passes.
 //!
 //! With a filter, a cluster stays in the tile when at least one of its points passes. When some of its points fail, the cluster
 //! moves to the exact center of the points that pass, and a cluster with a single point left
@@ -26,7 +26,7 @@ use crate::{
     SuperclusterView,
 };
 
-/// The items of a tile, which `tile` and `tile_filtered` return.
+/// The items of a tile, which `tile` returns, on a supercluster or one of its views.
 #[derive(Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Tile<'a, P> {
@@ -149,7 +149,7 @@ impl<'a, P> TileItem<'a, P> {
 
     /// Determine the zoom level at which the cluster expands, up to the highest zoom level of the
     /// view that built the tile, like `cluster_expansion_zoom`. In a filtered tile, it counts only
-    /// the points that pass the filter, like `cluster_expansion_zoom_filtered` with the same
+    /// the points that pass the filter, like `FilteredView::cluster_expansion_zoom` with the same
     /// filter, and it reuses what the query found while the tile was built, so it does not run a
     /// closure or combine cached filters again.
     ///
@@ -256,8 +256,8 @@ impl<P: PartialEq> PartialEq for TileItem<'_, P> {
 }
 
 impl<P> Supercluster<P> {
-    /// Make a filter that runs `filter` on the points of each query that gets it, for
-    /// `tile_filtered` and `cluster_expansion_zoom_filtered`. It runs nothing now and caches
+    /// Make a filter that runs `filter` on the points of each query of the view that gets it, for
+    /// `with_filter`. It runs nothing now and caches
     /// nothing, so every query reads the current data. It suits a condition that changes with every
     /// request, such as a text search.
     ///
@@ -277,7 +277,8 @@ impl<P> Supercluster<P> {
     /// })?;
     ///
     /// let items = supercluster
-    ///     .tile_filtered(0, 0, 0, supercluster.filter(|point| point.2))?
+    ///     .with_filter(supercluster.filter(|point| point.2))?
+    ///     .tile(0, 0, 0)
     ///     .items;
     ///
     /// // The cluster has one point left, so the tile holds that point
@@ -296,8 +297,8 @@ impl<P> Supercluster<P> {
         Filter::new(filter)
     }
 
-    /// Run `filter` once on every point that was clustered, and cache which ones pass, for
-    /// `tile_filtered` and `cluster_expansion_zoom_filtered` to reuse. The points do not change
+    /// Run `filter` once on every point that was clustered, and cache which ones pass, for the
+    /// queries of `with_filter` to reuse. The points do not change
     /// after `load`, so run it again only when the filter reads data that changes, outside the
     /// points or shared through them.
     ///
@@ -319,7 +320,7 @@ impl<P> Supercluster<P> {
     ///
     /// // Run the filter once, then reuse it for every tile until the availability changes
     /// let available = supercluster.cache_filter(|point| point.2);
-    /// let items = supercluster.tile_filtered(0, 0, 0, &available)?.items;
+    /// let items = supercluster.with_filter(&available)?.tile(0, 0, 0).items;
     ///
     /// // The cluster holds the two available points and moves to their center
     /// assert_eq!(items[0].count(), 2);
@@ -341,25 +342,23 @@ impl<P> Supercluster<P> {
         )
     }
 
-    /// Retrieve the items of a tile, like `tile`, but keep only the points that pass `filter`. A
-    /// cluster without any point left is left out, and a cluster with points that fail moves to
-    /// the exact center of the points left. Map the items to the type of your response with an
-    /// iterator.
+    /// Get a view whose queries keep only the points that pass `filter`. A cluster without any
+    /// point left is left out, and a cluster with points that fail moves to the exact center of
+    /// the points left. The view checks `filter` once, here, so its queries cannot fail on it.
     ///
-    /// `filter` is one of these, and the tile is the same for the same condition:
+    /// `filter` is one of these, and the queries give the same results for the same condition:
     ///
-    /// - A `Filter` that `filter` made, by value or by reference. The query runs its closure once
-    ///   for every point of every item of the tile, so its cost grows with the points of the tile.
+    /// - A `Filter` that `filter` made, by value or by reference. A query runs its closure once
+    ///   for every point of every item it reads, so its cost grows with the points of the tile.
     /// - A `CachedFilter` that `cache_filter` made, behind a reference, an `Arc` or a `Box`. It
     ///   counts the points of a cluster that pass in constant time, so the cost grows with the
     ///   items of the tile, not with the points in them.
-    /// - A `CombinedFilter` of cached filters, by value or by reference, which the query evaluates
-    ///   on the points of the tile only.
+    /// - A `CombinedFilter` of cached filters, by value or by reference, which a query evaluates
+    ///   on the points it reads only.
     ///
-    /// The items reuse what the query found, for example in `TileItem::expansion_zoom`.
-    /// They borrow the cached filters, not a `Filter` or a combined filter, so those can be
-    /// temporaries, such as `supercluster.filter(...)` or `a.and(&b)`. A cluster that the tile
-    /// also shows as a copy across the antimeridian is filtered once for each copy.
+    /// The view holds `filter`. The items of its tiles borrow the cached filters, not the view, a
+    /// `Filter` or a combined filter, so those can be temporaries, such as
+    /// `supercluster.filter(...)` or `a.and(&b)`.
     ///
     /// # Errors
     ///
@@ -383,102 +382,111 @@ impl<P> Supercluster<P> {
     /// let fast = supercluster.filter(|station| station.2 >= 50 && station.3);
     /// let cached_fast = supercluster.cache_filter(|station| station.2 >= 50);
     ///
-    /// let filtered = supercluster.tile_filtered(0, 0, 0, &fast)?;
+    /// let filtered = supercluster.with_filter(&fast)?.tile(0, 0, 0);
     ///
     /// assert_eq!(filtered.items[0].count(), 1);
-    /// assert_eq!(supercluster.tile_filtered(0, 0, 0, cached_fast.and(&available))?, filtered);
+    /// assert_eq!(supercluster.with_filter(cached_fast.and(&available))?.tile(0, 0, 0), filtered);
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
-    pub fn tile_filtered<'s, S: AsFilter<'s, P>>(
+    pub fn with_filter<'s, S: AsFilter<'s, P>>(
         &'s self,
-        z: u8,
-        x: u32,
-        y: u32,
         filter: S,
-    ) -> Result<Tile<'s, P>, SuperclusterError> {
-        self.view().tile_filtered(z, x, y, filter)
-    }
-
-    /// Determine the zoom level at which a cluster expands, like `cluster_expansion_zoom`, but
-    /// count only the points that pass `filter`, which is any filter `tile_filtered` takes. A
-    /// cluster counts when one of its points passes. When a single cluster or point is left after
-    /// the filter, the cluster does not look different on the next zoom level, so the search goes
-    /// on with what is left.
-    ///
-    /// # Errors
-    ///
-    /// Returns `SuperclusterError::ForeignCachedFilter` if a cached filter comes from another
-    /// supercluster, and `SuperclusterError::ClusterNotFound` if there is no such cluster.
-    pub fn cluster_expansion_zoom_filtered<'s, S: AsFilter<'s, P>>(
-        &self,
-        cluster_id: ClusterId,
-        filter: S,
-    ) -> Result<u8, SuperclusterError> {
-        self.view()
-            .cluster_expansion_zoom_filtered(cluster_id, filter)
+    ) -> Result<FilteredView<'s, P, S>, SuperclusterError> {
+        self.view().with_filter(filter)
     }
 }
 
 impl<'a, P> SuperclusterView<'a, P> {
-    /// Retrieve the items of a tile that have a point that passes `filter`, like
-    /// `Supercluster::tile_filtered`.
+    /// Get a view that keeps only the points that pass `filter` and clusters up to the zoom level
+    /// of this view, like `Supercluster::with_filter`.
     ///
     /// # Errors
     ///
     /// Returns `SuperclusterError::ForeignCachedFilter` if a cached filter comes from another
     /// supercluster.
-    pub fn tile_filtered<'s, S: AsFilter<'s, P>>(
+    pub fn with_filter<'s, S: AsFilter<'s, P>>(
         &self,
-        z: u8,
-        x: u32,
-        y: u32,
         filter: S,
-    ) -> Result<Tile<'s, P>, SuperclusterError>
+    ) -> Result<FilteredView<'s, P, S>, SuperclusterError>
     where
         'a: 's,
     {
-        self.check(&filter)?;
+        if !filter.belongs_to(self.supercluster.positions()) {
+            return Err(SuperclusterError::ForeignCachedFilter);
+        }
 
-        let view: SuperclusterView<'s, P> = *self;
-        let points = self.supercluster.points();
+        Ok(FilteredView {
+            view: *self,
+            filter,
+        })
+    }
+}
 
-        Ok(filter_tile(view, (z, x, y), |leaves, scratch| {
-            filter.matches(points, leaves, scratch)
-        }))
+/// A view of a supercluster whose queries keep only the points that pass a filter. Create one
+/// with `Supercluster::with_filter` or `SuperclusterView::with_filter`.
+pub struct FilteredView<'s, P, S> {
+    /// The view to query, which sets the zoom level to cluster on.
+    view: SuperclusterView<'s, P>,
+
+    /// The filter the points of every query pass, which belongs to the supercluster of the view.
+    filter: S,
+}
+
+impl<'s, P, S: AsFilter<'s, P>> FilteredView<'s, P, S> {
+    /// Retrieve the items of a tile, like `Supercluster::tile`, that have a point that passes the
+    /// filter. Map the items to the type of your response with an iterator.
+    ///
+    /// The items reuse what the query found, for example in `TileItem::expansion_zoom`. A cluster
+    /// that the tile also shows as a copy across the antimeridian is filtered once for each copy.
+    pub fn tile(&self, z: u8, x: u32, y: u32) -> Tile<'s, P> {
+        let points = self.view.supercluster.points();
+
+        filter_tile(self.view, (z, x, y), |leaves, scratch| {
+            self.filter.matches(points, leaves, scratch)
+        })
     }
 
-    /// Determine the zoom level at which a cluster expands, counting only the points that pass
-    /// `filter`, like `Supercluster::cluster_expansion_zoom_filtered`. Above the zoom level to
-    /// cluster on, this is that zoom level plus one.
+    /// Determine the zoom level at which a cluster expands, like
+    /// `Supercluster::cluster_expansion_zoom`, but count only the points that pass the filter. A
+    /// cluster counts when one of its points passes. When a single cluster or point is left after
+    /// the filter, the cluster does not look different on the next zoom level, so the search goes
+    /// on with what is left. Above the zoom level to cluster on, this is that zoom level plus one.
     ///
     /// # Errors
     ///
-    /// Returns `SuperclusterError::ForeignCachedFilter` if a cached filter comes from another
-    /// supercluster, and `SuperclusterError::ClusterNotFound` if there is no such cluster.
-    pub fn cluster_expansion_zoom_filtered<'s, S: AsFilter<'s, P>>(
-        &self,
-        cluster_id: ClusterId,
-        filter: S,
-    ) -> Result<u8, SuperclusterError> {
-        self.check(&filter)?;
-
-        let points = self.supercluster.points();
+    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
+    pub fn cluster_expansion_zoom(&self, cluster_id: ClusterId) -> Result<u8, SuperclusterError> {
+        let supercluster = self.view.supercluster;
+        let points = supercluster.points();
         let mut scratch = Scratch::default();
 
-        self.supercluster
-            .expansion_zoom_where(cluster_id, self.cluster_max_zoom, |leaves| {
-                filter.any(points, leaves, &mut scratch)
-            })
+        supercluster.expansion_zoom_where(cluster_id, self.view.cluster_max_zoom, |leaves| {
+            self.filter.any(points, leaves, &mut scratch)
+        })
     }
+}
 
-    /// Check that the cached filters of a filter come from the supercluster of the view, or get
-    /// `ForeignCachedFilter`.
-    fn check<'s, S: AsFilter<'s, P>>(&self, filter: &S) -> Result<(), SuperclusterError> {
-        if filter.belongs_to(self.supercluster.positions()) {
-            Ok(())
-        } else {
-            Err(SuperclusterError::ForeignCachedFilter)
+// Written by hand, because a derive would also require the point type to be `Clone`, and a view
+// only holds a reference to the supercluster.
+impl<P, S: Clone> Clone for FilteredView<'_, P, S> {
+    fn clone(&self) -> Self {
+        FilteredView {
+            view: self.view,
+            filter: self.filter.clone(),
         }
+    }
+}
+
+impl<P, S: Copy> Copy for FilteredView<'_, P, S> {}
+
+// Written by hand, because a derive would print the whole supercluster, and a closure has nothing
+// to print.
+impl<P, S> Debug for FilteredView<'_, P, S> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FilteredView")
+            .field("cluster_max_zoom", &self.view.cluster_max_zoom)
+            .finish_non_exhaustive()
     }
 }
 
@@ -725,25 +733,26 @@ mod tests {
     }
 
     /// Load the points and get the filtered tile, which keeps the points the filter keeps.
-    fn tile_filtered(points: &[(f64, f64, bool)], (z, x, y): (u8, u32, u32)) -> Vec<Summary> {
+    fn filtered_tile(points: &[(f64, f64, bool)], (z, x, y): (u8, u32, u32)) -> Vec<Summary> {
         let supercluster = load(points);
 
         summarize(
             &supercluster
-                .tile_filtered(z, x, y, supercluster.filter(|point| point.keep))
+                .with_filter(supercluster.filter(|point| point.keep))
                 .unwrap()
+                .tile(z, x, y)
                 .items,
         )
     }
 
     #[test]
-    fn test_tile_filtered() {
+    fn test_filtered_tile() {
         let points = [
             (10.0, 50.0, true),
             (12.0, 50.0, true),
             (-100.0, -30.0, true),
         ];
-        let mut tile = tile_filtered(&points, WORLD_TILE);
+        let mut tile = filtered_tile(&points, WORLD_TILE);
 
         tile.sort_by_key(|(_, count, _)| *count);
 
@@ -758,9 +767,9 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_with_one_point_left() {
+    fn test_filtered_tile_with_one_point_left() {
         let points = [(10.0, 50.0, true), (12.0, 50.0, false)];
-        let tile = tile_filtered(&points, WORLD_TILE);
+        let tile = filtered_tile(&points, WORLD_TILE);
 
         assert_eq!(tile.len(), 1);
 
@@ -770,9 +779,9 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_with_few_points_left() {
+    fn test_filtered_tile_with_few_points_left() {
         let points = [(10.0, 50.0, true), (12.0, 50.0, true), (14.0, 50.0, false)];
-        let tile = tile_filtered(&points, WORLD_TILE);
+        let tile = filtered_tile(&points, WORLD_TILE);
 
         assert_eq!(tile.len(), 1);
 
@@ -782,11 +791,11 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_with_one_point_left_at_the_west_edge() {
+    fn test_filtered_tile_with_one_point_left_at_the_west_edge() {
         // Tile 0 only holds these points as a copy that sits left of the tile
         let tile = (1, 0, 0);
-        let filtered = tile_filtered(&[(179.0, 10.0, true), (179.5, 10.0, false)], tile);
-        let unfiltered = tile_filtered(&[(179.0, 10.0, true), (179.5, 10.0, true)], tile);
+        let filtered = filtered_tile(&[(179.0, 10.0, true), (179.5, 10.0, false)], tile);
+        let unfiltered = filtered_tile(&[(179.0, 10.0, true), (179.5, 10.0, true)], tile);
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].1, 1);
@@ -797,11 +806,11 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_with_one_point_left_at_the_east_edge() {
+    fn test_filtered_tile_with_one_point_left_at_the_east_edge() {
         // The last tile only holds these points as a copy that sits right of the tile
         let tile = (1, 1, 0);
-        let filtered = tile_filtered(&[(-179.0, 10.0, true), (-179.5, 10.0, false)], tile);
-        let unfiltered = tile_filtered(&[(-179.0, 10.0, true), (-179.5, 10.0, true)], tile);
+        let filtered = filtered_tile(&[(-179.0, 10.0, true), (-179.5, 10.0, false)], tile);
+        let unfiltered = filtered_tile(&[(-179.0, 10.0, true), (-179.5, 10.0, true)], tile);
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].1, 1);
@@ -812,12 +821,12 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_with_a_cluster_that_moves_into_the_next_tile() {
+    fn test_filtered_tile_with_a_cluster_that_moves_into_the_next_tile() {
         let points = create_points_of_a_cluster_that_moves();
 
         // The point is in the buffer of the left tile, and in the right tile itself
-        assert_eq!(tile_filtered(&points, (1, 0, 0)), [(101, 1, [515, 483])]);
-        assert_eq!(tile_filtered(&points, (1, 1, 0)), [(101, 1, [3, 483])]);
+        assert_eq!(filtered_tile(&points, (1, 0, 0)), [(101, 1, [515, 483])]);
+        assert_eq!(filtered_tile(&points, (1, 1, 0)), [(101, 1, [3, 483])]);
     }
 
     /// Create points whose cluster at zoom 1 forms around the failing ones, more than the radius
@@ -832,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_shows_every_point_that_passes_once_in_the_tiles() {
+    fn test_filtered_tile_shows_every_point_that_passes_once_in_the_tiles() {
         let extent = SuperclusterOptions::default().extent as i32;
 
         for points in [
@@ -851,8 +860,9 @@ mod tests {
                 for x in 0..1 << z {
                     for y in 0..1 << z {
                         shown += supercluster
-                            .tile_filtered(z, x, y, &filter)
+                            .with_filter(&filter)
                             .unwrap()
+                            .tile(z, x, y)
                             .items
                             .iter()
                             .filter(|tile_item| {
@@ -870,10 +880,10 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_with_a_point_that_is_not_clustered() {
+    fn test_filtered_tile_with_a_point_that_is_not_clustered() {
         // The two points are far apart, so the filter rejects one of them on its own
         let points = [(10.0, 50.0, false), (-100.0, -30.0, true)];
-        let tile = tile_filtered(&points, WORLD_TILE);
+        let tile = filtered_tile(&points, WORLD_TILE);
 
         assert_eq!(tile.len(), 1);
 
@@ -885,8 +895,9 @@ mod tests {
     fn test_clone_of_a_filtered_tile_without_a_clone_point() {
         let supercluster = load(&[(10.0, 50.0, true), (12.0, 50.0, true)]);
         let items = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
+            .with_filter(supercluster.filter(|point| point.keep))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
         let copy = items[0].clone();
 
@@ -910,8 +921,9 @@ mod tests {
     fn test_filtered_tile_iterates_over_its_items() {
         let supercluster = load(&create_spread_points(500));
         let tile = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
-            .unwrap();
+            .with_filter(supercluster.filter(|point| point.keep))
+            .unwrap()
+            .tile(0, 0, 0);
         let borrowed: Vec<_> = (&tile).into_iter().cloned().collect();
         let owned: Vec<_> = tile.clone().into_iter().collect();
 
@@ -924,21 +936,26 @@ mod tests {
     fn test_filtered_tiles_are_equal_with_the_same_points_left() {
         let supercluster = load(&create_spread_points(500));
         let tile = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
-            .unwrap();
+            .with_filter(supercluster.filter(|point| point.keep))
+            .unwrap()
+            .tile(0, 0, 0);
         let cached_filter = supercluster.cache_filter(|point| point.keep);
 
         // The same points left, from a closure and from a cached filter, give equal tiles, and
         // other points left do not
         assert_eq!(
             tile,
-            supercluster.tile_filtered(0, 0, 0, &cached_filter).unwrap()
+            supercluster
+                .with_filter(&cached_filter)
+                .unwrap()
+                .tile(0, 0, 0)
         );
         assert_ne!(
             tile,
             supercluster
-                .tile_filtered(0, 0, 0, supercluster.filter(|point| !point.keep))
+                .with_filter(supercluster.filter(|point| !point.keep))
                 .unwrap()
+                .tile(0, 0, 0)
         );
     }
 
@@ -949,8 +966,9 @@ mod tests {
         let tile = |cluster_max_zoom| {
             supercluster
                 .with_cluster_max_zoom(cluster_max_zoom)
-                .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
+                .with_filter(supercluster.filter(|point| point.keep))
                 .unwrap()
+                .tile(0, 0, 0)
         };
         let [lower, higher, lowest] = [tile(15), tile(16), tile(0)];
 
@@ -980,12 +998,14 @@ mod tests {
         // Opposite corners leave the same cluster with the same count at the same center, but
         // other points
         let one = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(kept([0, 3])))
+            .with_filter(supercluster.filter(kept([0, 3])))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
         let other = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(kept([1, 2])))
+            .with_filter(supercluster.filter(kept([1, 2])))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
 
         assert_eq!(
@@ -997,14 +1017,15 @@ mod tests {
         assert_eq!(
             one[0],
             supercluster
-                .tile_filtered(0, 0, 0, supercluster.filter(kept([0, 3])))
+                .with_filter(supercluster.filter(kept([0, 3])))
                 .unwrap()
+                .tile(0, 0, 0)
                 .items[0]
         );
     }
 
     #[test]
-    fn test_tile_filtered_calls_the_filter_once_per_point() {
+    fn test_filtered_tile_calls_the_filter_once_per_point() {
         // Far from the antimeridian, so the tile shows every item once
         let supercluster = load(&[
             (10.0, 50.0, true),
@@ -1014,16 +1035,12 @@ mod tests {
         ]);
         let calls = Cell::new(0);
         let items = supercluster
-            .tile_filtered(
-                0,
-                0,
-                0,
-                supercluster.filter(|point| {
-                    calls.set(calls.get() + 1);
-                    point.keep
-                }),
-            )
+            .with_filter(supercluster.filter(|point| {
+                calls.set(calls.get() + 1);
+                point.keep
+            }))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
 
         assert_eq!(items.len(), 2);
@@ -1035,7 +1052,7 @@ mod tests {
     }
 
     #[test]
-    fn test_expansion_zoom_matches_cluster_expansion_zoom_filtered() {
+    fn test_expansion_zoom_matches_filtered_cluster_expansion_zoom() {
         let supercluster = load(&create_spread_points(500));
         let filters: [fn(&TestPoint) -> bool; 2] = [|point| point.keep, |_| true];
         let mut clusters = 0;
@@ -1046,17 +1063,17 @@ mod tests {
                     for x in 0..1 << z {
                         for y in 0..1 << z {
                             for item in view
-                                .tile_filtered(z, x, y, supercluster.filter(filter))
+                                .with_filter(supercluster.filter(filter))
                                 .unwrap()
+                                .tile(z, x, y)
                                 .items
                             {
                                 let expected = match item.item() {
                                     Item::Cluster(cluster) => Some(
-                                        view.cluster_expansion_zoom_filtered(
-                                            cluster.id,
-                                            supercluster.filter(filter),
-                                        )
-                                        .unwrap(),
+                                        view.with_filter(supercluster.filter(filter))
+                                            .unwrap()
+                                            .cluster_expansion_zoom(cluster.id)
+                                            .unwrap(),
                                     ),
                                     Item::Point { .. } => None,
                                 };
@@ -1091,8 +1108,9 @@ mod tests {
 
         // The points that pass, in the order of the leaves
         let filtered = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
+            .with_filter(supercluster.filter(|point| point.keep))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
         let kept = leaves.iter().copied().filter(|point| point.keep).collect();
 
@@ -1104,8 +1122,9 @@ mod tests {
 
         // When every point passes, the item holds all of them
         let unfiltered = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(|_| true))
+            .with_filter(supercluster.filter(|_| true))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
 
         assert_eq!(unfiltered[0].count(), 3);
@@ -1124,8 +1143,9 @@ mod tests {
             (-100.0, -30.0, true),
         ]);
         let items = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
+            .with_filter(supercluster.filter(|point| point.keep))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
         let close =
             |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9;
@@ -1140,8 +1160,9 @@ mod tests {
 
         // A cluster that keeps all of its points keeps its own center
         let unfiltered = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(|_| true))
+            .with_filter(supercluster.filter(|_| true))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
         let Item::Cluster(cluster) = unfiltered[0].item() else {
             panic!("expected a cluster");
@@ -1165,26 +1186,30 @@ mod tests {
 
         check(&[
             supercluster
-                .tile_filtered(0, 0, 0, supercluster.filter(keep))
+                .with_filter(supercluster.filter(keep))
                 .unwrap()
+                .tile(0, 0, 0)
                 .items,
             supercluster
-                .tile_filtered(0, 0, 0, &cached_filter)
+                .with_filter(&cached_filter)
                 .unwrap()
+                .tile(0, 0, 0)
                 .items,
             supercluster
-                .tile_filtered(0, 0, 0, cached_filter.and(&all))
+                .with_filter(cached_filter.and(&all))
                 .unwrap()
+                .tile(0, 0, 0)
                 .items,
             supercluster
-                .tile_filtered(0, 0, 0, &cached_combined)
+                .with_filter(&cached_combined)
                 .unwrap()
+                .tile(0, 0, 0)
                 .items,
         ]);
     }
 
     #[test]
-    fn test_tile_filtered_centers_many_points_left_exactly() {
+    fn test_filtered_tile_centers_many_points_left_exactly() {
         // 200 points close together, which form one cluster on zoom level 0
         let grid: Vec<[f64; 2]> = (0..200)
             .map(|i| {
@@ -1215,8 +1240,9 @@ mod tests {
             let center = lng_lat.denormalize([sum[0] / count, sum[1] / count]);
 
             let items = supercluster
-                .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
+                .with_filter(supercluster.filter(|point| point.keep))
                 .unwrap()
+                .tile(0, 0, 0)
                 .items;
             let [lng, lat] = items[0].coordinates();
 
@@ -1239,7 +1265,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_turns_a_cluster_with_one_point_left_into_it() {
+    fn test_filtered_tile_turns_a_cluster_with_one_point_left_into_it() {
         // Points at the corners of the map make the integers as coarse as in a real dataset
         let supercluster = load(&[
             (10.0137, 50.0071, true),
@@ -1274,7 +1300,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_puts_a_cluster_of_points_at_one_place_on_them() {
+    fn test_filtered_tile_puts_a_cluster_of_points_at_one_place_on_them() {
         // Three points at one place, two of which pass, and points at the corners of the map
         let supercluster = load(&[
             (10.0137, 50.0071, true),
@@ -1305,7 +1331,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_centers_exactly_with_points_far_away() {
+    fn test_filtered_tile_centers_exactly_with_points_far_away() {
         // A range of 1000 by 1000, with points far outside it, and one at each end of what a
         // float holds, which no span between them could hold
         let range = DataRange::new(0.0, 0.0, 1000.0, 1000.0);
@@ -1324,8 +1350,9 @@ mod tests {
         let supercluster =
             Supercluster::load(options, points, |point| Some([point.0, point.1])).unwrap();
         let items = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(|point| point.2))
+            .with_filter(supercluster.filter(|point| point.2))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
         let [x, y] = items[0].coordinates();
 
@@ -1337,7 +1364,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_centers_a_cluster_with_points_past_the_range() {
+    fn test_filtered_tile_centers_a_cluster_with_points_past_the_range() {
         // A radius wider than the range makes clusters with points far past it
         let range = DataRange::new(0.0, 0.0, 100.0, 100.0);
         let options = SuperclusterOptions::builder()
@@ -1403,11 +1430,12 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_centers_the_points_left_like_loading() {
+    fn test_filtered_tile_centers_the_points_left_like_loading() {
         let supercluster = load(&[(10.0, 50.0, true), (10.0, 55.0, false), (10.0, 60.0, true)]);
         let items = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
+            .with_filter(supercluster.filter(|point| point.keep))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
 
         // Loading averages the normalized positions, where latitudes are not evenly spread, so the
@@ -1428,8 +1456,9 @@ mod tests {
     fn test_expansion_zoom_of_a_point() {
         let supercluster = load(&[(10.0, 50.0, true), (-100.0, -30.0, true)]);
         let items = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
+            .with_filter(supercluster.filter(|point| point.keep))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
 
         assert_eq!(items.len(), 2);
@@ -1446,8 +1475,9 @@ mod tests {
         )
         .unwrap();
         let items = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(|point| point[0] > 0.0))
+            .with_filter(supercluster.filter(|point| point[0] > 0.0))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
 
         // The output shows the item, not the whole supercluster it comes from
@@ -1459,7 +1489,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_with_a_large_cluster() {
+    fn test_filtered_tile_with_a_large_cluster() {
         // 130 close points form one cluster, and only its 101st leaf fails the filter
         let points: Vec<[f64; 2]> = (0..130).map(|i| [10.0 + i as f64 * 1e-6, 50.0]).collect();
         let supercluster =
@@ -1472,8 +1502,9 @@ mod tests {
         let filter = |point: &[f64; 2]| *point != failing;
 
         let items = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(filter))
+            .with_filter(supercluster.filter(filter))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
 
         assert_eq!(items[0].count(), 129);
@@ -1481,25 +1512,28 @@ mod tests {
         assert_eq!(
             items[0].expansion_zoom(),
             supercluster
-                .cluster_expansion_zoom_filtered(cluster.id, supercluster.filter(filter))
+                .with_filter(supercluster.filter(filter))
+                .unwrap()
+                .cluster_expansion_zoom(cluster.id)
                 .ok()
         );
     }
 
     #[test]
-    fn test_tile_filtered_without_points_left() {
+    fn test_filtered_tile_without_points_left() {
         let points = [(10.0, 50.0, false), (12.0, 50.0, false)];
 
-        assert!(tile_filtered(&points, WORLD_TILE).is_empty());
+        assert!(filtered_tile(&points, WORLD_TILE).is_empty());
     }
 
     #[test]
-    fn test_tile_filtered_with_cluster_max_zoom() {
+    fn test_filtered_tile_with_cluster_max_zoom() {
         let supercluster = load(&[(10.0, 50.0, true), (12.0, 50.0, true)]);
 
         let clustered = supercluster
-            .tile_filtered(1, 1, 0, supercluster.filter(|point| point.keep))
+            .with_filter(supercluster.filter(|point| point.keep))
             .unwrap()
+            .tile(1, 1, 0)
             .items;
 
         assert_eq!(clustered.len(), 1);
@@ -1507,8 +1541,9 @@ mod tests {
 
         let unclustered = supercluster
             .with_cluster_max_zoom(0)
-            .tile_filtered(1, 1, 0, supercluster.filter(|point| point.keep))
+            .with_filter(supercluster.filter(|point| point.keep))
             .unwrap()
+            .tile(1, 1, 0)
             .items;
 
         assert_eq!(unclustered.len(), 2);
@@ -1516,19 +1551,19 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_for_empty_tile() {
+    fn test_filtered_tile_for_empty_tile() {
         let points = [(10.0, 50.0, true), (12.0, 50.0, true)];
 
-        assert!(tile_filtered(&points, (1, 0, 1)).is_empty());
+        assert!(filtered_tile(&points, (1, 0, 1)).is_empty());
     }
 
     #[test]
-    fn test_tile_filtered_without_loaded_points() {
-        assert!(tile_filtered(&[], WORLD_TILE).is_empty());
+    fn test_filtered_tile_without_loaded_points() {
+        assert!(filtered_tile(&[], WORLD_TILE).is_empty());
     }
 
     #[test]
-    fn test_tile_filtered_with_a_point_left_out() {
+    fn test_filtered_tile_with_a_point_left_out() {
         let supercluster = Supercluster::load(
             SuperclusterOptions::default(),
             vec![
@@ -1543,8 +1578,9 @@ mod tests {
         // The point without coordinates is in no cluster, so the cluster becomes the point that
         // passes
         let items = supercluster
-            .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
+            .with_filter(supercluster.filter(|point| point.keep))
             .unwrap()
+            .tile(0, 0, 0)
             .items;
         let [lng, lat] = items[0].coordinates();
 
@@ -1557,8 +1593,9 @@ mod tests {
         assert_eq!(
             summarize(
                 &supercluster
-                    .tile_filtered(0, 0, 0, &cached_filter)
+                    .with_filter(&cached_filter)
                     .unwrap()
+                    .tile(0, 0, 0)
                     .items
             ),
             summarize(&items)
@@ -1588,8 +1625,9 @@ mod tests {
         assert_eq!(
             summarize(
                 &supercluster
-                    .tile_filtered(0, 0, 0, &cached_filter)
+                    .with_filter(&cached_filter)
                     .unwrap()
+                    .tile(0, 0, 0)
                     .items
             ),
             vec![(0, 1, [270, 174])]
@@ -1608,7 +1646,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_with_a_cached_filter_matches_a_filter() {
+    fn test_filtered_tile_with_a_cached_filter_matches_a_filter() {
         let supercluster = load(&create_spread_points(500));
         let filters: [fn(&TestPoint) -> bool; 3] = [|point| point.keep, |_| true, |_| false];
         let mut items = 0;
@@ -1621,11 +1659,15 @@ mod tests {
                     for x in 0..1 << z {
                         for y in 0..1 << z {
                             let filtered = view
-                                .tile_filtered(z, x, y, supercluster.filter(filter))
+                                .with_filter(supercluster.filter(filter))
                                 .unwrap()
+                                .tile(z, x, y)
                                 .items;
-                            let selected =
-                                view.tile_filtered(z, x, y, &cached_filter).unwrap().items;
+                            let selected = view
+                                .with_filter(&cached_filter)
+                                .unwrap()
+                                .tile(z, x, y)
+                                .items;
 
                             assert_eq!(summarize(&selected), summarize(&filtered));
 
@@ -1644,13 +1686,11 @@ mod tests {
                                     ));
 
                                     assert_eq!(
-                                        view.cluster_expansion_zoom_filtered(
-                                            cluster.id,
-                                            &cached_filter
+                                        view.with_filter(&cached_filter).and_then(
+                                            |view| view.cluster_expansion_zoom(cluster.id)
                                         ),
-                                        view.cluster_expansion_zoom_filtered(
-                                            cluster.id,
-                                            supercluster.filter(filter)
+                                        view.with_filter(supercluster.filter(filter)).and_then(
+                                            |view| view.cluster_expansion_zoom(cluster.id)
                                         )
                                     );
                                 }
@@ -1667,18 +1707,21 @@ mod tests {
     }
 
     #[test]
-    fn test_cluster_expansion_zoom_filtered_with_a_cached_filter_of_an_unknown_cluster() {
+    fn test_filtered_cluster_expansion_zoom_with_a_cached_filter_of_an_unknown_cluster() {
         let supercluster = load(&[(10.0, 50.0, true), (10.001, 50.0, true)]);
         let cached_filter = supercluster.cache_filter(|point| point.keep);
 
         assert_eq!(
-            supercluster.cluster_expansion_zoom_filtered(ClusterId::new(100000), &cached_filter),
+            supercluster
+                .with_filter(&cached_filter)
+                .unwrap()
+                .cluster_expansion_zoom(ClusterId::new(100000)),
             Err(SuperclusterError::ClusterNotFound)
         );
     }
 
     #[test]
-    fn test_tile_matches_tile_filtered_accepting_every_point() {
+    fn test_tile_matches_filtered_tile_accepting_every_point() {
         let supercluster = load(&create_spread_points(500));
         let every_point = supercluster.filter(|_| true);
 
@@ -1689,7 +1732,7 @@ mod tests {
                     for y in 0..1 << z {
                         assert_eq!(
                             view.tile(z, x, y),
-                            view.tile_filtered(z, x, y, &every_point).unwrap(),
+                            view.with_filter(&every_point).unwrap().tile(z, x, y),
                             "tile {z}/{x}/{y}"
                         );
                     }
@@ -1725,41 +1768,45 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_with_a_filter_by_value_or_by_reference() {
+    fn test_filtered_tile_with_a_filter_by_value_or_by_reference() {
         let supercluster = load(&create_spread_points(500));
         let keep = supercluster.filter(|point| point.keep);
-        let by_reference = supercluster.tile_filtered(2, 1, 1, &keep).unwrap();
+        let by_reference = supercluster.with_filter(&keep).unwrap().tile(2, 1, 1);
 
         assert!(!by_reference.is_empty());
         assert_eq!(
             supercluster
-                .tile_filtered(2, 1, 1, supercluster.filter(|point| point.keep))
-                .unwrap(),
+                .with_filter(supercluster.filter(|point| point.keep))
+                .unwrap()
+                .tile(2, 1, 1),
             by_reference
         );
     }
 
     #[test]
-    fn test_tile_filtered_outlives_its_filter() {
+    fn test_filtered_tile_outlives_its_filter() {
         let supercluster = load(&create_spread_points(500));
         // The items borrow the supercluster, not the filter, so the tile outlives the filter
         let tile = {
             let filter = supercluster.filter(|point| point.keep);
 
-            supercluster.tile_filtered(0, 0, 0, &filter).unwrap()
+            supercluster.with_filter(&filter).unwrap().tile(0, 0, 0)
         };
 
         let cached = supercluster.cache_filter(|point| point.keep);
 
-        assert_eq!(tile, supercluster.tile_filtered(0, 0, 0, &cached).unwrap());
+        assert_eq!(
+            tile,
+            supercluster.with_filter(&cached).unwrap().tile(0, 0, 0)
+        );
     }
 
     #[test]
-    fn test_tile_filtered_with_a_filter_made_by_another_supercluster() {
+    fn test_with_filter_made_by_another_supercluster() {
         let small = load(&[(10.0, 50.0, true)]);
         let large = load(&create_spread_points(500));
-        let made_by_small = small.filter(|point| point.keep);
-        let made_by_large = large.filter(|point| point.keep);
+        let by_small = large.with_filter(small.filter(|point| point.keep)).unwrap();
+        let by_large = large.with_filter(large.filter(|point| point.keep)).unwrap();
         let cluster_id = large
             .tile(0, 0, 0)
             .items
@@ -1771,13 +1818,10 @@ mod tests {
             .unwrap();
 
         // A filter holds only its closure, which runs on the points of the query
+        assert_eq!(by_small.tile(0, 0, 0), by_large.tile(0, 0, 0));
         assert_eq!(
-            large.tile_filtered(0, 0, 0, &made_by_small),
-            large.tile_filtered(0, 0, 0, &made_by_large)
-        );
-        assert_eq!(
-            large.cluster_expansion_zoom_filtered(cluster_id, &made_by_small),
-            large.cluster_expansion_zoom_filtered(cluster_id, &made_by_large)
+            by_small.cluster_expansion_zoom(cluster_id),
+            by_large.cluster_expansion_zoom(cluster_id)
         );
     }
 
@@ -1793,82 +1837,83 @@ mod tests {
     }
 
     #[test]
-    fn test_tile_filtered_with_a_cached_filter_of_another_supercluster() {
+    fn test_with_filter_with_a_cached_filter_of_another_supercluster() {
         let small = load(&[(10.0, 50.0, true)]);
         let large = load(&create_spread_points(500));
         let foreign = small.cache_filter(|point| point.keep);
         let own = large.cache_filter(|point| point.keep);
-        let rejected = Err(SuperclusterError::ForeignCachedFilter);
+        let rejected = Some(SuperclusterError::ForeignCachedFilter);
 
-        // On its own, or in a combined filter on either side
-        assert_eq!(large.tile_filtered(0, 0, 0, &foreign), rejected);
-        assert_eq!(large.tile_filtered(0, 0, 0, own.and(&foreign)), rejected);
-        assert_eq!(large.tile_filtered(0, 0, 0, foreign.or(&own)), rejected);
+        // On its own, or in a combined filter on either side, on every view
+        assert_eq!(large.with_filter(&foreign).err(), rejected);
+        assert_eq!(large.with_filter(own.and(&foreign)).err(), rejected);
+        assert_eq!(large.with_filter(foreign.or(&own)).err(), rejected);
         assert_eq!(
-            large
-                .with_cluster_max_zoom(3)
-                .tile_filtered(0, 0, 0, &foreign),
+            large.with_cluster_max_zoom(3).with_filter(&foreign).err(),
             rejected
         );
-        assert!(large.tile_filtered(0, 0, 0, &own).is_ok());
+        assert!(large.with_filter(&own).is_ok());
     }
 
     #[test]
-    fn test_cluster_expansion_zoom_filtered_with_a_cached_filter_of_another_supercluster() {
-        let small = load(&[(10.0, 50.0, true)]);
-        let large = load(&create_spread_points(500));
-        let foreign = small.cache_filter(|point| point.keep);
-        let cluster_id = large
-            .tile(0, 0, 0)
-            .items
-            .iter()
-            .find_map(|tile_item| match tile_item.item() {
-                Item::Cluster(cluster) => Some(cluster.id),
-                Item::Point { .. } => None,
-            })
+    fn test_clone_and_debug_of_a_filtered_view() {
+        let supercluster = load(&create_spread_points(500));
+        let cached_filter = supercluster.cache_filter(|point| point.keep);
+        let filtered_view = supercluster
+            .with_cluster_max_zoom(3)
+            .with_filter(&cached_filter)
+            .unwrap();
+        let copy = filtered_view;
+
+        // A view with a cached filter by reference is `Copy`, and a combined filter is `Clone`
+        assert_eq!(filtered_view.tile(0, 0, 0), copy.tile(0, 0, 0));
+
+        let combined = supercluster
+            .with_filter(cached_filter.and(&cached_filter))
             .unwrap();
 
-        // The cached filter is checked before the cluster, so an unknown cluster gives the same
-        // error
-        for cluster_id in [cluster_id, ClusterId::new(0)] {
-            assert_eq!(
-                large.cluster_expansion_zoom_filtered(cluster_id, &foreign),
-                Err(SuperclusterError::ForeignCachedFilter)
-            );
-        }
+        assert_eq!(combined.clone().tile(0, 0, 0), combined.tile(0, 0, 0));
+
+        // A closure has nothing to print, and the supercluster would print all its points
+        assert_eq!(
+            format!("{filtered_view:?}"),
+            "FilteredView { cluster_max_zoom: 3, .. }"
+        );
     }
 
     #[test]
-    fn test_tile_filtered_with_a_cached_filter_without_loaded_points() {
+    fn test_filtered_tile_with_a_cached_filter_without_loaded_points() {
         let supercluster = load(&[]);
         let cached_filter = supercluster.cache_filter(|point| point.keep);
 
         assert!(supercluster
-            .tile_filtered(0, 0, 0, &cached_filter)
+            .with_filter(&cached_filter)
             .unwrap()
+            .tile(0, 0, 0)
             .items
             .is_empty());
     }
 
     #[test]
-    fn test_tile_filtered_with_a_cached_filter_of_one_point() {
+    fn test_filtered_tile_with_a_cached_filter_of_one_point() {
         let supercluster = load(&[(10.0, 50.0, true)]);
         let kept = supercluster.cache_filter(|point| point.keep);
         let rejected = supercluster.cache_filter(|point| !point.keep);
 
         assert_eq!(
-            summarize(&supercluster.tile_filtered(0, 0, 0, &kept).unwrap().items),
+            summarize(&supercluster.with_filter(&kept).unwrap().tile(0, 0, 0).items),
             vec![(0, 1, [270, 174])]
         );
         assert!(supercluster
-            .tile_filtered(0, 0, 0, &rejected)
+            .with_filter(&rejected)
             .unwrap()
+            .tile(0, 0, 0)
             .items
             .is_empty());
     }
 
     #[test]
-    fn test_tile_filtered_with_a_cached_filter_and_cartesian_coordinates() {
+    fn test_filtered_tile_with_a_cached_filter_and_cartesian_coordinates() {
         let range = DataRange::new(0.0, 0.0, 100.0, 100.0);
         let options = SuperclusterOptions::builder()
             .coordinate_system(CoordinateSystem::Cartesian { range })
@@ -1887,16 +1932,18 @@ mod tests {
         .unwrap();
         let cached_filter = supercluster.cache_filter(|point| point.keep);
         let items = supercluster
-            .tile_filtered(0, 0, 0, &cached_filter)
+            .with_filter(&cached_filter)
             .unwrap()
+            .tile(0, 0, 0)
             .items;
 
         assert_eq!(
             summarize(&items),
             summarize(
                 &supercluster
-                    .tile_filtered(0, 0, 0, supercluster.filter(|point| point.keep))
+                    .with_filter(supercluster.filter(|point| point.keep))
                     .unwrap()
+                    .tile(0, 0, 0)
                     .items
             )
         );

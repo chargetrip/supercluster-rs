@@ -110,13 +110,9 @@ fn bench_many_points(c: &mut Criterion) {
         |b| {
             b.iter(|| {
                 let tile = supercluster
-                    .tile_filtered(
-                        black_box(3),
-                        black_box(4),
-                        black_box(3),
-                        supercluster.filter(filter),
-                    )
-                    .unwrap();
+                    .with_filter(supercluster.filter(filter))
+                    .unwrap()
+                    .tile(black_box(3), black_box(4), black_box(3));
 
                 read_items(&tile.items, true)
             })
@@ -126,13 +122,9 @@ fn bench_many_points(c: &mut Criterion) {
     c.bench_function("get filtered tile with coordinates of 10000 points", |b| {
         b.iter(|| {
             let tile = supercluster
-                .tile_filtered(
-                    black_box(3),
-                    black_box(4),
-                    black_box(3),
-                    supercluster.filter(filter),
-                )
-                .unwrap();
+                .with_filter(supercluster.filter(filter))
+                .unwrap()
+                .tile(black_box(3), black_box(4), black_box(3));
 
             tile.items
                 .iter()
@@ -153,8 +145,9 @@ fn bench_many_points(c: &mut Criterion) {
             b.iter(|| {
                 read_items(
                     &supercluster
-                        .tile_filtered(black_box(3), black_box(4), black_box(3), &cached)
+                        .with_filter(&cached)
                         .unwrap()
+                        .tile(black_box(3), black_box(4), black_box(3))
                         .items,
                     true,
                 )
@@ -200,13 +193,9 @@ fn bench_one_million_points(c: &mut Criterion) {
     group.bench_function("get filtered tile with expansion zooms", |b| {
         b.iter(|| {
             let tile = supercluster
-                .tile_filtered(
-                    black_box(0),
-                    black_box(0),
-                    black_box(0),
-                    supercluster.filter(filter),
-                )
-                .unwrap();
+                .with_filter(supercluster.filter(filter))
+                .unwrap()
+                .tile(black_box(0), black_box(0), black_box(0));
 
             read_items(&tile.items, true)
         })
@@ -217,13 +206,9 @@ fn bench_one_million_points(c: &mut Criterion) {
     group.bench_function("get filtered tile with coordinates", |b| {
         b.iter(|| {
             let tile = supercluster
-                .tile_filtered(
-                    black_box(0),
-                    black_box(0),
-                    black_box(0),
-                    supercluster.filter(filter),
-                )
-                .unwrap();
+                .with_filter(supercluster.filter(filter))
+                .unwrap()
+                .tile(black_box(0), black_box(0), black_box(0));
 
             tile.items
                 .iter()
@@ -242,8 +227,9 @@ fn bench_one_million_points(c: &mut Criterion) {
         b.iter(|| {
             read_items(
                 &supercluster
-                    .tile_filtered(black_box(0), black_box(0), black_box(0), &cached)
+                    .with_filter(&cached)
                     .unwrap()
+                    .tile(black_box(0), black_box(0), black_box(0))
                     .items,
                 true,
             )
@@ -274,12 +260,19 @@ fn bench_one_million_points(c: &mut Criterion) {
     group.bench_function("get filtered cluster expansion zoom", |b| {
         b.iter(|| {
             supercluster
-                .cluster_expansion_zoom_filtered(black_box(cluster_id), supercluster.filter(filter))
+                .with_filter(supercluster.filter(filter))
+                .unwrap()
+                .cluster_expansion_zoom(black_box(cluster_id))
         })
     });
 
     group.bench_function("get cached filter cluster expansion zoom", |b| {
-        b.iter(|| supercluster.cluster_expansion_zoom_filtered(black_box(cluster_id), &cached))
+        b.iter(|| {
+            supercluster
+                .with_filter(&cached)
+                .unwrap()
+                .cluster_expansion_zoom(black_box(cluster_id))
+        })
     });
 
     // Cached filters made once per attribute, combined for every request
@@ -298,8 +291,9 @@ fn bench_one_million_points(c: &mut Criterion) {
             b.iter(|| {
                 read_items(
                     &supercluster
-                        .tile_filtered(black_box(0), black_box(0), black_box(0), &combined)
+                        .with_filter(&combined)
                         .unwrap()
+                        .tile(black_box(0), black_box(0), black_box(0))
                         .items,
                     true,
                 )

@@ -156,11 +156,13 @@ fn main() -> Result<(), SuperclusterError> {
 
 A filtered tile keeps only the points that pass a filter, for example the ones that match a search. A cluster without any point left is left out, a cluster with one point left becomes that point, and a cluster with more points left moves to the exact center of the points left.
 
+Pass the filter to `with_filter`, which returns a `FilteredView`. Its `tile` and `cluster_expansion_zoom` work like the ones of the supercluster, on the points that pass. `with_filter` checks the filter once, so the queries of the view cannot fail on it.
+
 Each item's `count()`, its points from `leaves()`, `expansion_zoom()` and `coordinates()` take only the points that pass into account, as does the `point_count` of its GeoJSON. The cluster from `item()` still describes all of its points, in its `total_count` and `coordinates()`.
 
 ### Choose how to filter
 
-`tile_filtered` takes three kinds of filter, and a combined filter can also be cached. They differ in what runs on each request, so the right one depends on what you can prepare before the requests come in.
+`with_filter` takes three kinds of filter, and a combined filter can also be cached. They differ in what runs on each request, so the right one depends on what you can prepare before the requests come in.
 
 | Way | Use it when your filter | What runs on each request | When to refresh it |
 | --- | --- | --- | --- |
@@ -194,7 +196,7 @@ Your results depend on your points, filters and machine, so measure your own cas
 
 ### Filter on each request
 
-Make a `Filter` with `filter`, and pass it to `tile_filtered`. The query runs the closure once per point, and the items reuse those results, so an expensive closure never runs twice.
+Make a `Filter` with `filter`, and pass it to `with_filter`. A query of the view runs the closure once per point, and the items reuse those results, so an expensive closure never runs twice.
 
 ```rust
 use supercluster::{Supercluster, SuperclusterError, SuperclusterOptions};
@@ -217,7 +219,7 @@ fn main() -> Result<(), SuperclusterError> {
 
     // The cluster has one available station left, so the tile holds that station
     let available = supercluster.filter(|station| station.available);
-    let items = supercluster.tile_filtered(0, 0, 0, &available)?.items;
+    let items = supercluster.with_filter(&available)?.tile(0, 0, 0).items;
 
     for item in &items {
         println!("{:?}: {} station(s), zoom in to {:?}", item.coordinates(), item.count(), item.expansion_zoom());
@@ -234,7 +236,7 @@ The [`filtered_tile` example](https://github.com/chargetrip/supercluster-rs/blob
 
 ### Filter with cached filters
 
-Make one `CachedFilter` per condition with `cache_filter`, and combine them per request with `and`, `or` and `and_not`. Pass the combined filter straight to the query, and `cache` it when many requests use the same one.
+Make one `CachedFilter` per condition with `cache_filter`, and combine them per request with `and`, `or` and `and_not`. Pass the combined filter straight to `with_filter`, and `cache` it when many requests use the same one.
 
 ```rust
 use supercluster::{Item, Supercluster, SuperclusterError, SuperclusterOptions};
@@ -262,7 +264,7 @@ fn main() -> Result<(), SuperclusterError> {
     let available = supercluster.cache_filter(|station| station.available);
 
     // Per request: combine what the request asks for, which the query evaluates on its tile only
-    let items = supercluster.tile_filtered(0, 0, 0, fast.and(&available))?.items;
+    let items = supercluster.with_filter(fast.and(&available))?.tile(0, 0, 0).items;
 
     // One station is fast and available, so the cluster becomes that station
     assert!(matches!(items[0].item(), Item::Point { index: 0, .. }));
@@ -279,7 +281,7 @@ fn main() -> Result<(), SuperclusterError> {
 This crate has no `map` and `reduce` options. Combine the values of the points when you need them, which also works on filtered tiles:
 
 - Instead of `map`, read the fields of your points, which are your own type.
-- Instead of `reduce` to count matching points, filter the tile with `tile_filtered`, and read each item's `count()`.
+- Instead of `reduce` to count matching points, filter the tile with `with_filter`, and read each item's `count()`.
 - Instead of `reduce` to combine values, like a sum, compute them from `tile_item.leaves()`, which in a filtered tile holds only the points that pass the filter.
 
 ```rust
@@ -308,7 +310,7 @@ fn main() -> Result<(), SuperclusterError> {
     // The capacity of the stations that are available, per item
     let available = supercluster.filter(|station| station.available);
 
-    for tile_item in &supercluster.tile_filtered(0, 0, 0, &available)?.items {
+    for tile_item in &supercluster.with_filter(&available)?.tile(0, 0, 0).items {
         let capacity: u32 = match tile_item.item() {
             // Instead of map: a point is your own type, so read its fields
             Item::Point { point, .. } => point.capacity,
@@ -336,7 +338,7 @@ With the `geojson` feature, a supercluster loads GeoJSON features and returns it
 | To return | Call | The geometry holds |
 | --- | --- | --- |
 | A tile, to send to a map | `tile.as_feature_collection()`, which you serialize, or `tile.to_feature_collection()` | The position in the tile, in the units of the tile `extent`. |
-| A filtered tile | The same calls, on what `tile_filtered` returns | The position in the tile, at the center of the points that pass. |
+| A filtered tile | The same calls, on the tile of a `FilteredView` | The position in the tile, at the center of the points that pass. |
 | The items of a bounding box | `item.to_feature()`, on each item that `clusters(bbox, zoom)` returns | The coordinates, such as the longitude and latitude. |
 | One cluster | `cluster.to_feature()` | The coordinates of its center. |
 
@@ -392,7 +394,7 @@ fn main() -> Result<(), SuperclusterError> {
 
 ### Lower the maximum zoom level for one request
 
-`with_cluster_max_zoom` returns a view of the supercluster that clusters up to a lower zoom level, for a single request. It can lower the `max_zoom` of the options but not raise it. Above that zoom level, the view returns the points instead of clusters. The view has the same queries: `clusters`, `tile`, `tile_filtered`, `cluster_expansion_zoom` and `cluster_expansion_zoom_filtered`.
+`with_cluster_max_zoom` returns a view of the supercluster that clusters up to a lower zoom level, for a single request. It can lower the `max_zoom` of the options but not raise it. Above that zoom level, the view returns the points instead of clusters. The view has the same queries: `clusters`, `tile` and `cluster_expansion_zoom`. Its `with_filter` returns a filtered view that clusters up to the same zoom level, as in `supercluster.with_cluster_max_zoom(12).with_filter(&available)?.tile(z, x, y)`.
 
 ## API quick reference
 
@@ -433,8 +435,14 @@ These are methods of `Supercluster<P>`, with the same last column as the queries
 | --- | --- | --- | --- |
 | `filter(closure)` | `Filter` | A filter that runs the closure on the points of each query. It runs nothing when it is made. | No |
 | `cache_filter(closure)` | `CachedFilter` | The points that pass the closure, found once for many queries. | No |
-| `tile_filtered(z, x, y, filter)` | `Result<Tile, _>` | The items of a tile that keep a point that passes the filter. | Yes |
-| `cluster_expansion_zoom_filtered(cluster_id, filter)` | `Result<u8, _>` | The zoom level where a cluster splits, counting only the points that pass the filter. | Yes |
+| `with_filter(filter)` | `Result<FilteredView, _>` | A view whose queries keep only the points that pass the filter. It gives `ForeignCachedFilter` for a cached filter of another supercluster. | Yes |
+
+These are methods of the `FilteredView` that `with_filter` returns.
+
+| Method | Returns | What it does |
+| --- | --- | --- |
+| `tile(z, x, y)` | `Tile` | The items of a tile that keep a point that passes the filter. |
+| `cluster_expansion_zoom(cluster_id)` | `Result<u8, _>` | The zoom level where a cluster splits, counting only the points that pass the filter. |
 
 Cached filters combine with the methods below, which chain, as in `a.or(&b).and(&c)`. `a` is a cached or combined filter, and `b` is too, by reference. A `Filter` does not combine.
 
@@ -450,7 +458,7 @@ Cached filters combine with the methods below, which chain, as in `a.or(&b).and(
 
 | Type | What it holds | Methods |
 | --- | --- | --- |
-| `Tile` | `items`, a list of `TileItem`. `tile` and `tile_filtered` both return it. | `is_empty()` |
+| `Tile` | `items`, a list of `TileItem`. `tile` returns it, with or without a filter. | `is_empty()` |
 | `TileItem` | `x` and `y`, the position in the tile as whole numbers (`i32`). | `item()` for the cluster or point, `coordinates()`, `count()` and `leaves()` for its points, or in a filtered tile the points that pass, and `expansion_zoom()` |
 | `Item` | `Item::Cluster(Cluster)`, or `Item::Point { index, point }`, a point with its index in the list that was loaded. | None |
 | `Cluster` | `id`, and `total_count`, all of its points, also in a filtered tile. | `coordinates()` for its center |
@@ -474,7 +482,7 @@ These methods need the `geojson` feature.
 | --- | --- |
 | `SuperclusterError::ClusterNotFound` | No cluster of the supercluster has the ID. |
 | `SuperclusterError::TooManyPoints` | `load` got more than `MAX_POINTS` points. |
-| `SuperclusterError::ForeignCachedFilter` | A query got a cached filter of another supercluster. |
+| `SuperclusterError::ForeignCachedFilter` | `with_filter` got a cached filter of another supercluster. |
 | `SuperclusterError::InvalidMaxZoom`, `InvalidMinZoom`, `InvalidRadius`, `InvalidExtent`, `InvalidDataRange` and `InvalidNodeSize` | `build()` rejected an option. |
 | `MAX_POINTS` | The most points a supercluster holds: 2^31. |
 | `MAX_ZOOM_LIMIT` | The highest `max_zoom`: 30. |
@@ -661,7 +669,7 @@ The `tracing` feature reports one summary per load, with fields such as the numb
 
 ### New in version 4
 
-`tile_filtered` and `cluster_expansion_zoom_filtered` keep only the points that pass a filter. `filter` runs a closure on each query, `cache_filter` runs one once for many tiles, and cached filters combine with `and`, `or` and `and_not`. `with_cluster_max_zoom` lowers the zoom level to cluster on for a single request. See [Filter what a tile shows](#filter-what-a-tile-shows) and [Lower the maximum zoom level for one request](#lower-the-maximum-zoom-level-for-one-request).
+`with_filter` returns a view whose `tile` and `cluster_expansion_zoom` keep only the points that pass a filter. `filter` runs a closure on each query, `cache_filter` runs one once for many tiles, and cached filters combine with `and`, `or` and `and_not`. `with_cluster_max_zoom` lowers the zoom level to cluster on for a single request. See [Filter what a tile shows](#filter-what-a-tile-shows) and [Lower the maximum zoom level for one request](#lower-the-maximum-zoom-level-for-one-request).
 
 ## Benchmarks
 

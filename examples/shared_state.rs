@@ -75,7 +75,8 @@ fn handle_tile(
 
     Ok(index
         .supercluster
-        .tile_filtered(z, x, y, wanted)?
+        .with_filter(wanted)?
+        .tile(z, x, y)
         .items
         .iter()
         .map(|item| (item.coordinates(), item.count()))

@@ -225,8 +225,9 @@ fn main() {
         let closure = time(|| {
             read_items(
                 &supercluster
-                    .tile_filtered(z, x, y, supercluster.filter(wanted))
+                    .with_filter(supercluster.filter(wanted))
                     .unwrap()
+                    .tile(z, x, y)
                     .items,
                 true,
             )
@@ -236,8 +237,9 @@ fn main() {
 
             read_items(
                 &supercluster
-                    .tile_filtered(z, x, y, &cached_now)
+                    .with_filter(&cached_now)
                     .unwrap()
+                    .tile(z, x, y)
                     .items,
                 true,
             )
@@ -247,15 +249,20 @@ fn main() {
 
             read_items(
                 &supercluster
-                    .tile_filtered(z, x, y, &combined)
+                    .with_filter(&combined)
                     .unwrap()
+                    .tile(z, x, y)
                     .items,
                 true,
             )
         });
         let reused = time(|| {
             read_items(
-                &supercluster.tile_filtered(z, x, y, &cached).unwrap().items,
+                &supercluster
+                    .with_filter(&cached)
+                    .unwrap()
+                    .tile(z, x, y)
+                    .items,
                 true,
             )
         });

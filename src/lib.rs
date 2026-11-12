@@ -30,12 +30,12 @@ mod range;
 mod supercluster;
 
 /// Tile module.
-/// This module contains the items of a tile, and the queries that build a tile, with or without a
-/// filter.
+/// This module contains the items of a tile, the queries that build a tile, and the view whose
+/// queries keep only the points that pass a filter.
 mod tile;
 
 /// Filter module.
-/// This module contains the filters that the filtered queries take: a closure that runs on each
+/// This module contains the filters that `with_filter` takes: a closure that runs on each
 /// query, the cached result of a closure, which queries reuse, and combined filters of those.
 mod filter;
 

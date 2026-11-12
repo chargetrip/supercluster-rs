@@ -80,7 +80,7 @@ The crate must handle millions of points, so keep peak memory and allocations lo
 are the reference.
 
 - Reuse buffers in loops that run once per point or per zoom level (see `within_into`). Do not
-  allocate per item in `cluster`, in the queries or in `tile_filtered` unless the result needs it.
+  allocate per item in `cluster` or in the queries, filtered or not, unless the result needs it.
 - Use the smallest type that holds the value (`u32` ids and ranges). Keep `f64` where precision
   matters, such as coordinates and positions.
 - Each zoom level keeps a KD-tree of its items, with a position and a `u32` handle per item, and
