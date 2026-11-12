@@ -29,13 +29,14 @@ fn read_fixture() -> Value {
 
 #[test]
 fn test_serialize_matches_the_fixture() {
-    // A change to what a supercluster writes needs a new version, which a reader of the old one
-    // rejects, so the fixture only changes together with the version it holds
+    // A change to a format that a release shipped needs a new version, which a reader of the old
+    // one rejects
     assert_eq!(
         serde_json::to_value(create_supercluster()).unwrap(),
         read_fixture(),
-        "What a supercluster writes changed. Raise VERSION in the format module of \
-         src/supercluster.rs, then write the new format into tests/common/supercluster-format.json."
+        "What a supercluster writes changed. Write the new format into \
+         tests/common/supercluster-format.json, and if a release shipped the old one, raise VERSION \
+         in the format module of src/supercluster.rs first."
     );
 }
 

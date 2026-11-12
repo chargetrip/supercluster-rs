@@ -65,10 +65,11 @@ a test file with `#![cfg(feature = "...")]`. An example or benchmark that needs 
 - Only loading logs (feature `tracing`). Queries never log.
 - All GeoJSON code lives in `feature.rs`. The core knows nothing about GeoJSON.
 - A deserialized supercluster is checked to hold together, so queries cannot panic or loop on it,
-  but not that its clusters are right. Raise `VERSION` in the `format` module of `supercluster.rs`
-  with every change to what a supercluster writes, and check any new field in `inconsistency`.
-  `tests/test_format.rs` fails until you do. Then write the new format into
-  `tests/common/supercluster-format.json`, whose `version` must change with it.
+  but not that its clusters are right. Check any new field of what a supercluster writes in
+  `inconsistency`, and write the new format into `tests/common/supercluster-format.json`, which
+  `tests/test_format.rs` compares with. Raise `VERSION` in the `format` module of
+  `supercluster.rs`, and the `version` of the fixture with it, only for a change to a format that
+  a release already shipped. Until then, the format changes under the same version.
 
 ## Concurrency
 

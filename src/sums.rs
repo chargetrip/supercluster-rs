@@ -105,8 +105,8 @@ impl Quantizer {
 /// them in an `Arc`, and its cached filters keep a weak reference. So a cached combined filter
 /// reaches the positions it sums without the supercluster, a query tells whether a cached filter
 /// belongs to its supercluster, and a cached filter does not keep them after the supercluster is
-/// dropped. Only the positions are written with `serde`, and reading builds the rest again, so it
-/// always matches them.
+/// dropped. None of it is written with `serde`: reading finds the positions again from the KD-tree
+/// of the points and builds the rest from them, so it always matches them.
 pub struct Positions {
     /// The position of every point that was clustered.
     positions: Vec<[f64; 2]>,

@@ -380,8 +380,8 @@ pub struct Supercluster<P> {
 
     /// The position of every point that was clustered, normalized to the [0..1] range the KD-trees
     /// use, in the order of `points`. The points that were left out have none. The cached filters
-    /// keep a weak reference, to sum the positions of the points that pass. They are written as a
-    /// list.
+    /// keep a weak reference, to sum the positions of the points that pass. They are not written,
+    /// because the KD-tree of the points holds them too, and reading finds them again from it.
     positions: Arc<Positions>,
 
     /// KD-trees of the clusters of each zoom level, from 0 to the maximum zoom level, whose IDs
@@ -452,7 +452,8 @@ mod format {
         }
     }
 
-    /// What a supercluster writes: the version, then its fields, with the positions as a list.
+    /// What a supercluster writes: the version, then its fields. The positions of the points are
+    /// in the KD-tree of the points, so they are written once.
     #[derive(Serialize)]
     struct Written<'a, P> {
         /// The version of the format.
@@ -466,9 +467,6 @@ mod format {
 
         /// The index of every point in the list that was loaded.
         indexes: &'a [u32],
-
-        /// The positions of the points that were clustered.
-        positions: &'a [[f64; 2]],
 
         /// The KD-trees of the clusters of every zoom level.
         trees: &'a [KDBush],
@@ -497,9 +495,6 @@ mod format {
         /// The index of every point in the list that was loaded.
         indexes: Vec<u32>,
 
-        /// The positions of the points that were clustered, which build the running sums again.
-        positions: Vec<[f64; 2]>,
-
         /// The KD-trees of the clusters of every zoom level.
         trees: Vec<KDBush>,
 
@@ -517,7 +512,6 @@ mod format {
                 options: &self.options,
                 points: &self.points,
                 indexes: &self.indexes,
-                positions: &self.positions,
                 trees: &self.trees,
                 point_tree: &self.point_tree,
                 clusters: &self.clusters,
@@ -533,7 +527,7 @@ mod format {
                 options: read.options,
                 points: read.points,
                 indexes: read.indexes,
-                positions: Arc::new(Positions::new(read.positions)),
+                positions: Arc::new(Positions::new(super::leaf_positions(&read.point_tree))),
                 trees: read.trees,
                 point_tree: read.point_tree,
                 shown_from: vec![],
@@ -589,7 +583,7 @@ mod format {
             }
 
             if clustered > points {
-                return Some("there are more positions than points");
+                return Some("the KD-tree of the points holds more points than there are");
             }
 
             if self.trees.len() != usize::from(self.options.max_zoom) + 1 {
@@ -610,10 +604,6 @@ mod format {
                 {
                     return Some("a KD-tree is not valid or refers to an item that does not exist");
                 }
-            }
-
-            if self.point_tree.ids.len() != clustered {
-                return Some("the KD-tree of the points does not hold every point");
             }
 
             // The number of clusters is the length of their point counts, and every cluster has
@@ -1473,8 +1463,6 @@ impl<P> Supercluster<P> {
             }
         }
 
-        let clustered = next_leaf as usize;
-
         // The points left out of the clustering come last, in the order they were loaded
         for leaf in leaf_of.iter_mut().filter(|leaf| **leaf == u32::MAX) {
             *leaf = next_leaf;
@@ -1493,13 +1481,6 @@ impl<P> Supercluster<P> {
             }
         }
 
-        // The tree of the points holds every point that was clustered
-        let mut positions = vec![[0.0, 0.0]; clustered];
-
-        for (&leaf, &position) in point_tree.ids.iter().zip(&point_tree.coords) {
-            positions[leaf as usize] = position;
-        }
-
         let mut indexes = vec![0; point_count];
 
         for (index, &leaf) in leaf_of.iter().enumerate() {
@@ -1509,7 +1490,7 @@ impl<P> Supercluster<P> {
         permute(&mut self.points, &indexes);
 
         self.indexes = indexes;
-        self.positions = Arc::new(Positions::new(positions));
+        self.positions = Arc::new(Positions::new(leaf_positions(point_tree)));
     }
 
     /// Warn when points are left out of the clustering because their coordinates are missing or
@@ -1524,6 +1505,21 @@ impl<P> Supercluster<P> {
             );
         }
     }
+}
+
+/// Get the positions of the points of the KD-tree of the points in leaf order, where its IDs are
+/// the positions in leaf order. It holds every point that was clustered, once. An ID past the
+/// points of the tree is skipped, so data that was read cannot make it index past them.
+fn leaf_positions(point_tree: &KDBush) -> Vec<[f64; 2]> {
+    let mut positions = vec![[0.0, 0.0]; point_tree.ids.len()];
+
+    for (&leaf, &position) in point_tree.ids.iter().zip(&point_tree.coords) {
+        if let Some(at) = positions.get_mut(leaf as usize) {
+            *at = position;
+        }
+    }
+
+    positions
 }
 
 /// Replace the IDs of a KD-tree, which are the indexes of its items in `entries`, with the handles
@@ -2195,7 +2191,6 @@ mod tests {
                 "options",
                 "point_tree",
                 "points",
-                "positions",
                 "trees",
                 "version"
             ]
@@ -2258,8 +2253,17 @@ mod tests {
                 "the indexes do not match the points",
             ),
             (
-                |json| json["positions"] = serde_json::json!(vec![[0.5, 0.5]; 301]),
-                "there are more positions than points",
+                |json| {
+                    json["point_tree"]["ids"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(0.into());
+                    json["point_tree"]["coords"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(serde_json::json!([0.5, 0.5]));
+                },
+                "the KD-tree of the points holds more points than there are",
             ),
             (
                 |json| {
@@ -2290,7 +2294,7 @@ mod tests {
                     json["point_tree"]["ids"].as_array_mut().unwrap().pop();
                     json["point_tree"]["coords"].as_array_mut().unwrap().pop();
                 },
-                "the KD-tree of the points does not hold every point",
+                "a KD-tree is not valid or refers to an item that does not exist",
             ),
             (
                 |json| {
