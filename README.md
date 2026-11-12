@@ -169,7 +169,7 @@ Each item's `count()`, its points from `leaves()`, `expansion_zoom()` and `coord
 | --- | --- | --- | --- |
 | A `Filter`, made with `filter` | Changes with every request, such as a text search | Your closure, on every point under the tile, and the center of each cluster with points that fail. As fast as the others on zoomed-in tiles, but slow on zoomed-out ones. | Never, because nothing is cached. |
 | A `CachedFilter`, made with `cache_filter` | Is one condition that you can prepare | A count of the points of each cluster that pass, and their center, with a few lookups, however many points the tile covers. The fastest way on zoomed-out tiles. | When the data your closure reads changes. |
-| A `CombinedFilter` of cached filters, such as `a.or(&b).and(&c)` | Combines cached conditions differently on each request | `and`, `or` and `and_not` on the bits of the cached filters, for the points under the tile only, and the center of each cluster with points that fail. Far faster than a `Filter` on zoomed-out tiles, and at most about 2 µs slower on zoomed-in ones. | Never, because nothing is cached. Each request uses the cached filters as they are when it comes in. |
+| A `CombinedFilter` of cached filters, such as `a.or(&b).and(&c)` | Combines cached conditions differently on each request | `and`, `or` and `and_not` on the bits of the cached filters, for the points under the tile only, and the center of each cluster with points that fail. Far faster than a `Filter` on zoomed-out tiles, and slightly slower on zoomed-in ones. | Never, because nothing is cached. Each request uses the cached filters as they are when it comes in. |
 | A combined filter cached with `cache` | Combines cached conditions the same way on many requests, above all zoomed-out ones | A few lookups per cluster, like a `CachedFilter`. | After you refresh one of the cached filters it combines. |
 
 #### What a request costs
@@ -178,13 +178,13 @@ One request on 10,000,000 points around 3,000 places, on a Mac with Apple silico
 
 | Zoom | Points under the tile | Filter | Combined filter | Cached filter |
 | ---: | ---: | ---: | ---: | ---: |
-| 0 | 10,000,000 | 44.7 ms | 3.08 ms (15x) | 2.15 µs (20,846x) |
-| 4 | 341,224 | 1.40 ms | 76.3 µs (18x) | 3.01 µs (464x) |
-| 8 | 183,438 | 665 µs | 34.0 µs (20x) | 1.54 µs (432x) |
-| 12 | 39,806 | 175 µs | 23.0 µs (7.6x) | 8.67 µs (20x) |
-| 14 | 3,259 | 13.3 µs | 13.9 µs (1.0x) | 8.09 µs (1.6x) |
-| 16 | 184 | 2.30 µs | 3.87 µs (0.6x) | 2.13 µs (1.1x) |
-| 18 | 10 | 236 ns | 596 ns (0.4x) | 250 ns (0.9x) |
+| 0 | 10,000,000 | 44.7 ms | 3.11 ms (14x) | 2.07 µs (21,589x) |
+| 4 | 341,224 | 1.40 ms | 77.6 µs (18x) | 3.17 µs (442x) |
+| 8 | 183,438 | 659 µs | 33.6 µs (20x) | 1.43 µs (460x) |
+| 12 | 39,806 | 176 µs | 23.1 µs (7.6x) | 8.76 µs (20x) |
+| 14 | 3,259 | 13.6 µs | 14.2 µs (1.0x) | 8.27 µs (1.6x) |
+| 16 | 184 | 2.21 µs | 4.04 µs (0.5x) | 2.06 µs (1.1x) |
+| 18 | 10 | 269 ns | 662 ns (0.4x) | 283 ns (1.0x) |
 
 Your results depend on your points, filters and machine, so measure your own case.
 

@@ -1069,32 +1069,36 @@ impl<P> Supercluster<P> {
         mut visit: impl FnMut(u32, [f64; 2]),
     ) {
         let node_size = self.options.node_size;
+        let points = &self.point_tree;
 
-        if let Some(tree) = self.trees.get(index) {
-            tree.range(
-                node_size,
-                min_x - reach,
-                min_y - reach,
-                max_x + reach,
-                max_y + reach,
-                |at| visit(tree.ids[at], tree.coords[at]),
-            );
-        }
+        // Past the maximum zoom level there are no clusters, and every point shows, so the search
+        // of the points skips nothing
+        let Some(tree) = self.trees.get(index) else {
+            points.range(node_size, min_x, min_y, max_x, max_y, |at| {
+                visit(points.ids[at], points.coords[at])
+            });
 
-        // The index is at most the maximum zoom level plus one, which a `u8` holds
+            return;
+        };
+
+        tree.range(
+            node_size,
+            min_x - reach,
+            min_y - reach,
+            max_x + reach,
+            max_y + reach,
+            |at| visit(tree.ids[at], tree.coords[at]),
+        );
+
+        // The index is at most the maximum zoom level, which a `u8` holds
         let zoom = index as u8;
-        let tree = &self.point_tree;
 
-        tree.range_where(
+        points.range_where(
             node_size,
             [min_x, min_y, max_x, max_y],
-            |node| {
-                self.node_shown_from
-                    .get(node)
-                    .is_some_and(|&from| from <= zoom)
-            },
+            |node| self.node_shown_from[node] <= zoom,
             |at| self.shown_from[at] <= zoom,
-            |at| visit(tree.ids[at], tree.coords[at]),
+            |at| visit(points.ids[at], points.coords[at]),
         );
     }
 
@@ -1123,7 +1127,9 @@ impl<P> Supercluster<P> {
         // A moved cluster is at most its spread from where the KD-tree has it
         let reach = match items {
             TileItems::StayInPlace => 0.0,
-            TileItems::MoveClusters => self.reaches.get(index).copied().unwrap_or(0.0),
+            // Past the maximum zoom level there are only points, which do not move
+            TileItems::MoveClusters if index > usize::from(self.options.max_zoom) => 0.0,
+            TileItems::MoveClusters => self.reaches[index],
         };
 
         let mut visit_range = |min_x: f64, max_x: f64, origin_x: f64| {
@@ -1298,11 +1304,16 @@ impl<P> Supercluster<P> {
     }
 
     /// Create a KD-tree over the clusters of the items of a zoom level, whose IDs are their
-    /// handles. A handle from `point_count` up is a cluster.
+    /// handles. `point_count` is the number of points, which tells a cluster from a point.
     fn create_cluster_tree(entries: &[Entry], node_size: usize, point_count: usize) -> KDBush {
         let clusters: Vec<Entry> = entries
             .iter()
-            .filter(|entry| entry.handle as usize >= point_count)
+            .filter(|entry| {
+                matches!(
+                    Handle::decode(entry.handle, point_count),
+                    Handle::Cluster(_)
+                )
+            })
             .copied()
             .collect();
         let mut tree = Self::create_tree(&clusters, node_size);

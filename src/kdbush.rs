@@ -63,9 +63,9 @@ impl KDBush {
 
     /// Call `visit` with the position in the tree of every point in a bounding box, as the left,
     /// top, right and bottom edge, edges included, that `keep` accepts, but skip every node for
-    /// which `enter` returns `false`, with the points under it. `enter` gets the number of a node:
-    /// the root is 0, and the children of node `n` are `2n + 1` and `2n + 2`, as in
-    /// `node_minimums`.
+    /// which `enter` returns `false`, with the points under it. `enter` runs before a node is
+    /// searched, so a skipped node costs one call. `enter` gets the number of a node: the root is
+    /// 0, and the children of node `n` are `2n + 1` and `2n + 2`, as in `node_minimums`.
     ///
     /// `keep` gets the position of a point in the tree. The search stops reading a leaf node at its
     /// first point that `keep` rejects, so the points of every leaf must come in an order where
@@ -79,13 +79,13 @@ impl KDBush {
         keep: impl Fn(usize) -> bool,
         mut visit: impl FnMut(usize),
     ) {
-        if self.ids.is_empty() {
+        if self.ids.is_empty() || !enter(0) {
             return;
         }
 
         // Each level of the tree halves the points, so the tree is less than 64 levels deep. The
         // search keeps at most one node per level and one more, so an array holds them without
-        // allocating
+        // allocating. A node is checked with `enter` before it goes on the stack.
         let mut stack = [(0, 0, 0, 0); 64];
         let mut length = 1;
 
@@ -95,10 +95,6 @@ impl KDBush {
             length -= 1;
 
             let (axis, right, left, node) = stack[length];
-
-            if !enter(node) {
-                continue;
-            }
 
             if right - left <= node_size {
                 for at in left..=right {
@@ -125,12 +121,12 @@ impl KDBush {
 
             let next_axis = (axis + 1) % 2;
 
-            if (axis == 0 && min_x <= x) || (axis != 0 && min_y <= y) {
+            if ((axis == 0 && min_x <= x) || (axis != 0 && min_y <= y)) && enter(2 * node + 1) {
                 stack[length] = (next_axis, m - 1, left, 2 * node + 1);
                 length += 1;
             }
 
-            if (axis == 0 && max_x >= x) || (axis != 0 && max_y >= y) {
+            if ((axis == 0 && max_x >= x) || (axis != 0 && max_y >= y)) && enter(2 * node + 2) {
                 stack[length] = (next_axis, right, m + 1, 2 * node + 2);
                 length += 1;
             }
