@@ -2221,11 +2221,12 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_deserialize_rejects_another_version() {
-        let error = read_changed(|json| json["version"] = 2.into()).unwrap_err();
+        // No format has version 0, so this holds whichever version is current
+        let error = read_changed(|json| json["version"] = 0.into()).unwrap_err();
 
         assert!(error
             .to_string()
-            .starts_with("The supercluster has format version 2, and only version 1 can be read."));
+            .starts_with("The supercluster has format version 0, and only version "));
 
         // A supercluster written before the format had a version has none
         let error = read_changed(|json| {
