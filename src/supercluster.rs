@@ -13,10 +13,12 @@
 //! The `CoordinateSystem` enum has two variants: `LngLat` for longitude and latitude coordinates and
 //! `Cartesian` for Cartesian coordinates.
 //!
-//! Every zoom level has a KD-tree of its items, and an item of a tree is a `u32` handle: a point
-//! by its position in the points, or a cluster by its ID. The points are in leaf order, where the
-//! points of every cluster are next to each other, so the points of a cluster are a range of them.
-//! What a query needs to know about a cluster is in one table, by the number of the cluster.
+//! Every zoom level has a KD-tree of its clusters, and one KD-tree holds the points for all zoom
+//! levels, with the zoom level from which each point shows on its own. An item of a tree is a
+//! `u32` handle: a point by its position in the points, or a cluster by its ID. The points are in
+//! leaf order, where the points of every cluster are next to each other, so the points of a
+//! cluster are a range of them. What a query needs to know about a cluster is in one table, by the
+//! number of the cluster.
 
 use std::{f64::consts::PI, fmt::Debug, ops::Range, sync::Arc, vec};
 
@@ -382,16 +384,31 @@ pub struct Supercluster<P> {
     /// list.
     positions: Arc<Positions>,
 
-    /// KD-trees for each zoom level, from 0 to the maximum zoom level plus one, whose IDs are the
-    /// handles of their items. The last one holds the points that are not clustered. The ones
-    /// below the minimum zoom level are empty.
+    /// KD-trees of the clusters of each zoom level, from 0 to the maximum zoom level, whose IDs
+    /// are the handles of the clusters. The ones below the minimum zoom level are empty.
     trees: Vec<KDBush>,
+
+    /// The KD-tree of every point that was clustered, for all zoom levels, whose IDs are the
+    /// handles of the points. A zoom level shows the points whose `shown_from` is not above it. The
+    /// points of every leaf node come in the order of their `shown_from`, lowest first, so a search
+    /// stops reading a leaf at its first point that its zoom level does not show.
+    point_tree: KDBush,
+
+    /// The zoom level from which every point of `point_tree`, in the order of the tree, shows on
+    /// its own: the one after the zoom level of the cluster it is a child of, or 0 for a point that
+    /// no cluster holds. Reading a supercluster finds them again from the clusters.
+    shown_from: Vec<u8>,
+
+    /// The lowest `shown_from` under every node of `point_tree`, so a search skips the nodes whose
+    /// points are all in clusters on its zoom level.
+    node_shown_from: Vec<u8>,
 
     /// The clusters of every zoom level.
     clusters: Clusters,
 
-    /// How far past a tile a filtered tile searches each KD-tree, to find every cluster that can
-    /// move into it: the widest spread of a cluster in the tree, normalized.
+    /// How far past a tile a filtered tile searches the KD-tree of the clusters of each zoom level,
+    /// to find every cluster that can move into it: the widest spread of a cluster in the tree,
+    /// normalized.
     reaches: Vec<f64>,
 }
 
@@ -453,8 +470,11 @@ mod format {
         /// The positions of the points that were clustered.
         positions: &'a [[f64; 2]],
 
-        /// The KD-trees of every zoom level.
+        /// The KD-trees of the clusters of every zoom level.
         trees: &'a [KDBush],
+
+        /// The KD-tree of the points.
+        point_tree: &'a KDBush,
 
         /// The clusters of every zoom level.
         clusters: &'a Clusters,
@@ -480,8 +500,11 @@ mod format {
         /// The positions of the points that were clustered, which build the running sums again.
         positions: Vec<[f64; 2]>,
 
-        /// The KD-trees of every zoom level.
+        /// The KD-trees of the clusters of every zoom level.
         trees: Vec<KDBush>,
+
+        /// The KD-tree of the points.
+        point_tree: KDBush,
 
         /// The clusters of every zoom level.
         clusters: Clusters,
@@ -496,6 +519,7 @@ mod format {
                 indexes: &self.indexes,
                 positions: &self.positions,
                 trees: &self.trees,
+                point_tree: &self.point_tree,
                 clusters: &self.clusters,
             }
             .serialize(serializer)
@@ -511,6 +535,9 @@ mod format {
                 indexes: read.indexes,
                 positions: Arc::new(Positions::new(read.positions)),
                 trees: read.trees,
+                point_tree: read.point_tree,
+                shown_from: vec![],
+                node_shown_from: vec![],
                 clusters: read.clusters,
                 reaches: vec![],
             };
@@ -528,6 +555,7 @@ mod format {
                             super::spread_step(options, zoom)
                         });
 
+                    supercluster.set_shown_from();
                     supercluster.set_reaches();
 
                     Ok(supercluster)
@@ -564,16 +592,28 @@ mod format {
                 return Some("there are more positions than points");
             }
 
-            if self.trees.len() != usize::from(self.options.max_zoom) + 2 {
+            if self.trees.len() != usize::from(self.options.max_zoom) + 1 {
                 return Some("the number of KD-trees does not match the maximum zoom level");
             }
 
-            for tree in &self.trees {
+            // Every tree of clusters holds clusters, and the tree of the points holds every point
+            // that was clustered, so finding where they show reads within the points
+            let is_cluster = |handle| matches!(self.handle(handle), Handle::Cluster(_));
+            let trees = self.trees.iter().map(|tree| (tree, true));
+
+            for (tree, of_clusters) in trees.chain([(&self.point_tree, false)]) {
                 if tree.ids.len() != tree.coords.len()
-                    || !tree.ids.iter().all(|&handle| is_handle(handle))
+                    || !tree
+                        .ids
+                        .iter()
+                        .all(|&handle| is_handle(handle) && is_cluster(handle) == of_clusters)
                 {
                     return Some("a KD-tree is not valid or refers to an item that does not exist");
                 }
+            }
+
+            if self.point_tree.ids.len() != clustered {
+                return Some("the KD-tree of the points does not hold every point");
             }
 
             // The number of clusters is the length of their point counts, and every cluster has
@@ -693,6 +733,9 @@ impl<P> Supercluster<P> {
             indexes: vec![],
             positions: Arc::new(Positions::new(vec![])),
             trees: vec![],
+            point_tree: KDBush::default(),
+            shown_from: vec![],
+            node_shown_from: vec![],
             clusters: Clusters::new(),
             reaches: vec![],
         };
@@ -896,8 +939,9 @@ impl<P> Supercluster<P> {
         }
     }
 
-    /// Find how far past a tile a filtered tile searches each KD-tree: the widest spread of a
-    /// cluster in it. The tree of the points that are not clustered has no clusters, so 0.
+    /// Find how far past a tile a filtered tile searches the KD-tree of the clusters of each zoom
+    /// level: the widest spread of a cluster in it. Points do not move, so the search of the points
+    /// does not reach past the tile.
     fn set_reaches(&mut self) {
         self.reaches = self
             .trees
@@ -1013,19 +1057,45 @@ impl<P> Supercluster<P> {
         }
     }
 
-    /// Call `visit` with the handle and the normalized position of every item of the KD-tree at
-    /// `index` in a box, as the left, top, right and bottom edge, edges included.
+    /// Call `visit` with the handle and the normalized position of every item of the zoom level at
+    /// `index` in a box, as the left, top, right and bottom edge, edges included: first the
+    /// clusters, within `reach` of the box, then the points. The index past the maximum zoom level
+    /// has every point and no clusters.
     pub(crate) fn tree_range(
         &self,
         index: usize,
         [min_x, min_y, max_x, max_y]: [f64; 4],
+        reach: f64,
         mut visit: impl FnMut(u32, [f64; 2]),
     ) {
-        let tree = &self.trees[index];
+        let node_size = self.options.node_size;
 
-        tree.range(self.options.node_size, min_x, min_y, max_x, max_y, |at| {
-            visit(tree.ids[at], tree.coords[at])
-        });
+        if let Some(tree) = self.trees.get(index) {
+            tree.range(
+                node_size,
+                min_x - reach,
+                min_y - reach,
+                max_x + reach,
+                max_y + reach,
+                |at| visit(tree.ids[at], tree.coords[at]),
+            );
+        }
+
+        // The index is at most the maximum zoom level plus one, which a `u8` holds
+        let zoom = index as u8;
+        let tree = &self.point_tree;
+
+        tree.range_where(
+            node_size,
+            [min_x, min_y, max_x, max_y],
+            |node| {
+                self.node_shown_from
+                    .get(node)
+                    .is_some_and(|&from| from <= zoom)
+            },
+            |at| self.shown_from[at] <= zoom,
+            |at| visit(tree.ids[at], tree.coords[at]),
+        );
     }
 
     /// Call `visit` with the handle and the normalized position of every item of the tile at zoom
@@ -1053,7 +1123,7 @@ impl<P> Supercluster<P> {
         // A moved cluster is at most its spread from where the KD-tree has it
         let reach = match items {
             TileItems::StayInPlace => 0.0,
-            TileItems::MoveClusters => self.reaches[index],
+            TileItems::MoveClusters => self.reaches.get(index).copied().unwrap_or(0.0),
         };
 
         let mut visit_range = |min_x: f64, max_x: f64, origin_x: f64| {
@@ -1066,7 +1136,8 @@ impl<P> Supercluster<P> {
 
             self.tree_range(
                 index,
-                [min_x - reach, top - reach, max_x + reach, bottom + reach],
+                [min_x, top, max_x, bottom],
+                reach,
                 |handle, position| visit(handle, position, origin_x, bounds),
             );
         };
@@ -1105,8 +1176,9 @@ impl<P> Supercluster<P> {
         ]
     }
 
-    /// Get the index of the KD-tree to query for a zoom level.
-    /// Above the highest zoom level to cluster on, this is the KD-tree of the points that are not clustered.
+    /// Get the index of the zoom level whose items a query for `zoom` gets, for `tree_range`. Above
+    /// the highest zoom level to cluster on, this is the one past the maximum zoom level, where
+    /// every point shows on its own.
     fn tree_index(&self, zoom: u8, cluster_max_zoom: u8) -> usize {
         let unclustered = self.options.max_zoom as usize + 1;
 
@@ -1151,40 +1223,60 @@ impl<P> Supercluster<P> {
         #[cfg(feature = "tracing")]
         Self::warn_left_out_points(self.points.len(), entries.len());
 
-        // The KD-trees from the highest zoom level down, the one of the points first
-        let mut trees = Vec::with_capacity(max_zoom as usize + 2);
-        let mut tree = Self::create_tree(&entries, node_size);
-        let mut clusters = Clusters::new();
-
         // Cluster points on max zoom, then cluster the results on previous zoom, etc.;
-        // Results in a cluster hierarchy across zoom levels
-        for zoom in (min_zoom..=max_zoom).rev() {
-            let current = self.cluster(&tree, &entries, zoom, &mut clusters);
+        // Results in a cluster hierarchy across zoom levels. The tree of the points is kept for
+        // all zoom levels, and the KD-trees of the clusters go from the highest zoom level down.
+        let mut point_tree = Self::create_tree(&entries, node_size);
+        let mut clusters = Clusters::new();
+        let mut current = self.cluster(&point_tree, &entries, max_zoom, &mut clusters);
+        let mut trees = Vec::with_capacity(max_zoom as usize + 1);
 
-            set_handles(&mut tree, &entries);
-            trees.push(tree);
+        set_handles(&mut point_tree, &entries);
+
+        #[cfg(feature = "tracing")]
+        tracing::trace!(
+            zoom = max_zoom,
+            items = current.len(),
+            "Clustered zoom level"
+        );
+
+        for zoom in (min_zoom..max_zoom).rev() {
+            // A tree of every item of the zoom level, to cluster them, which only lives as long
+            // as that
+            let tree = Self::create_tree(&current, node_size);
+            let next = self.cluster(&tree, &current, zoom, &mut clusters);
+
+            trees.push(Self::create_cluster_tree(
+                &current,
+                node_size,
+                self.points.len(),
+            ));
 
             #[cfg(feature = "tracing")]
-            tracing::trace!(zoom, items = current.len(), "Clustered zoom level");
+            tracing::trace!(zoom, items = next.len(), "Clustered zoom level");
 
-            tree = Self::create_tree(&current, node_size);
-            entries = current;
+            current = next;
         }
 
-        set_handles(&mut tree, &entries);
-        trees.push(tree);
+        trees.push(Self::create_cluster_tree(
+            &current,
+            node_size,
+            self.points.len(),
+        ));
 
-        // The zoom levels below the minimum one have no items
+        // The zoom levels below the minimum one have no clusters
         trees.extend((0..min_zoom).map(|_| KDBush::default()));
         trees.reverse();
 
-        self.move_into_leaf_order(&entries, &mut trees, &mut clusters);
+        self.move_into_leaf_order(&current, &mut trees, &mut point_tree, &mut clusters);
 
         clusters.set_spreads(&self.positions, |zoom| spread_step(&self.options, zoom));
         clusters.shrink_to_fit();
 
         self.trees = trees;
+        self.point_tree = point_tree;
         self.clusters = clusters;
+        self.set_shown_from();
         self.set_reaches();
 
         #[cfg(feature = "tracing")]
@@ -1203,6 +1295,49 @@ impl<P> Supercluster<P> {
             entries.iter().map(|entry| entry.position).collect(),
             node_size,
         )
+    }
+
+    /// Create a KD-tree over the clusters of the items of a zoom level, whose IDs are their
+    /// handles. A handle from `point_count` up is a cluster.
+    fn create_cluster_tree(entries: &[Entry], node_size: usize, point_count: usize) -> KDBush {
+        let clusters: Vec<Entry> = entries
+            .iter()
+            .filter(|entry| entry.handle as usize >= point_count)
+            .copied()
+            .collect();
+        let mut tree = Self::create_tree(&clusters, node_size);
+
+        set_handles(&mut tree, &clusters);
+        tree
+    }
+
+    /// Find the zoom level from which every point of the KD-tree of the points shows on its own,
+    /// from the clusters it is a child of, sort the points of every leaf node by it, and find the
+    /// lowest one under every node of the tree.
+    fn set_shown_from(&mut self) {
+        let clusters = &self.clusters;
+        let mut by_leaf = vec![0; self.positions.len()];
+
+        for cluster in 0..clusters.len() {
+            for &child in clusters.children_of(cluster) {
+                if let Handle::Point(leaf) = self.handle(child) {
+                    by_leaf[leaf] = clusters.zooms[cluster] + 1;
+                }
+            }
+        }
+
+        let node_size = self.options.node_size;
+        let mut shown_from: Vec<u8> = self
+            .point_tree
+            .ids
+            .iter()
+            .map(|&leaf| by_leaf[leaf as usize])
+            .collect();
+
+        self.point_tree
+            .sort_leaves_by_key(node_size, &mut shown_from);
+        self.node_shown_from = self.point_tree.node_minimums(node_size, &shown_from);
+        self.shown_from = shown_from;
     }
 
     /// Cluster the items of a zoom level on the zoom level `zoom` before it. `tree` indexes
@@ -1306,6 +1441,7 @@ impl<P> Supercluster<P> {
         &mut self,
         top: &[Entry],
         trees: &mut [KDBush],
+        point_tree: &mut KDBush,
         clusters: &mut Clusters,
     ) {
         let point_count = self.points.len();
@@ -1336,6 +1472,7 @@ impl<P> Supercluster<P> {
 
         let handles = trees
             .iter_mut()
+            .chain([&mut *point_tree])
             .flat_map(|tree| tree.ids.iter_mut())
             .chain(clusters.children.iter_mut());
 
@@ -1346,10 +1483,9 @@ impl<P> Supercluster<P> {
         }
 
         // The tree of the points holds every point that was clustered
-        let points = &trees[self.options.max_zoom as usize + 1];
         let mut positions = vec![[0.0, 0.0]; clustered];
 
-        for (&leaf, &position) in points.ids.iter().zip(&points.coords) {
+        for (&leaf, &position) in point_tree.ids.iter().zip(&point_tree.coords) {
             positions[leaf as usize] = position;
         }
 
@@ -1460,6 +1596,7 @@ impl<'a, P> SuperclusterView<'a, P> {
                     range.normalize(bbox[2]),
                     range.normalize(bbox[3]),
                 ],
+                0.0,
                 add,
             ),
             CoordinateSystem::LngLat => {
@@ -1490,6 +1627,7 @@ impl<'a, P> SuperclusterView<'a, P> {
                         convert_longitude_to_spherical_mercator(max_lng),
                         convert_latitude_to_spherical_mercator(min_lat),
                     ],
+                    0.0,
                     &mut add,
                 )
             }
@@ -1858,16 +1996,27 @@ mod tests {
     #[test]
     fn test_clusters_counts_every_point_on_every_zoom_level() {
         let supercluster = load_spread_points(500);
+        let options = SuperclusterOptions::builder().min_zoom(3).build().unwrap();
+        let from_zoom_3 =
+            Supercluster::load(options, create_spread_points(500), |point| Some(*point)).unwrap();
 
-        // The highest zoom level holds the points that are not clustered
-        for zoom in 0..=17 {
-            let count: usize = supercluster
-                .clusters([-180.0, -90.0, 180.0, 90.0], zoom)
-                .iter()
-                .map(get_point_count)
-                .sum();
+        // Every point shows once, on its own or in a cluster, also below the minimum zoom level,
+        // above the zoom level a view clusters up to, and on the zoom level that holds the points
+        // that are not clustered
+        for view in [
+            supercluster.view(),
+            supercluster.with_cluster_max_zoom(5),
+            from_zoom_3.view(),
+        ] {
+            for zoom in 0..=17 {
+                let count: usize = view
+                    .clusters([-180.0, -90.0, 180.0, 90.0], zoom)
+                    .iter()
+                    .map(get_point_count)
+                    .sum();
 
-            assert_eq!(count, 500, "zoom level {zoom}");
+                assert_eq!(count, 500, "zoom level {zoom}");
+            }
         }
     }
 
@@ -2033,6 +2182,7 @@ mod tests {
                 "clusters",
                 "indexes",
                 "options",
+                "point_tree",
                 "points",
                 "positions",
                 "trees",
@@ -2085,8 +2235,9 @@ mod tests {
     fn test_deserialize_rejects_data_that_does_not_hold_together() {
         type Change = fn(&mut serde_json::Value);
 
-        // Tree 17 holds the points, after the default maximum zoom level of 16
-        let changes: [(Change, &str); 11] = [
+        // Tree 0 holds the clusters of zoom level 0, which hold all 300 points, so handle 300 is a
+        // cluster
+        let changes: [(Change, &str); 14] = [
             (
                 |json| json["indexes"].as_array_mut().unwrap().truncate(10),
                 "the indexes do not match the points",
@@ -2106,14 +2257,29 @@ mod tests {
                 "the number of KD-trees does not match the maximum zoom level",
             ),
             (
-                |json| json["trees"][17]["ids"][0] = 1_000_000.into(),
+                |json| json["point_tree"]["ids"][0] = 1_000_000.into(),
                 "a KD-tree is not valid or refers to an item that does not exist",
             ),
             (
                 |json| {
-                    json["trees"][17]["coords"].as_array_mut().unwrap().pop();
+                    json["point_tree"]["coords"].as_array_mut().unwrap().pop();
                 },
                 "a KD-tree is not valid or refers to an item that does not exist",
+            ),
+            (
+                |json| json["point_tree"]["ids"][0] = 300.into(),
+                "a KD-tree is not valid or refers to an item that does not exist",
+            ),
+            (
+                |json| json["trees"][0]["ids"][0] = 0.into(),
+                "a KD-tree is not valid or refers to an item that does not exist",
+            ),
+            (
+                |json| {
+                    json["point_tree"]["ids"].as_array_mut().unwrap().pop();
+                    json["point_tree"]["coords"].as_array_mut().unwrap().pop();
+                },
+                "the KD-tree of the points does not hold every point",
             ),
             (
                 |json| {

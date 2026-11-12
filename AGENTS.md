@@ -59,9 +59,9 @@ a test file with `#![cfg(feature = "...")]`. An example or benchmark that needs 
 - Points are moved into leaf order when loaded, where the points of every cluster are next to
   each other, and never cloned. The closure of `load` runs once per point, and the index then holds
   the normalized coordinates, so no user code runs again.
-- `KDBush` is private. The tile fixtures list items in the order the KD-tree returns them, so a
-  change to the tree must keep that order. The fixtures come from the JavaScript supercluster,
-  which numbers its clusters another way, so the tests compare them without the cluster IDs.
+- `KDBush` is private. The fixtures come from the JavaScript supercluster, which numbers its
+  clusters another way and lists items in the order of its own trees. The tests therefore compare a
+  tile without the cluster IDs and in no set order, and find a cluster by a place in it.
 - Only loading logs (feature `tracing`). Queries never log.
 - All GeoJSON code lives in `feature.rs`. The core knows nothing about GeoJSON.
 - A deserialized supercluster is checked to hold together, so queries cannot panic or loop on it,
@@ -89,9 +89,10 @@ are the reference.
   allocate per item in `cluster` or in the queries, filtered or not, unless the result needs it.
 - Use the smallest type that holds the value (`u32` ids and ranges). Keep `f64` where precision
   matters, such as coordinates and positions.
-- Each zoom level keeps a KD-tree of its items, with a position and a `u32` handle per item, and
-  that is where most memory goes. Everything else about a cluster is in one table, by its number.
-  A change to the layout needs a measurement before and after.
+- Each zoom level keeps a KD-tree of its clusters, and one KD-tree holds the points for all zoom
+  levels, with the zoom level from which each point shows on its own. Every item of a tree takes a
+  position and a `u32` handle, and that is where most memory goes. Everything else about a cluster
+  is in one table, by its number. A change to the layout needs a measurement before and after.
 - Share data through the point type (for example an `Arc`) instead of copying it in the crate.
 - Measure a change with `cargo bench --features geojson` before you claim it helps. The group "one
   million points" runs only under `cargo bench`. Do not write a speed or memory number in the docs

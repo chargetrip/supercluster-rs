@@ -52,23 +52,43 @@ fn get_point_count(item: &Item<'_, Feature>) -> usize {
     }
 }
 
-/// Get the ID of the cluster at `index` in the clusters of the whole world at `zoom`. The tests
-/// find a cluster where it is, because the fixtures number their clusters another way.
-fn get_cluster_id(supercluster: &Supercluster<Feature>, zoom: u8, index: usize) -> ClusterId {
-    match supercluster.clusters(WORLD, zoom)[index] {
-        Item::Cluster(cluster) => cluster.id(),
-        Item::Point { .. } => panic!("expected a cluster at {index}"),
-    }
+/// Get the ID of the cluster at `zoom` that holds the place named `name`. The tests find a cluster
+/// by a place in it, because the fixtures number their clusters another way, and the clusters of
+/// a zoom level come in no set order.
+fn get_cluster_id(supercluster: &Supercluster<Feature>, zoom: u8, name: &str) -> ClusterId {
+    supercluster
+        .clusters(WORLD, zoom)
+        .into_iter()
+        .find_map(|item| match item {
+            Item::Cluster(cluster)
+                if supercluster
+                    .leaves(cluster.id())
+                    .unwrap()
+                    .iter()
+                    .any(|place| place.property("name").unwrap() == name) =>
+            {
+                Some(cluster.id())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("expected a cluster with {name} at zoom level {zoom}"))
 }
 
-/// The clusters the tests check: their zoom level and index in the clusters of the whole world.
-/// The fixtures have the IDs 164, 196, 581, 1157 and 4134 for them.
-const CLUSTERS: [(u8, usize); 5] = [(0, 0), (0, 1), (0, 8), (0, 19), (0, 31)];
+/// The clusters the tests check: their zoom level and a place in them. The fixtures have the IDs
+/// 164, 196, 581, 1157 and 4134 for them.
+const CLUSTERS: [(u8, &str); 5] = [
+    (0, "Cape Cod"),
+    (0, "Salto Angel"),
+    (0, "Cabo Tres Puntas"),
+    (0, "Cape Hope"),
+    (0, "Ponta de Jericoacoara"),
+];
 
-/// Remove the IDs of the clusters, which this crate numbers another way than the fixtures.
-/// Everything else must match.
-fn without_cluster_ids(features: Vec<Feature>) -> Vec<Feature> {
-    features
+/// Remove the IDs of the clusters, which this crate numbers another way than the fixtures, and
+/// sort the features, because the items of a tile come in no set order. Everything else must
+/// match.
+fn without_cluster_ids(features: Vec<Feature>) -> Vec<String> {
+    let mut features: Vec<String> = features
         .into_iter()
         .map(|mut feature| {
             if feature.contains_property("cluster") {
@@ -76,9 +96,12 @@ fn without_cluster_ids(features: Vec<Feature>) -> Vec<Feature> {
                 feature.remove_property("cluster_id");
             }
 
-            feature
+            feature.to_string()
         })
-        .collect()
+        .collect();
+
+    features.sort_unstable();
+    features
 }
 
 /// Check that the ID of every cluster feature finds the cluster, with as many points as the
@@ -138,13 +161,17 @@ fn test_as_feature_collection_writes_the_geometries_of_the_fixture() {
     let fixture: JsonValue =
         serde_json::from_str(&fs::read_to_string("./tests/common/places-tile-0-0-0.json").unwrap())
             .unwrap();
-    let geometries = |collection: &JsonValue| -> Vec<JsonValue> {
-        collection["features"]
+    let geometries = |collection: &JsonValue| -> Vec<String> {
+        let mut geometries: Vec<String> = collection["features"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|feature| feature["geometry"].clone())
-            .collect()
+            .map(|feature| feature["geometry"].to_string())
+            .collect();
+
+        // The items of a tile come in no set order
+        geometries.sort_unstable();
+        geometries
     };
 
     // The fixture has whole numbers, which read back as integers, not floats
@@ -214,7 +241,7 @@ fn test_children() {
     let supercluster = load_supercluster(create_options());
 
     let point_counts: Vec<usize> = supercluster
-        .children(get_cluster_id(&supercluster, 0, 0))
+        .children(get_cluster_id(&supercluster, 0, "Cape Cod"))
         .unwrap()
         .map(|item| get_point_count(&item))
         .collect();
@@ -238,9 +265,9 @@ fn test_cluster_expansion_zoom() {
 
     let expansion_zooms: Vec<u8> = CLUSTERS
         .iter()
-        .map(|&(zoom, index)| {
+        .map(|&(zoom, name)| {
             supercluster
-                .cluster_expansion_zoom(get_cluster_id(&supercluster, zoom, index))
+                .cluster_expansion_zoom(get_cluster_id(&supercluster, zoom, name))
                 .unwrap()
         })
         .collect();
@@ -253,7 +280,7 @@ fn test_cluster_expansion_zoom_for_max_zoom() {
     let supercluster = load_supercluster(create_options_with_low_max_zoom());
 
     // The fixtures have the ID 2504 for this cluster
-    let cluster_id = get_cluster_id(&supercluster, 4, 56);
+    let cluster_id = get_cluster_id(&supercluster, 4, "Ebon");
 
     assert_eq!(supercluster.cluster_expansion_zoom(cluster_id), Ok(5));
 }
@@ -262,8 +289,8 @@ fn test_cluster_expansion_zoom_for_max_zoom() {
 fn test_filtered_cluster_expansion_zoom_accepting_all() {
     let supercluster = load_supercluster(create_options());
 
-    for (zoom, index) in CLUSTERS {
-        let cluster_id = get_cluster_id(&supercluster, zoom, index);
+    for (zoom, name) in CLUSTERS {
+        let cluster_id = get_cluster_id(&supercluster, zoom, name);
 
         assert_eq!(
             supercluster
@@ -278,7 +305,7 @@ fn test_filtered_cluster_expansion_zoom_accepting_all() {
 #[test]
 fn test_cluster_expansion_zoom_with_cluster_max_zoom() {
     let supercluster = load_supercluster(create_options_with_low_max_zoom());
-    let cluster_id = get_cluster_id(&supercluster, 4, 56);
+    let cluster_id = get_cluster_id(&supercluster, 4, "Ebon");
 
     // Below the maximum zoom of 4, the given zoom level caps where the cluster expands.
     assert_eq!(
@@ -310,8 +337,8 @@ fn test_filtered_cluster_expansion_zoom() {
             .is_some_and(|name| name > "N")
     };
 
-    for (zoom, index) in CLUSTERS {
-        let cluster_id = get_cluster_id(&supercluster, zoom, index);
+    for (zoom, name) in CLUSTERS {
+        let cluster_id = get_cluster_id(&supercluster, zoom, name);
         let expansion_zoom = supercluster.cluster_expansion_zoom(cluster_id).unwrap();
         let filtered_expansion_zoom = supercluster
             .with_filter(supercluster.filter(filter))
@@ -342,7 +369,7 @@ fn test_leaves() {
     let supercluster = load_supercluster(create_options());
 
     let leaf_names: Vec<String> = supercluster
-        .leaves(get_cluster_id(&supercluster, 0, 0))
+        .leaves(get_cluster_id(&supercluster, 0, "Cape Cod"))
         .unwrap()
         .iter()
         .skip(5)
@@ -488,12 +515,18 @@ fn test_cartesian_coordinates() {
     let supercluster = Supercluster::load_features(options, data).unwrap();
 
     let clusters = supercluster.clusters([0.0, 0.0, 1000.0, 1000.0], 0);
-    let point_counts: Vec<usize> = clusters.iter().map(get_point_count).collect();
+    let mut point_counts: Vec<usize> = clusters.iter().map(get_point_count).collect();
 
-    assert_eq!(point_counts, vec![3, 1, 1, 3]);
+    // The clusters of a zoom level come in no set order
+    point_counts.sort_unstable();
+    assert_eq!(point_counts, vec![1, 1, 3, 3]);
 
-    let first = clusters[0].to_feature();
+    for item in &clusters {
+        let point_count = item.to_feature().property("point_count").cloned();
 
-    assert_eq!(first.property("point_count").unwrap(), 3);
-    assert_eq!(clusters[1].to_feature().property("point_count"), None);
+        match item {
+            Item::Cluster(_) => assert_eq!(point_count, Some(3.into())),
+            Item::Point { .. } => assert_eq!(point_count, None),
+        }
+    }
 }

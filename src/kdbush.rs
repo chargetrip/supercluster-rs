@@ -50,6 +50,33 @@ impl KDBush {
         min_y: f64,
         max_x: f64,
         max_y: f64,
+        visit: impl FnMut(usize),
+    ) {
+        self.range_where(
+            node_size,
+            [min_x, min_y, max_x, max_y],
+            |_| true,
+            |_| true,
+            visit,
+        );
+    }
+
+    /// Call `visit` with the position in the tree of every point in a bounding box, as the left,
+    /// top, right and bottom edge, edges included, that `keep` accepts, but skip every node for
+    /// which `enter` returns `false`, with the points under it. `enter` gets the number of a node:
+    /// the root is 0, and the children of node `n` are `2n + 1` and `2n + 2`, as in
+    /// `node_minimums`.
+    ///
+    /// `keep` gets the position of a point in the tree. The search stops reading a leaf node at its
+    /// first point that `keep` rejects, so the points of every leaf must come in an order where
+    /// the ones it accepts come first, as `sort_leaves_by_key` puts them. `node_size` is the one the
+    /// tree was built with.
+    pub fn range_where(
+        &self,
+        node_size: usize,
+        [min_x, min_y, max_x, max_y]: [f64; 4],
+        mut enter: impl FnMut(usize) -> bool,
+        keep: impl Fn(usize) -> bool,
         mut visit: impl FnMut(usize),
     ) {
         if self.ids.is_empty() {
@@ -59,20 +86,31 @@ impl KDBush {
         // Each level of the tree halves the points, so the tree is less than 64 levels deep. The
         // search keeps at most one node per level and one more, so an array holds them without
         // allocating
-        let mut stack = [(0, 0, 0); 64];
+        let mut stack = [(0, 0, 0, 0); 64];
         let mut length = 1;
 
-        stack[0] = (0, self.ids.len() - 1, 0);
+        stack[0] = (0, self.ids.len() - 1, 0, 0);
 
         while length > 0 {
             length -= 1;
 
-            let (axis, right, left) = stack[length];
+            let (axis, right, left, node) = stack[length];
+
+            if !enter(node) {
+                continue;
+            }
 
             if right - left <= node_size {
-                for (offset, &[x, y]) in self.coords[left..=right].iter().enumerate() {
+                for at in left..=right {
+                    // The points of a leaf that the search keeps come first
+                    if !keep(at) {
+                        break;
+                    }
+
+                    let [x, y] = self.coords[at];
+
                     if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
-                        visit(left + offset);
+                        visit(at);
                     }
                 }
                 continue;
@@ -81,22 +119,118 @@ impl KDBush {
             let m = (left + right) >> 1;
             let [x, y] = self.coords[m];
 
-            if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
+            if x >= min_x && x <= max_x && y >= min_y && y <= max_y && keep(m) {
                 visit(m);
             }
 
             let next_axis = (axis + 1) % 2;
 
             if (axis == 0 && min_x <= x) || (axis != 0 && min_y <= y) {
-                stack[length] = (next_axis, m - 1, left);
+                stack[length] = (next_axis, m - 1, left, 2 * node + 1);
                 length += 1;
             }
 
             if (axis == 0 && max_x >= x) || (axis != 0 && max_y >= y) {
-                stack[length] = (next_axis, right, m + 1);
+                stack[length] = (next_axis, right, m + 1, 2 * node + 2);
                 length += 1;
             }
         }
+    }
+
+    /// Sort the points of every leaf node by `keys`, lowest first, where `keys` holds a key for
+    /// every point in the order of the tree and moves with them. A search with `range_where` that
+    /// keeps the points up to a key then stops reading a leaf at its first point past that key.
+    /// The order of the points within a leaf does not matter to a search, so the tree stays
+    /// valid. `node_size` is the one the tree was built with.
+    pub fn sort_leaves_by_key(&mut self, node_size: usize, keys: &mut [u8]) {
+        if !self.ids.is_empty() {
+            let mut leaf = Vec::with_capacity(node_size + 1);
+
+            self.sort_leaves(node_size, keys, &mut leaf, 0, self.ids.len() - 1);
+        }
+    }
+
+    /// Sort the points of the leaf nodes from `left` to `right`, both included, by `keys`. `leaf`
+    /// is a buffer for the points of one leaf, which every leaf reuses.
+    fn sort_leaves(
+        &mut self,
+        node_size: usize,
+        keys: &mut [u8],
+        leaf: &mut Vec<(u8, u32, [f64; 2])>,
+        left: usize,
+        right: usize,
+    ) {
+        if right - left > node_size {
+            let m = (left + right) >> 1;
+
+            self.sort_leaves(node_size, keys, leaf, left, m - 1);
+            self.sort_leaves(node_size, keys, leaf, m + 1, right);
+
+            return;
+        }
+
+        if keys[left..=right].is_sorted() {
+            return;
+        }
+
+        leaf.clear();
+        leaf.extend((left..=right).map(|at| (keys[at], self.ids[at], self.coords[at])));
+        // Stable, so points with the same key keep their order
+        leaf.sort_by_key(|&(key, _, _)| key);
+
+        for (at, &(key, id, coords)) in (left..=right).zip(leaf.iter()) {
+            keys[at] = key;
+            self.ids[at] = id;
+            self.coords[at] = coords;
+        }
+    }
+
+    /// Find the lowest of `values`, which hold a value for every point in the order of the tree,
+    /// under every node of the tree, by the number of the node that `range_where` gives. A number
+    /// that no node has gets `u8::MAX`. `node_size` is the one the tree was built with.
+    pub fn node_minimums(&self, node_size: usize, values: &[u8]) -> Vec<u8> {
+        let mut minimums = vec![];
+
+        if !self.ids.is_empty() {
+            Self::fill_minimums(node_size, values, &mut minimums, 0, 0, self.ids.len() - 1);
+        }
+
+        minimums.shrink_to_fit();
+        minimums
+    }
+
+    /// Find the lowest of `values` from `left` to `right`, both included, which node `node` holds,
+    /// and write it and the ones of the nodes under it into `minimums`.
+    fn fill_minimums(
+        node_size: usize,
+        values: &[u8],
+        minimums: &mut Vec<u8>,
+        node: usize,
+        left: usize,
+        right: usize,
+    ) -> u8 {
+        let minimum = if right - left <= node_size {
+            values[left..=right]
+                .iter()
+                .copied()
+                .min()
+                .unwrap_or(u8::MAX)
+        } else {
+            let m = (left + right) >> 1;
+            let below =
+                Self::fill_minimums(node_size, values, minimums, 2 * node + 1, left, m - 1).min(
+                    Self::fill_minimums(node_size, values, minimums, 2 * node + 2, m + 1, right),
+                );
+
+            values[m].min(below)
+        };
+
+        if minimums.len() <= node {
+            minimums.resize(node + 1, u8::MAX);
+        }
+
+        minimums[node] = minimum;
+        minimum
     }
 
     /// Find the IDs of the points within `radius` of the point `qx`, `qy` and write them into
@@ -449,6 +583,84 @@ mod tests {
         let index = KDBush::new(vec![], NODE_SIZE);
 
         assert!(range_ids(&index, 0.0, 0.0, 100.0, 100.0).is_empty());
+    }
+
+    #[test]
+    fn test_node_minimums_without_points() {
+        let index = KDBush::new(vec![], NODE_SIZE);
+
+        assert!(index.node_minimums(NODE_SIZE, &[]).is_empty());
+    }
+
+    #[test]
+    fn test_range_where_skips_the_points_of_the_nodes_it_does_not_enter() {
+        let mut index = build_index();
+
+        // The value of a point is its X, which is below 100, and the points it keeps come first
+        let mut values: Vec<u8> = index.coords.iter().map(|&[x, _]| x as u8).collect();
+
+        index.sort_leaves_by_key(NODE_SIZE, &mut values);
+
+        let minimums = index.node_minimums(NODE_SIZE, &values);
+
+        assert_eq!(minimums[0], *values.iter().min().unwrap());
+
+        let mut entered_with = vec![];
+
+        for limit in [0, 25, 50, 75, 100] {
+            let mut entered = 0;
+            let mut ids = vec![];
+
+            index.range_where(
+                NODE_SIZE,
+                [20.0, 30.0, 80.0, 70.0],
+                |node| {
+                    entered += 1;
+                    minimums[node] <= limit
+                },
+                |at| values[at] <= limit,
+                |at| ids.push(index.ids[at] as usize),
+            );
+
+            // The same points as a search of every node, with a value up to the limit
+            let mut expected: Vec<usize> = range_ids(&index, 20.0, 30.0, 80.0, 70.0)
+                .into_iter()
+                .filter(|&id| POINTS[id][0] as u8 <= limit)
+                .collect();
+
+            ids.sort_unstable();
+            expected.sort_unstable();
+            assert_eq!(ids, expected, "limit {limit}");
+
+            entered_with.push(entered);
+        }
+
+        // A node whose points all have a higher value is skipped with the nodes under it
+        assert!(entered_with[0] < entered_with[4]);
+    }
+
+    #[test]
+    fn test_sort_leaves_by_key_keeps_what_a_search_finds() {
+        let unsorted = build_index();
+        let mut index = build_index();
+        let mut keys: Vec<u8> = index.coords.iter().map(|&[_, y]| 100 - y as u8).collect();
+
+        index.sort_leaves_by_key(NODE_SIZE, &mut keys);
+
+        // Every key moved with its point
+        for (at, &id) in index.ids.iter().enumerate() {
+            assert_eq!(keys[at], 100 - POINTS[id as usize][1] as u8);
+        }
+
+        // The order within a leaf does not matter to a search
+        for [min_x, min_y, max_x, max_y] in [[20.0, 30.0, 80.0, 70.0], [0.0, 0.0, 100.0, 100.0]] {
+            let mut found = range_ids(&index, min_x, min_y, max_x, max_y);
+            let mut expected = range_ids(&unsorted, min_x, min_y, max_x, max_y);
+
+            found.sort_unstable();
+            expected.sort_unstable();
+            assert_eq!(found, expected);
+        }
     }
 
     #[test]
