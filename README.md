@@ -119,6 +119,7 @@ fn main() -> Result<(), SuperclusterError> {
 
 - **Points without coordinates are left out.** That is a point the closure returns `None` for, or whose coordinates are not finite numbers.
 - **Points move into cluster order.** `points()` keeps the points of every cluster next to each other, not in the order you loaded them. `Item::Point` has the `index` of a point in the list you loaded.
+- **Items come in no set order.** `tile` and `clusters` return the same order for the same query, but a minor release may change it. Sort the items if your response needs an order.
 - **Send where each cluster splits.** `expansion_zoom()` gives the zoom level where a cluster splits, so the client can zoom the map in to it when the user clicks the cluster.
 - **Cluster IDs go to clients as numbers.** Send `cluster.id().get()`, and turn the number a client sends back into an ID with `ClusterId::new`. With it, `cluster_expansion_zoom` finds where the cluster splits, `children` what it splits into, and `leaves` its points. The numbers change from one load to the next, so an old one can give `ClusterNotFound` or name another cluster.
 
@@ -576,6 +577,7 @@ let zoom: u8 = supercluster.cluster_expansion_zoom(cluster_id)?;
 
 - `clusters` and `tile` return no `Result`. A tile with nothing in it has no items, where version 3 gave the `TileNotFound` error.
 - `tile` takes whole numbers (`u32`) for the tile coordinates instead of `f64`.
+- `tile` and `clusters` return their items in another order than version 3. Neither version sets the order, so sort the items if you need one.
 - `leaves` returns a slice of the points, so a range or `skip` and `take` replace the `offset` and `limit`.
 - `children` returns an iterator, which reads the children that loading recorded.
 - `cluster_expansion_zoom` returns a `u8`, like the other zoom levels, and an error for an unknown cluster.

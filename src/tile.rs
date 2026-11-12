@@ -31,7 +31,8 @@ use crate::{
 #[non_exhaustive]
 pub struct Tile<'a, P> {
     /// The clusters and points of the tile, which also holds the ones of the buffer around it. In
-    /// a filtered tile, only the ones with a point that passes.
+    /// a filtered tile, only the ones with a point that passes. They come in no set order, as
+    /// `Supercluster::tile` describes.
     pub items: Vec<TileItem<'a, P>>,
 }
 

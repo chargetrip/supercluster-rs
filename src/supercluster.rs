@@ -750,6 +750,9 @@ impl<P> Supercluster<P> {
     /// zoom level. `bbox` is `[min_lng, min_lat, max_lng, max_lat]`, or `[min_x, min_y, max_x,
     /// max_y]` for the `Cartesian` coordinate system. A box that crosses the antimeridian, with
     /// `min_lng` above `max_lng`, holds both sides.
+    ///
+    /// The items come in no set order. The same query on the same supercluster returns them in the
+    /// same order, but a minor release may change it, so sort them if you need an order.
     pub fn clusters(&self, bbox: [f64; 4], zoom: u8) -> Vec<Item<'_, P>> {
         self.view().clusters(bbox, zoom)
     }
@@ -808,6 +811,9 @@ impl<P> Supercluster<P> {
     /// on its edge are not cut off. For `LngLat`, the first and last tile also hold the items of the
     /// opposite edge, across the antimeridian. `Cartesian` does not wrap, because the two ends of
     /// its `DataRange` are not next to each other. A tile with nothing in it has no items.
+    ///
+    /// The items come in no set order. The same query on the same supercluster returns them in the
+    /// same order, but a minor release may change it, so sort them if you need an order.
     ///
     /// # Examples
     ///
