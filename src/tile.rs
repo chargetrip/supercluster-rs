@@ -309,14 +309,16 @@ impl<P> Supercluster<P> {
     }
 
     /// Run `filter` once on every point that was clustered, and cache which ones pass, for the
-    /// queries of `with_filter` to reuse. The points do not change
-    /// after `load`, so run it again only when the filter reads data that changes, outside the
-    /// points or shared through them.
+    /// queries of `with_filter` to reuse. The points do not change after `load`, so run it again
+    /// only when the filter reads data that changes, outside the points or shared through them.
     ///
-    /// It scans the points in the order they are stored, and does not branch on what the filter
-    /// returns, so it runs the filter about as fast as the filter itself allows. Then it sums the
-    /// positions of the points that pass, so a tile finds the center of the points left of a
-    /// cluster without reading them.
+    /// It runs `filter` on every clustered point, one at a time, so `filter` can update state, such
+    /// as statistics. The points come in the supercluster's own order, not the order they were
+    /// loaded in, so decide on each point by itself.
+    ///
+    /// The scan does not branch on what `filter` returns, so it runs as fast as `filter` allows.
+    /// It then sums the positions of the points that pass, so a tile finds the center of the
+    /// points left in a cluster without reading them.
     ///
     /// # Examples
     ///
@@ -343,7 +345,7 @@ impl<P> Supercluster<P> {
     /// ```
     pub fn cache_filter<F>(&self, filter: F) -> CachedFilter
     where
-        F: Fn(&P) -> bool,
+        F: FnMut(&P) -> bool,
     {
         let points = &self.points()[..self.clustered_points()];
 
@@ -1625,14 +1627,16 @@ mod tests {
             |point| point.coordinates,
         )
         .unwrap();
-        let calls = Cell::new(0);
+        let mut calls = 0;
+
+        // The filter can keep state, because it runs once per point, one after the other
         let cached_filter = supercluster.cache_filter(|point| {
-            calls.set(calls.get() + 1);
+            calls += 1;
             point.keep
         });
 
         // The point without coordinates is left out
-        assert_eq!(calls.get(), 2);
+        assert_eq!(calls, 2);
         assert_eq!(
             summarize(
                 &supercluster

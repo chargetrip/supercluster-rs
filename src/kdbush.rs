@@ -321,14 +321,10 @@ impl KDBush {
                 };
                 let n_s = (n as f64) - s;
                 let sd = 0.5 * ((z * s * n_s) / (n as f64)).sqrt() * sds;
-                let new_left = KDBush::get_max(
-                    left,
-                    ((k as f64) - ((m as f64) * s) / (n as f64) + sd).floor() as usize,
-                );
-                let new_right = KDBush::get_min(
-                    right,
-                    ((k as f64) + (((n - m) as f64) * s) / (n as f64) + sd).floor() as usize,
-                );
+                let new_left =
+                    left.max(((k as f64) - ((m as f64) * s) / (n as f64) + sd).floor() as usize);
+                let new_right = right
+                    .min(((k as f64) + (((n - m) as f64) * s) / (n as f64) + sd).floor() as usize);
 
                 self.select(k, new_left, new_right, axis);
             }
@@ -371,24 +367,6 @@ impl KDBush {
             if k <= j {
                 right = j - 1;
             }
-        }
-    }
-
-    /// Return the maximum of two values.
-    fn get_max(a: usize, b: usize) -> usize {
-        if a > b {
-            a
-        } else {
-            b
-        }
-    }
-
-    /// Return the minimum of two values.
-    fn get_min(a: usize, b: usize) -> usize {
-        if a < b {
-            a
-        } else {
-            b
         }
     }
 
@@ -765,34 +743,6 @@ mod tests {
         let result = KDBush::sq_dist(10.0, 10.0, 5.0, 5.0);
 
         assert_eq!(result, 50.0);
-    }
-
-    #[test]
-    fn test_get_max_a_more_than_b() {
-        let result = KDBush::get_max(10, 5);
-
-        assert_eq!(result, 10);
-    }
-
-    #[test]
-    fn test_get_max_b_more_than_a() {
-        let result = KDBush::get_max(5, 10);
-
-        assert_eq!(result, 10);
-    }
-
-    #[test]
-    fn test_get_min_a_less_than_b() {
-        let result = KDBush::get_min(5, 10);
-
-        assert_eq!(result, 5);
-    }
-
-    #[test]
-    fn test_get_min_b_less_than_a() {
-        let result = KDBush::get_min(10, 5);
-
-        assert_eq!(result, 5);
     }
 
     #[test]

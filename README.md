@@ -333,7 +333,7 @@ fn main() -> Result<(), SuperclusterError> {
 
 With the `geojson` feature, a supercluster loads GeoJSON features and returns its results as GeoJSON:
 
-1. Load the features with `load_features`. A feature without a point geometry is left out.
+1. Load the features with `load_features`. A feature without a point geometry is left out. The features can also be shared, such as `Arc<Feature>`, so the supercluster does not hold a copy.
 2. Convert what a query returns into GeoJSON, with the calls in the table below.
 
 | To return | Call | The geometry holds |
@@ -406,7 +406,7 @@ The [API documentation on docs.rs](https://docs.rs/supercluster) describes every
 | Call | Returns | What it does |
 | --- | --- | --- |
 | `Supercluster::load(options, points, get_coordinates)` | `Result<Supercluster<P>, _>` | Clusters points of any type. `get_coordinates` returns the coordinates of a point, or `None` to leave it out. |
-| `Supercluster::load_features(options, features)` | `Result<Supercluster<Feature>, _>` | Clusters GeoJSON features, with the `geojson` feature. |
+| `Supercluster::load_features(options, features)` | `Result<Supercluster<P>, _>` | Clusters GeoJSON features, with the `geojson` feature. A point is a `Feature` or shares one, such as `Arc<Feature>`. |
 | `SuperclusterOptions::default()` | `SuperclusterOptions` | The default options, listed in [Set the options](#set-the-options). |
 | `SuperclusterOptions::builder()` | `SuperclusterOptionsBuilder` | Sets the options one by one. Its `build()` checks them and returns `Result<SuperclusterOptions, _>`. |
 | `CoordinateSystem::LngLat` | `CoordinateSystem` | Longitudes and latitudes. This is the default. |
@@ -423,6 +423,7 @@ These are methods of `Supercluster<P>`. The last column tells whether the `Super
 | `clusters(bbox, zoom)` | `Vec<Item>` | The clusters and points in a bounding box at a zoom level. The box is `[min_lng, min_lat, max_lng, max_lat]`, or `[min_x, min_y, max_x, max_y]` for `Cartesian`. | Yes |
 | `cluster_expansion_zoom(cluster_id)` | `Result<u8, _>` | The zoom level where a cluster splits. | Yes |
 | `children(cluster_id)` | `Result<impl ExactSizeIterator<Item = Item>, _>` | The clusters and points that a cluster splits into, on the next zoom level. | No |
+| `cluster(cluster_id)` | `Result<Cluster, _>` | The cluster with an ID, such as one a client sent back. | No |
 | `leaves(cluster_id)` | `Result<&[P], _>` | All the points of a cluster. | No |
 | `points()` | `&[P]` | The points that were loaded, in the order of the clusters. | No |
 | `options()` | `&SuperclusterOptions` | The options of the supercluster. | No |
@@ -671,7 +672,7 @@ The `tracing` feature reports one summary per load, with fields such as the numb
 
 ### New in version 4
 
-`with_filter` returns a view whose `tile` and `cluster_expansion_zoom` keep only the points that pass a filter. `filter` runs a closure on each query, `cache_filter` runs one once for many tiles, and cached filters combine with `and`, `or` and `and_not`. `with_cluster_max_zoom` lowers the zoom level to cluster on for a single request. See [Filter what a tile shows](#filter-what-a-tile-shows) and [Lower the maximum zoom level for one request](#lower-the-maximum-zoom-level-for-one-request).
+`with_filter` returns a view whose `tile` and `cluster_expansion_zoom` keep only the points that pass a filter. `filter` runs a closure on each query, `cache_filter` runs one once for many tiles, and cached filters combine with `and`, `or` and `and_not`. `with_cluster_max_zoom` lowers the zoom level to cluster on for a single request, and `cluster` finds a cluster by its ID. See [Filter what a tile shows](#filter-what-a-tile-shows) and [Lower the maximum zoom level for one request](#lower-the-maximum-zoom-level-for-one-request).
 
 ## Benchmarks
 

@@ -256,7 +256,7 @@ impl CoordinateSystem {
 /// A client can send the number back, for example after reading it from the GeoJSON property
 /// `cluster_id`, and `ClusterId::new` or `From` turns it into an identifier again. A number that
 /// is not the identifier of a cluster of the supercluster gives a `ClusterNotFound` error.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(transparent))]
 pub struct ClusterId(pub(crate) u32);
 
@@ -809,6 +809,36 @@ impl<P> Supercluster<P> {
             .map(|&handle| self.item(handle, self.position(handle))))
     }
 
+    /// Retrieve a cluster by its ID, for example one that a client sent back, with its number of
+    /// points and its center.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use supercluster::{ClusterId, Item, Supercluster, SuperclusterOptions};
+    ///
+    /// let points = vec![[10.0, 50.0], [10.001, 50.0], [10.002, 50.0]];
+    /// let supercluster =
+    ///     Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))?;
+    ///
+    /// if let Item::Cluster(cluster) = supercluster.tile(0, 0, 0).items[0].item() {
+    ///     // The number a client sends back finds the same cluster
+    ///     let number = cluster.id().get();
+    ///
+    ///     assert_eq!(supercluster.cluster(ClusterId::new(number))?.total_count(), 3);
+    /// }
+    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// ```
+    pub fn cluster(&self, cluster_id: ClusterId) -> Result<Cluster<'_>, SuperclusterError> {
+        let cluster = self.cluster_index(cluster_id)?;
+
+        Ok(self.cluster_at(cluster, self.clusters.positions[cluster]))
+    }
+
     /// Retrieve the points of a cluster, as they were loaded. They are next to each other in
     /// `points`, so this is a slice of them, and they always come in the same order.
     ///
@@ -994,16 +1024,24 @@ impl<P> Supercluster<P> {
     /// Convert an item of a KD-tree, at its normalized `position`, into a cluster or a point.
     pub(crate) fn item(&self, handle: u32, position: [f64; 2]) -> Item<'_, P> {
         match self.handle(handle) {
-            Handle::Cluster(cluster) => Item::Cluster(Cluster {
-                id: ClusterId(handle),
-                total_count: self.clusters.point_counts[cluster],
-                position,
-                coordinate_system: &self.options.coordinate_system,
-            }),
+            Handle::Cluster(cluster) => Item::Cluster(self.cluster_at(cluster, position)),
             Handle::Point(leaf) => Item::Point {
                 index: self.indexes[leaf] as usize,
                 point: &self.points[leaf],
             },
+        }
+    }
+
+    /// Get the cluster with the number `cluster` in the table of clusters, at its normalized
+    /// `position`.
+    fn cluster_at(&self, cluster: usize, position: [f64; 2]) -> Cluster<'_> {
+        Cluster {
+            // The clusters come after the points, so this is its handle, which fits a `u32`, as
+            // `MAX_POINTS` explains
+            id: ClusterId((self.points.len() + cluster) as u32),
+            total_count: self.clusters.point_counts[cluster],
+            position,
+            coordinate_system: &self.options.coordinate_system,
         }
     }
 
@@ -1224,7 +1262,7 @@ impl<P> Supercluster<P> {
         // all zoom levels, and the KD-trees of the clusters go from the highest zoom level down.
         let mut point_tree = Self::create_tree(&entries, node_size);
         let mut clusters = Clusters::new();
-        let mut current = self.cluster(&point_tree, &entries, max_zoom, &mut clusters);
+        let mut current = self.form_clusters(&point_tree, &entries, max_zoom, &mut clusters);
         let mut trees = Vec::with_capacity(max_zoom as usize + 1);
 
         set_handles(&mut point_tree, &entries);
@@ -1240,7 +1278,7 @@ impl<P> Supercluster<P> {
             // A tree of every item of the zoom level, to cluster them, which only lives as long
             // as that
             let tree = Self::create_tree(&current, node_size);
-            let next = self.cluster(&tree, &current, zoom, &mut clusters);
+            let next = self.form_clusters(&tree, &current, zoom, &mut clusters);
 
             trees.push(Self::create_cluster_tree(
                 &current,
@@ -1346,7 +1384,7 @@ impl<P> Supercluster<P> {
     /// cluster that forms goes into `clusters`, with its children.
     ///
     /// Returns the items of `zoom`, in the order they form.
-    fn cluster(
+    fn form_clusters(
         &self,
         tree: &KDBush,
         entries: &[Entry],
@@ -1880,6 +1918,18 @@ mod tests {
         assert_eq!(id.get(), 42);
         assert_eq!(ClusterId::from(42), id);
         assert_eq!(u32::from(id), 42);
+    }
+
+    #[test]
+    fn test_cluster_ids_sort_by_number() {
+        let mut ids = [ClusterId::new(7), ClusterId::new(2), ClusterId::new(40)];
+
+        ids.sort();
+
+        assert_eq!(
+            ids,
+            [ClusterId::new(2), ClusterId::new(7), ClusterId::new(40)]
+        );
     }
 
     #[test]
@@ -2517,6 +2567,36 @@ mod tests {
         point_counts.sort();
 
         assert_eq!(point_counts, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_cluster() {
+        let supercluster = load_spread_points(500);
+
+        // Every cluster of every zoom level is found by its ID, as the query returned it
+        for zoom in 0..=16 {
+            for item in supercluster.clusters([-180.0, -90.0, 180.0, 90.0], zoom) {
+                if let Item::Cluster(cluster) = item {
+                    assert_eq!(supercluster.cluster(cluster.id()), Ok(cluster));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_cluster_of_unknown_cluster() {
+        let supercluster = load_nested_cluster();
+
+        // Smaller than the number of points, so it is a point and not a cluster.
+        assert_eq!(
+            supercluster.cluster(ClusterId::new(1)),
+            Err(SuperclusterError::ClusterNotFound)
+        );
+        // Above the IDs of the clusters.
+        assert_eq!(
+            supercluster.cluster(ClusterId::new(100000)),
+            Err(SuperclusterError::ClusterNotFound)
+        );
     }
 
     #[test]

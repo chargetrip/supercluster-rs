@@ -12,7 +12,7 @@ use crate::{CoordinateSystem, SuperclusterError, MAX_ZOOM_LIMIT};
 /// with the `serde` feature, deserialization create them, and the first and last check the values.
 /// Their fields are private, so read them with the methods of the same names, and they cannot
 /// change once they are checked.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 // Written as the builder they are read as, so a format that reads values in the order they were
 // written, without their names, reads back the same types
 #[cfg_attr(
@@ -306,6 +306,18 @@ mod tests {
     use super::*;
 
     use crate::DataRange;
+
+    #[test]
+    fn test_options_are_equal_with_the_same_values() {
+        let options = SuperclusterOptions::builder().radius(60.0).build().unwrap();
+
+        assert_eq!(options, options.clone());
+        assert_eq!(
+            SuperclusterOptions::default(),
+            SuperclusterOptions::default()
+        );
+        assert_ne!(options, SuperclusterOptions::default());
+    }
 
     #[test]
     fn test_default() {

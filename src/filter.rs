@@ -857,7 +857,7 @@ fn sum_passing(
 /// points here and there, and a wrong guess per point costs more than the filter.
 pub(crate) fn filter_bits<'p, P>(
     points: &'p [P],
-    filter: impl Fn(&P) -> bool + 'p,
+    mut filter: impl FnMut(&P) -> bool + 'p,
 ) -> impl Iterator<Item = u64> + 'p {
     points.chunks(64).map(move |chunk| {
         chunk.iter().enumerate().fold(0, |word, (bit, point)| {
