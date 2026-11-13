@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![warn(clippy::missing_docs_in_private_items)]
+#![warn(clippy::must_use_candidate)]
 #![doc = include_str!("../README.md")]
 
 /// Supercluster builder module.

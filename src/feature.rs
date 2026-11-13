@@ -101,6 +101,7 @@ impl Cluster<'_> {
     }
 
     /// Convert the cluster into a GeoJSON feature, with its center as the geometry.
+    #[must_use]
     pub fn to_feature(&self) -> Feature {
         self.feature_at(Geometry::new_point(self.center()), self.total_count())
     }
@@ -120,6 +121,7 @@ impl Cluster<'_> {
 
 impl<P: Borrow<Feature>> Item<'_, P> {
     /// Convert the item into a GeoJSON feature.
+    #[must_use]
     pub fn to_feature(&self) -> Feature {
         match self {
             Item::Cluster(cluster) => cluster.to_feature(),
@@ -132,6 +134,7 @@ impl<P: Borrow<Feature>> TileItem<'_, P> {
     /// Convert the item into a GeoJSON feature, with its position in the tile as the geometry: the
     /// point with its ID and properties, or the cluster with `count` as its `point_count`, which
     /// in a filtered tile counts the points that pass.
+    #[must_use]
     pub fn to_feature(&self) -> Feature {
         let geometry = Geometry::new_point([f64::from(self.x()), f64::from(self.y())]);
 
@@ -156,6 +159,7 @@ impl<'a, P: Borrow<Feature>> Tile<'a, P> {
     ///
     /// A `geojson` geometry holds floats, so the positions serialize as `150.0`. To send a tile
     /// with whole numbers, such as `150`, serialize `as_feature_collection` instead.
+    #[must_use]
     pub fn to_feature_collection(&self) -> FeatureCollection {
         FeatureCollection {
             bbox: None,
@@ -185,6 +189,7 @@ impl<'a, P: Borrow<Feature>> Tile<'a, P> {
     /// assert_eq!(serde_json::from_str::<FeatureCollection>(&json)?, tile.to_feature_collection());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    #[must_use]
     pub fn as_feature_collection(&self) -> FeatureCollectionView<'_, 'a, P> {
         FeatureCollectionView { items: &self.items }
     }

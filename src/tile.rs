@@ -38,6 +38,7 @@ pub struct Tile<'a, P> {
 
 impl<P> Tile<'_, P> {
     /// Check whether the tile has no items.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
@@ -108,6 +109,7 @@ impl<'a, P> TileItem<'a, P> {
     /// Get the horizontal position in the tile, in extent units from the left edge. An item in the
     /// buffer around the tile can be negative or above the extent. In a filtered tile, a cluster
     /// with points that fail the filter is placed at the center of the points that pass.
+    #[must_use]
     pub fn x(&self) -> i32 {
         self.x
     }
@@ -115,6 +117,7 @@ impl<'a, P> TileItem<'a, P> {
     /// Get the vertical position in the tile, in extent units from the top edge. An item in the
     /// buffer around the tile can be negative or above the extent. In a filtered tile, a cluster
     /// with points that fail the filter is placed at the center of the points that pass.
+    #[must_use]
     pub fn y(&self) -> i32 {
         self.y
     }
@@ -124,12 +127,14 @@ impl<'a, P> TileItem<'a, P> {
     /// its points, where `count` counts the ones that pass the filter.
     ///
     /// It is looked up from the supercluster on each call, so an item holds only a handle to it.
+    #[must_use]
     pub fn item(&self) -> Item<'a, P> {
         self.supercluster.item_of(self.handle)
     }
 
     /// Get the number of points of the item: of the cluster, or 1 for a point. In a filtered tile,
     /// it counts only the points that pass the filter.
+    #[must_use]
     pub fn count(&self) -> u32 {
         self.count
     }
@@ -147,6 +152,7 @@ impl<'a, P> TileItem<'a, P> {
     /// Unlike `x` and `y`, the center is not on the grid of the tile, so a copy of an item across
     /// the antimeridian has the same center. It is computed on each call, so a query that does
     /// not need it does not pay for it.
+    #[must_use]
     pub fn center(&self) -> Option<[f64; 2]> {
         match self.item() {
             Item::Cluster(_) => Some(
@@ -193,6 +199,7 @@ impl<'a, P> TileItem<'a, P> {
     /// assert!(tile.items[0].expansion_zoom().is_some());
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
+    #[must_use]
     pub fn expansion_zoom(&self) -> Option<u8> {
         match self.matches {
             // Every child counts, so the cluster splits on the zoom level after it formed
@@ -354,6 +361,7 @@ impl<P> Supercluster<P> {
     /// assert!((lng - 10.001).abs() < 1e-9 && (lat - 50.0).abs() < 1e-9);
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
+    #[must_use]
     pub fn cache_filter<F>(&self, filter: F) -> CachedFilter
     where
         F: FnMut(&P) -> bool,

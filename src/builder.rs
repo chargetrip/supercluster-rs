@@ -72,41 +72,49 @@ impl SuperclusterOptions {
     /// assert_eq!(options.extent(), 512);
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
+    #[must_use]
     pub fn builder() -> SuperclusterOptionsBuilder {
         SuperclusterOptionsBuilder::default()
     }
 
     /// Get the lowest zoom level to cluster on.
+    #[must_use]
     pub fn min_zoom(&self) -> u8 {
         self.min_zoom
     }
 
     /// Get the highest zoom level to cluster on.
+    #[must_use]
     pub fn max_zoom(&self) -> u8 {
         self.max_zoom
     }
 
     /// Get the fewest points that form a cluster.
+    #[must_use]
     pub fn min_points(&self) -> u32 {
         self.min_points
     }
 
     /// Get the cluster radius, in pixels.
+    #[must_use]
     pub fn radius(&self) -> f64 {
         self.radius
     }
 
     /// Get the size of a tile, in pixels, which the radius is relative to.
+    #[must_use]
     pub fn extent(&self) -> u32 {
         self.extent
     }
 
     /// Get the number of points in a leaf of the KD-tree.
+    #[must_use]
     pub fn node_size(&self) -> usize {
         self.node_size
     }
 
     /// Get the coordinate system of the points.
+    #[must_use]
     pub fn coordinate_system(&self) -> &CoordinateSystem {
         &self.coordinate_system
     }
@@ -158,42 +166,49 @@ pub struct SuperclusterOptionsBuilder {
 
 impl SuperclusterOptionsBuilder {
     /// Set the minimal zoom level to generate clusters on.
+    #[must_use]
     pub fn min_zoom(mut self, min_zoom: u8) -> Self {
         self.min_zoom = Some(min_zoom);
         self
     }
 
     /// Set the maximal zoom level to cluster the points on.
+    #[must_use]
     pub fn max_zoom(mut self, max_zoom: u8) -> Self {
         self.max_zoom = Some(max_zoom);
         self
     }
 
     /// Set the minimum points to form a cluster.
+    #[must_use]
     pub fn min_points(mut self, min_points: u32) -> Self {
         self.min_points = Some(min_points);
         self
     }
 
     /// Set the cluster radius in pixels.
+    #[must_use]
     pub fn radius(mut self, radius: f64) -> Self {
         self.radius = Some(radius);
         self
     }
 
     /// Set the tile extent (radius is calculated relative to it).
+    #[must_use]
     pub fn extent(mut self, extent: u32) -> Self {
         self.extent = Some(extent);
         self
     }
 
     /// Set the size of the KD-tree leaf node, affects performance.
+    #[must_use]
     pub fn node_size(mut self, node_size: usize) -> Self {
         self.node_size = Some(node_size);
         self
     }
 
     /// Set the type of coordinate system for clustering.
+    #[must_use]
     pub fn coordinate_system(mut self, coordinate_system: CoordinateSystem) -> Self {
         self.coordinate_system = Some(coordinate_system);
         self
@@ -466,6 +481,31 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("unknown field `raduis`"));
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_options_from_json_with_an_unknown_field_in_the_coordinate_system() {
+        let in_range = serde_json::from_str::<SuperclusterOptions>(
+            r#"{ "coordinate_system": { "Cartesian": { "range": {
+                "min_x": 0.0, "min_y": 0.0, "max_x": 1.0, "max_y": 1.0, "max_z": 5.0
+            } } } }"#,
+        );
+        let in_variant = serde_json::from_str::<SuperclusterOptions>(
+            r#"{ "coordinate_system": { "Cartesian": {
+                "range": { "min_x": 0.0, "min_y": 0.0, "max_x": 1.0, "max_y": 1.0 },
+                "ranges": 1
+            } } }"#,
+        );
+
+        assert!(in_range
+            .unwrap_err()
+            .to_string()
+            .contains("unknown field `max_z`"));
+        assert!(in_variant
+            .unwrap_err()
+            .to_string()
+            .contains("unknown field `ranges`"));
     }
 
     #[test]

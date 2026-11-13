@@ -220,6 +220,7 @@ impl Clusters {
 /// systems may come, so a `match` on it needs a `_` arm.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[non_exhaustive]
 pub enum CoordinateSystem {
     /// Longitude and latitude coordinates, in that order, as in GeoJSON. Used for geospatial data.
@@ -268,11 +269,13 @@ pub struct ClusterId(u32);
 
 impl ClusterId {
     /// Create a cluster identifier from its number, as `get` returns it.
+    #[must_use]
     pub fn new(id: u32) -> Self {
         ClusterId(id)
     }
 
     /// Get the number of the cluster identifier.
+    #[must_use]
     pub fn get(self) -> u32 {
         self.0
     }
@@ -310,12 +313,14 @@ pub struct Cluster<'a> {
 impl Cluster<'_> {
     /// Get the unique identifier of the cluster, which `children`, `leaves` and
     /// `cluster_expansion_zoom` take.
+    #[must_use]
     pub fn id(&self) -> ClusterId {
         self.id
     }
 
     /// Get the number of all the points of the cluster, also in a filtered tile, where
     /// `TileItem::count` counts the ones that pass.
+    #[must_use]
     pub fn total_count(&self) -> u32 {
         self.total_count
     }
@@ -323,6 +328,7 @@ impl Cluster<'_> {
     /// Get the center of the cluster, in the coordinate system of the supercluster: the longitude
     /// and latitude for `LngLat`. It is computed on each call, so a query that does not need it
     /// does not pay for it.
+    #[must_use]
     pub fn center(&self) -> [f64; 2] {
         self.coordinate_system.denormalize(self.position)
     }
@@ -742,6 +748,7 @@ impl<P> Supercluster<P> {
     }
 
     /// Get the configuration settings.
+    #[must_use]
     pub fn options(&self) -> &SuperclusterOptions {
         &self.options
     }
@@ -749,6 +756,7 @@ impl<P> Supercluster<P> {
     /// Get the points that were loaded, in leaf order: the points of every cluster are next to
     /// each other. The points that no cluster holds follow, then the points that were left out of
     /// the clustering. `Item::Point` has the index of a point in the list that was loaded.
+    #[must_use]
     pub fn points(&self) -> &[P] {
         &self.points
     }
@@ -772,6 +780,7 @@ impl<P> Supercluster<P> {
     /// assert!(items.iter().all(|item| matches!(item, Item::Point { .. })));
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
+    #[must_use]
     pub fn with_cluster_max_zoom(&self, cluster_max_zoom: u8) -> SuperclusterView<'_, P> {
         SuperclusterView {
             supercluster: self,
@@ -792,6 +801,7 @@ impl<P> Supercluster<P> {
     ///
     /// The items come in no set order. The same query on the same supercluster returns them in the
     /// same order, but a minor release may change it, so sort them if you need an order.
+    #[must_use]
     pub fn clusters(&self, bbox: [f64; 4], zoom: u8) -> Vec<Item<'_, P>> {
         self.view().clusters(bbox, zoom)
     }
@@ -901,6 +911,7 @@ impl<P> Supercluster<P> {
     /// }
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
+    #[must_use]
     pub fn tile(&self, z: u8, x: u32, y: u32) -> Tile<'_, P> {
         self.view().tile(z, x, y)
     }
@@ -1632,6 +1643,7 @@ impl<P> Debug for SuperclusterView<'_, P> {
 impl<'a, P> SuperclusterView<'a, P> {
     /// Retrieve clustered items within the specified bounding box and zoom level, like
     /// `Supercluster::clusters`.
+    #[must_use]
     pub fn clusters(&self, bbox: [f64; 4], zoom: u8) -> Vec<Item<'a, P>> {
         let mut items = vec![];
 
@@ -1695,6 +1707,7 @@ impl<'a, P> SuperclusterView<'a, P> {
     }
 
     /// Retrieve the items of a tile, like `Supercluster::tile`.
+    #[must_use]
     pub fn tile(&self, z: u8, x: u32, y: u32) -> Tile<'a, P> {
         every_point_tile(*self, (z, x, y))
     }

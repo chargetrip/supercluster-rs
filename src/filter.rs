@@ -169,6 +169,7 @@ impl CachedFilter {
     /// assert_eq!(supercluster.cache_filter(|point| point.2).count(), 2);
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
+    #[must_use]
     pub fn count(&self) -> u32 {
         self.ranks[self.words.len()]
     }
@@ -260,17 +261,20 @@ impl<'s> From<&CombinedFilter<'s>> for CombinedFilter<'s> {
 impl<'s> CombinedFilter<'s> {
     /// Combine the points that pass both this combined filter and `other`, like
     /// `CachedFilter::and`.
+    #[must_use]
     pub fn and(self, other: impl Into<CombinedFilter<'s>>) -> CombinedFilter<'s> {
         self.combine(other.into(), Step::And)
     }
 
     /// Combine the points that pass this combined filter, `other` or both, like `CachedFilter::or`.
+    #[must_use]
     pub fn or(self, other: impl Into<CombinedFilter<'s>>) -> CombinedFilter<'s> {
         self.combine(other.into(), Step::Or)
     }
 
     /// Combine the points that pass this combined filter but not `other`, like
     /// `CachedFilter::and_not`.
+    #[must_use]
     pub fn and_not(self, other: impl Into<CombinedFilter<'s>>) -> CombinedFilter<'s> {
         self.combine(other.into(), Step::AndNot)
     }
@@ -301,6 +305,7 @@ impl<'s> CombinedFilter<'s> {
     /// assert_eq!(supercluster.with_filter(&cached)?.tile(0, 0, 0).items[0].count(), 1);
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
+    #[must_use]
     pub fn cache(&self) -> CachedFilter {
         let words = self
             .steps

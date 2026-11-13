@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 /// data keeps its proportions.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 #[non_exhaustive]
 pub struct DataRange {
     /// The minimum X value.
@@ -42,6 +43,7 @@ impl DataRange {
     ///     .build()?;
     /// # Ok::<(), supercluster::SuperclusterError>(())
     /// ```
+    #[must_use]
     pub fn new(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Self {
         DataRange {
             min_x,

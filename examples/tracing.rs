@@ -32,7 +32,7 @@ fn main() -> Result<(), SuperclusterError> {
     let supercluster = Supercluster::load_features(options, features)?;
 
     // Querying does not log anything
-    supercluster.tile(0, 0, 0);
+    let _ = supercluster.tile(0, 0, 0);
 
     Ok(())
 }

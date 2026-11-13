@@ -189,7 +189,7 @@ fn get_output_of_query(query: impl FnOnce(&Supercluster<[f64; 2]>)) -> String {
 fn test_tile_traces_nothing() {
     assert_eq!(
         get_output_of_query(|supercluster| {
-            supercluster.tile(0, 0, 0);
+            let _ = supercluster.tile(0, 0, 0);
         }),
         ""
     );
@@ -199,7 +199,7 @@ fn test_tile_traces_nothing() {
 fn test_clusters_traces_nothing() {
     assert_eq!(
         get_output_of_query(|supercluster| {
-            supercluster.clusters([-180.0, -90.0, 180.0, 90.0], 3);
+            let _ = supercluster.clusters([-180.0, -90.0, 180.0, 90.0], 3);
         }),
         ""
     );
