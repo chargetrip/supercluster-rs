@@ -203,7 +203,7 @@ impl Positions {
     }
 }
 
-// Written by hand, so a supercluster prints its positions as before, without the running sums.
+// Written by hand, so a supercluster prints its positions without the running sums.
 impl Debug for Positions {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         self.positions.fmt(formatter)

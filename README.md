@@ -159,7 +159,7 @@ A filtered tile keeps only the points that pass a filter, for example the ones t
 
 Pass the filter to `with_filter`, which returns a `FilteredView`. Its `tile` and `cluster_expansion_zoom` work like the ones of the supercluster, on the points that pass. `with_filter` checks the filter once, so the queries of the view cannot fail on it.
 
-Each item's `count()`, its points from `leaves()`, `expansion_zoom()` and `coordinates()` take only the points that pass into account, as does the `point_count` of its GeoJSON. The cluster from `item()` still describes all of its points, in its `total_count()` and `coordinates()`.
+Each item's `count()`, its points from `leaves()`, `expansion_zoom()` and `center()` take only the points that pass into account, as does the `point_count` of its GeoJSON. The cluster from `item()` still describes all of its points, in its `total_count()` and `coordinates()`.
 
 ### Choose how to filter
 
@@ -223,7 +223,7 @@ fn main() -> Result<(), SuperclusterError> {
     let items = supercluster.with_filter(&available)?.tile(0, 0, 0).items;
 
     for item in &items {
-        println!("{:?}: {} station(s), zoom in to {:?}", item.coordinates(), item.count(), item.expansion_zoom());
+        println!("{} station(s), zoom in to {:?}", item.count(), item.expansion_zoom());
     }
 
     assert_eq!(items.len(), 1);
@@ -461,7 +461,7 @@ Cached filters combine with the methods below, which chain, as in `a.or(&b).and(
 | Type | What it holds | Methods |
 | --- | --- | --- |
 | `Tile` | `items`, a list of `TileItem`. `tile` returns it, with or without a filter. | `is_empty()` |
-| `TileItem` | A cluster or point, with its position in the tile. | `x()` and `y()` for the position in the tile as whole numbers (`i32`), `item()` for the cluster or point, `coordinates()`, `count()` and `leaves()` for its points, or in a filtered tile the points that pass, and `expansion_zoom()` |
+| `TileItem` | A cluster or point, with its position in the tile. | `x()` and `y()` for the position in the tile as whole numbers (`i32`), `item()` for the cluster or point, `center()` for the center of a cluster, `count()` and `leaves()` for its points, or in a filtered tile the points that pass, and `expansion_zoom()` |
 | `Item` | `Item::Cluster(Cluster)`, or `Item::Point { index, point, .. }`, a point with its index in the list that was loaded. A pattern on `Item::Point` needs `..`, because more fields may come. | None |
 | `Cluster` | A cluster of points. | `id()`, `total_count()` for all of its points, also in a filtered tile, and `coordinates()` for its center |
 | `ClusterId` | The ID of a cluster, as a `u32`. `ClusterId::new(number)` makes one from a `u32`. | `get()` returns the `u32` |

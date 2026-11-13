@@ -8,7 +8,7 @@ use std::sync::{
 };
 
 use supercluster::{
-    CachedFilter, CombinedFilter, Supercluster, SuperclusterError, SuperclusterOptions,
+    CachedFilter, CombinedFilter, Item, Supercluster, SuperclusterError, SuperclusterOptions,
 };
 
 /// A charging station.
@@ -79,7 +79,14 @@ fn handle_tile(
         .tile(z, x, y)
         .items
         .iter()
-        .map(|item| (item.coordinates(), item.count()))
+        .map(|item| {
+            let position = match item.item() {
+                Item::Cluster(_) => item.center().unwrap_or_default(),
+                Item::Point { point, .. } => [point.lng, point.lat],
+            };
+
+            (position, item.count())
+        })
         .collect())
 }
 

@@ -128,7 +128,7 @@ fn bench_many_points(c: &mut Criterion) {
 
             tile.items
                 .iter()
-                .map(|tile_item| tile_item.coordinates()[0])
+                .map(|tile_item| tile_item.center().map_or(0.0, |center| center[0]))
                 .sum::<f64>()
         })
     });
@@ -212,7 +212,7 @@ fn bench_one_million_points(c: &mut Criterion) {
 
             tile.items
                 .iter()
-                .map(|tile_item| tile_item.coordinates()[0])
+                .map(|tile_item| tile_item.center().map_or(0.0, |center| center[0]))
                 .sum::<f64>()
         })
     });

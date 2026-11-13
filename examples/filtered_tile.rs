@@ -50,10 +50,10 @@ fn main() -> Result<(), SuperclusterError> {
         .into_iter()
         .map(|tile_item| {
             let names: Vec<_> = tile_item.leaves().map(|station| station.name).collect();
-            let [lng, lat] = tile_item.coordinates();
 
             match tile_item.item() {
                 Item::Cluster(cluster) => {
+                    let [lng, lat] = tile_item.center().unwrap_or_default();
                     // The zoom level a map zooms in to, counting the available stations only
                     let expansion = tile_item.expansion_zoom().map_or(String::new(), |zoom| {
                         format!(", expands on zoom level {zoom}")
@@ -67,7 +67,9 @@ fn main() -> Result<(), SuperclusterError> {
                         names,
                     )
                 }
-                Item::Point { .. } => format!("station {names:?} at {lng}, {lat}"),
+                Item::Point { point, .. } => {
+                    format!("station {names:?} at {}, {}", point.lng, point.lat)
+                }
             }
         });
 

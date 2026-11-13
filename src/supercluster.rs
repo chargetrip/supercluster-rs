@@ -20,7 +20,13 @@
 //! cluster are a range of them. What a query needs to know about a cluster is in one table, by the
 //! number of the cluster.
 
-use std::{f64::consts::PI, fmt::Debug, ops::Range, sync::Arc, vec};
+use std::{
+    f64::consts::PI,
+    fmt::{self, Debug, Formatter},
+    ops::Range,
+    sync::Arc,
+    vec,
+};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -1595,7 +1601,6 @@ fn permute<P>(points: &mut [P], indexes: &[u32]) {
 /// A view of a supercluster whose queries cluster up to a lower zoom level than the `max_zoom` of
 /// its options. Above that zoom level, the queries return the individual points instead of
 /// clusters. Create one with `Supercluster::with_cluster_max_zoom`.
-#[derive(Debug)]
 pub struct SuperclusterView<'a, P> {
     /// The supercluster to query.
     pub(crate) supercluster: &'a Supercluster<P>,
@@ -1613,6 +1618,16 @@ impl<P> Clone for SuperclusterView<'_, P> {
 }
 
 impl<P> Copy for SuperclusterView<'_, P> {}
+
+// Written by hand, because a derive would print the whole supercluster.
+impl<P> Debug for SuperclusterView<'_, P> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SuperclusterView")
+            .field("cluster_max_zoom", &self.cluster_max_zoom)
+            .finish_non_exhaustive()
+    }
+}
 
 impl<'a, P> SuperclusterView<'a, P> {
     /// Retrieve clustered items within the specified bounding box and zoom level, like
@@ -2206,14 +2221,14 @@ mod tests {
 
         // The filtered clusters move to the same centers, from the sums that were read back
         let filter = |point: &[f64; 2]| point[0] > 0.0;
-        let centers = |supercluster: &Supercluster<[f64; 2]>| -> Vec<[f64; 2]> {
+        let centers = |supercluster: &Supercluster<[f64; 2]>| -> Vec<Option<[f64; 2]>> {
             supercluster
                 .with_filter(supercluster.filter(filter))
                 .unwrap()
                 .tile(0, 0, 0)
                 .items
                 .iter()
-                .map(|item| item.coordinates())
+                .map(|item| item.center())
                 .collect()
         };
 

@@ -17,17 +17,18 @@ use std::{
     sync::{Arc, Weak},
 };
 
-/// The cached result of a closure: the points of a supercluster that pass it, which
-/// `Supercluster::cache_filter` finds once, so many queries can reuse them. It does not follow the
-/// data the closure read, so make it again when that data changes.
+/// The points of a supercluster that pass a closure, found once by `Supercluster::cache_filter` so
+/// that many queries can reuse them. It is a snapshot and does not follow the data the closure
+/// read, so make a new one when that data changes.
 ///
-/// It holds one bit per point, and a count and a sum of the positions per 64 points, so it counts
-/// the points of a cluster that pass, and finds their center, with a few lookups, whatever the size
-/// of the cluster. A million points take about 445 KB. `and`, `or` and `and_not` combine
+/// It holds one bit per point, and a count and a sum of the positions for every 64 points. A query
+/// counts the points of a cluster that pass, and finds their center, with a few lookups, however
+/// large the cluster is. A million points take about 445 KB. `and`, `or` and `and_not` combine
 /// cached filters into a `CombinedFilter`.
 ///
-/// A cached filter belongs to the supercluster that made it. `with_filter` on another supercluster
-/// returns `SuperclusterError::ForeignCachedFilter`, even when it holds the same points. See
+/// A cached filter works with the supercluster that made it and with its clones, which hold the
+/// same points in the same order. `with_filter` on any other supercluster returns
+/// `SuperclusterError::ForeignCachedFilter`, even if it was loaded from the same points. See
 /// `Supercluster::cache_filter` for an example.
 #[derive(Clone)]
 pub struct CachedFilter {
@@ -114,7 +115,7 @@ impl CachedFilter {
     /// Combining runs nothing: the combined filter borrows the cached filters, and a query
     /// evaluates it on the points of its tile only, so its cost grows with the points of the tile,
     /// not with all the points. Both cached filters must come from the supercluster that
-    /// `with_filter` is called on, which returns `SuperclusterError::ForeignCachedFilter` otherwise.
+    /// `with_filter` is called on, or it returns `SuperclusterError::ForeignCachedFilter`.
     ///
     /// # Examples
     ///

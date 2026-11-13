@@ -719,7 +719,7 @@ mod tests {
                     f64::from(item.y())
                 ]))
             );
-            assert_ne!(item.coordinates(), cluster.coordinates());
+            assert_ne!(item.center(), Some(cluster.coordinates()));
         }
     }
 }
