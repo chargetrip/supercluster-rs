@@ -264,7 +264,7 @@ impl CoordinateSystem {
 /// is not the identifier of a cluster of the supercluster gives a `ClusterNotFound` error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(transparent))]
-pub struct ClusterId(pub(crate) u32);
+pub struct ClusterId(u32);
 
 impl ClusterId {
     /// Create a cluster identifier from its number, as `get` returns it.
@@ -320,10 +320,10 @@ impl Cluster<'_> {
         self.total_count
     }
 
-    /// Get the coordinates of the center of the cluster, in the coordinate system of the
-    /// supercluster: the longitude and latitude for `LngLat`. They are computed on each call, so a
-    /// query that does not need them does not pay for them.
-    pub fn coordinates(&self) -> [f64; 2] {
+    /// Get the center of the cluster, in the coordinate system of the supercluster: the longitude
+    /// and latitude for `LngLat`. It is computed on each call, so a query that does not need it
+    /// does not pay for it.
+    pub fn center(&self) -> [f64; 2] {
         self.coordinate_system.denormalize(self.position)
     }
 }
@@ -2837,7 +2837,7 @@ mod tests {
             panic!("expected a single cluster");
         };
 
-        let [lng, lat] = cluster.coordinates();
+        let [lng, lat] = cluster.center();
 
         assert!((lng - 11.0).abs() < 1e-9);
         assert!((lat - 50.0).abs() < 1e-9);

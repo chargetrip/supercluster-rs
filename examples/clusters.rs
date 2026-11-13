@@ -26,7 +26,7 @@ fn main() -> Result<(), SuperclusterError> {
     for item in &clusters {
         match item {
             Item::Cluster(cluster) => {
-                let [lng, lat] = cluster.coordinates();
+                let [lng, lat] = cluster.center();
 
                 println!(
                     "Cluster {} with {} points at {lng}, {lat}",

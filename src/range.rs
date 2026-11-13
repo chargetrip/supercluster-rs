@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Both axes are scaled by the same factor, from the lowest minimum to the highest maximum, so the
 /// data keeps its proportions.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[non_exhaustive]
 pub struct DataRange {

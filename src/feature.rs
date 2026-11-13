@@ -102,7 +102,7 @@ impl Cluster<'_> {
 
     /// Convert the cluster into a GeoJSON feature, with its center as the geometry.
     pub fn to_feature(&self) -> Feature {
-        self.feature_at(Geometry::new_point(self.coordinates()), self.total_count())
+        self.feature_at(Geometry::new_point(self.center()), self.total_count())
     }
 
     /// Convert the cluster into a GeoJSON feature with the geometry, so a tile does not compute
@@ -513,7 +513,7 @@ mod tests {
         assert_eq!(feature.id, Some(Id::Number(id.into())));
         assert_eq!(
             feature.geometry,
-            Some(Geometry::new_point(cluster.coordinates()))
+            Some(Geometry::new_point(cluster.center()))
         );
         assert_eq!(feature.property("cluster"), Some(&JsonValue::from(true)));
         assert_eq!(feature.property("cluster_id"), Some(&JsonValue::from(id)));
@@ -719,7 +719,7 @@ mod tests {
                     f64::from(item.y())
                 ]))
             );
-            assert_ne!(item.center(), Some(cluster.coordinates()));
+            assert_ne!(item.center(), Some(cluster.center()));
         }
     }
 }

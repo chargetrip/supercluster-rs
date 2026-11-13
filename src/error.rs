@@ -8,7 +8,7 @@ use crate::{MAX_POINTS, MAX_ZOOM_LIMIT};
 
 /// Supercluster error.
 /// Represents the different errors that can occur in the supercluster crate.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SuperclusterError {
     /// Cluster not found with the specified ID.

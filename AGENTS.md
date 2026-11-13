@@ -136,8 +136,22 @@ are the reference.
 - Give a public function that returns a `Result` an `# Errors` section that names each error, and one
   that can panic a `# Panics` section. Give the main entry points an `# Examples` section, which runs
   as a doc test, uses `?` and ends with `# Ok::<(), supercluster::SuperclusterError>(())`.
-- Follow the Rust API guidelines for names: no `get_` prefix on a public query or getter, and
-  conversions through `From` where a type wraps another one, like `ClusterId`.
+- Follow the Rust API guidelines for names: no `get_` prefix on a public query or getter.
+- Give a wrapper type like `ClusterId` a private field, a constructor `new` and an accessor `get`.
+  A `From` impl may supplement them but not replace them. Implement `From` and never `Into`, which
+  comes with it.
+- Derive `Clone`, `Debug` and `PartialEq` on a public type whose fields allow it and where cloning
+  or comparing is meaningful. Add `Eq` and `Hash` when every field supports them and the type is
+  stable. Adding a trait later is not breaking and removing one is, so be careful with `Copy`,
+  `Eq`, `Ord` and `Hash` on a type that may change.
+- Derive `Copy` only on a small value type with a fixed shape, such as `ClusterId`, `Cluster` and
+  `DataRange`, and never on options, errors or an enum that may gain data.
+- Give a type with an obvious default a `Default`.
+- Implement a trait by hand when a derive would add an unneeded bound on a type parameter such as
+  `P`, as `Item` and `Tile` do, or when a derived `Debug` would print far more than a person wants
+  to read, as `SuperclusterView` and `CachedFilter` do.
+- Implement `Display` only for a type with a text form of its own, such as an error. Print a
+  wrapper like `ClusterId` through `get()`.
 - Write comments like one engineer to another. Explain why, not what changed. Mention a previous
   version only in the upgrade guide of the README.
 - Write plain, active sentences in docs and comments, and use the same word for the same thing. Use

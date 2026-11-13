@@ -138,7 +138,7 @@ impl<'a, P> TileItem<'a, P> {
     /// and latitude for `LngLat`.
     ///
     /// In a filtered tile, a cluster with points that fail the filter is at the center of the
-    /// points that pass. `Cluster::coordinates` of `item()` still gives the center of all of its
+    /// points that pass. `Cluster::center` of `item()` still gives the center of all of its
     /// points.
     ///
     /// Returns `None` for a point, which has no center. Read its coordinates from `item()`. In a
@@ -1193,7 +1193,7 @@ mod tests {
             panic!("expected a cluster");
         };
 
-        assert_eq!(unfiltered[0].center(), Some(cluster.coordinates()));
+        assert_eq!(unfiltered[0].center(), Some(cluster.center()));
     }
 
     /// Call `check` with the items of the tile at zoom level 0 for every kind of filter that keeps
@@ -1774,7 +1774,7 @@ mod tests {
             match tile_item.item() {
                 Item::Cluster(cluster) => {
                     assert_eq!(tile_item.count(), cluster.total_count());
-                    assert_eq!(tile_item.center(), Some(cluster.coordinates()));
+                    assert_eq!(tile_item.center(), Some(cluster.center()));
                     assert!(tile_item
                         .leaves()
                         .eq(supercluster.leaves(cluster.id()).unwrap()));
