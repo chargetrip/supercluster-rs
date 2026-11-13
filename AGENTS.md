@@ -119,8 +119,9 @@ are the reference.
 - Validate input where it enters and return an error: the options in
   `SuperclusterOptionsBuilder::build`, which serde also runs, the points in `load`, a supercluster
   that serde reads, and the filters a query gets. Never panic
-  on options or data a caller passes. Points with missing or non-finite coordinates are left out,
-  and with the `tracing` feature one `warn` event reports how many.
+  on options or data a caller passes. Points with missing or non-finite coordinates are left out.
+  With the `tracing` feature, the summary of a load counts them, and one `warn` event reports the
+  points whose coordinates are not finite numbers.
 - Propagate errors with `?`. Don't log an error and return `None` or a default instead. A function
   that cannot fail on valid data returns the value, not a `Result`.
 - Indexing may panic only on a broken invariant of the crate itself, never on caller input.

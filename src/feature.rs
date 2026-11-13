@@ -509,9 +509,17 @@ mod tests {
         let supercluster =
             Supercluster::load_features(SuperclusterOptions::default(), features).unwrap();
         let items = supercluster.clusters([-180.0, -90.0, 180.0, 90.0], 0);
-        let [Item::Cluster(cluster)] = &items[..] else {
-            panic!("expected a single cluster");
-        };
+        let clusters: Vec<_> = items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Cluster(cluster) => Some(cluster),
+                Item::Point { .. } => None,
+            })
+            .collect();
+
+        assert_eq!((items.len(), clusters.len()), (1, 1));
+
+        let cluster = clusters[0];
         let feature = cluster.to_feature();
         let id = cluster.id().get();
 

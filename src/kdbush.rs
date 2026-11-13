@@ -656,15 +656,11 @@ mod tests {
         for &i in &result {
             let p = POINTS[i];
 
-            if KDBush::sq_dist(p[0], p[1], 50.0, 50.0) > r2 {
-                panic!();
-            }
+            assert!(KDBush::sq_dist(p[0], p[1], 50.0, 50.0) <= r2);
         }
 
         for (i, p) in POINTS.iter().enumerate() {
-            if !result.contains(&i) && KDBush::sq_dist(p[0], p[1], 50.0, 50.0) <= r2 {
-                panic!();
-            }
+            assert!(result.contains(&i) || KDBush::sq_dist(p[0], p[1], 50.0, 50.0) > r2);
         }
 
         // A second query with the same buffers gets the second query's result, not a mix of both
@@ -675,9 +671,7 @@ mod tests {
         for &i in &result {
             let p = POINTS[i];
 
-            if KDBush::sq_dist(p[0], p[1], 10.0, 10.0) > r2 {
-                panic!();
-            }
+            assert!(KDBush::sq_dist(p[0], p[1], 10.0, 10.0) <= r2);
         }
     }
 
@@ -715,15 +709,14 @@ mod tests {
         for &i in &result {
             let p = POINTS[i];
 
-            if p[0] < 20.0 || p[0] > 50.0 || p[1] < 30.0 || p[1] > 70.0 {
-                panic!();
-            }
+            assert!((20.0..=50.0).contains(&p[0]) && (30.0..=70.0).contains(&p[1]));
         }
 
         for (i, p) in POINTS.iter().enumerate() {
-            if !(result.contains(&i) || p[0] < 20.0 || p[0] > 50.0 || p[1] < 30.0 || p[1] > 70.0) {
-                panic!();
-            }
+            assert!(
+                result.contains(&i)
+                    || !((20.0..=50.0).contains(&p[0]) && (30.0..=70.0).contains(&p[1]))
+            );
         }
     }
 

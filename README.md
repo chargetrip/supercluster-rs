@@ -72,7 +72,7 @@ supercluster = { version = "4.0.0", features = ["geojson"] }
 | --- | --- |
 | `geojson` | Support for [GeoJSON features](https://docs.rs/geojson): loading them with `load_features`, and turning tiles, clusters and points back into GeoJSON. |
 | `serde` | Saving and reading back the options and a loaded supercluster, in any serde format. Reading rejects another format version and data that does not hold together, so queries cannot panic on it. With `serde_json`, enable its `float_roundtrip` feature, so the numbers read back exactly. |
-| `tracing` | Events through the [`tracing` crate](https://docs.rs/tracing), or as `log` records: a summary of each load at the `debug` level, one event per zoom level at the `trace` level, and a warning for points left out. Queries report nothing. |
+| `tracing` | Events through the [`tracing` crate](https://docs.rs/tracing), or as `log` records: a summary of each load at the `debug` level, with the number of points left out, one event per zoom level at the `trace` level, and a warning for coordinates that are not finite numbers. Queries report nothing. |
 
 ## Cluster your points
 

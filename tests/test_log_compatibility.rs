@@ -39,10 +39,16 @@ fn test_load_is_logged_without_a_tracing_subscriber() {
     log::set_logger(&LOGGER).unwrap();
     log::set_max_level(LevelFilter::Debug);
 
-    // A point that is `None` has no coordinates
+    // A point that is `None` has no coordinates, and one that is NaN has coordinates that are not
+    // finite numbers
     Supercluster::load(
         SuperclusterOptions::default(),
-        vec![Some([10.0, 50.0]), Some([10.0001, 50.0]), None],
+        vec![
+            Some([10.0, 50.0]),
+            Some([10.0001, 50.0]),
+            None,
+            Some([f64::NAN, 50.0]),
+        ],
         |point| *point,
     )
     .unwrap();
@@ -50,7 +56,8 @@ fn test_load_is_logged_without_a_tracing_subscriber() {
     let records = LOGGER.records.lock().unwrap();
 
     assert!(records.iter().any(|(level, message)| {
-        *level == Level::Warn && message.contains("Points without finite coordinates are left out")
+        *level == Level::Warn
+            && message.contains("Points with coordinates that are not finite numbers are left out")
     }));
     assert!(records.iter().any(|(level, message)| {
         *level == Level::Debug && message.contains("Loaded points into the supercluster")

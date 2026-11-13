@@ -16,7 +16,7 @@ fn main() -> Result<(), SuperclusterError> {
         .map(|point| Feature::from(Geometry::new_point(point)))
         .collect();
 
-    // A feature without a point has no coordinates, so it is left out and a warning tells it
+    // A feature without a point has no coordinates, so it is left out and the summary of the load counts it
     features.push(Feature::default());
 
     // Set the configuration settings

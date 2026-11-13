@@ -56,10 +56,11 @@ fn with_subscriber<T>(buffer: &Buffer, f: impl FnOnce() -> T) -> T {
 
 /// Get the line of the output that has the message.
 fn get_line<'a>(output: &'a str, message: &str) -> &'a str {
-    output
-        .lines()
-        .find(|line| line.contains(message))
-        .unwrap_or_else(|| panic!("no line with `{message}` in:\n{output}"))
+    let line = output.lines().find(|line| line.contains(message));
+
+    assert!(line.is_some(), "no line with `{message}` in:\n{output}");
+
+    line.unwrap()
 }
 
 #[test]
@@ -77,11 +78,12 @@ fn test_load_reports_points_without_coordinates() {
     });
 
     let output = buffer.output();
-    let line = get_line(&output, "Points without finite coordinates are left out");
+    let line = get_line(&output, "Loaded points into the supercluster");
 
-    assert!(line.contains("WARN"));
-    assert!(line.contains("total=3"));
+    // The caller leaves a point out on purpose, so only the summary counts it
+    assert!(line.contains("points=3"));
     assert!(line.contains("left_out=1"));
+    assert!(!output.contains("WARN"));
 }
 
 #[test]
@@ -98,10 +100,14 @@ fn test_load_reports_points_with_coordinates_that_are_not_finite() {
     });
 
     let output = buffer.output();
-    let line = get_line(&output, "Points without finite coordinates are left out");
+    let line = get_line(
+        &output,
+        "Points with coordinates that are not finite numbers are left out",
+    );
 
-    assert!(line.contains("total=3"));
-    assert!(line.contains("left_out=2"));
+    assert!(line.contains("WARN"));
+    assert!(line.contains("not_finite=2"));
+    assert!(get_line(&output, "Loaded points into the supercluster").contains("left_out=2"));
 }
 
 #[test]
@@ -138,6 +144,7 @@ fn test_load_logs_a_summary() {
 
     assert!(line.contains("DEBUG"));
     assert!(line.contains("points=2"));
+    assert!(line.contains("left_out=0"));
     assert!(line.contains("clusters=1"));
     assert!(line.contains("min_zoom=0"));
     assert!(line.contains("max_zoom=16"));

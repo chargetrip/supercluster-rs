@@ -61,6 +61,7 @@ required-features = ["geojson"]
 name = "request_cost_bench"
 harness = false
 bench = false
+
 [lib]
 name = "supercluster"
 path = "src/lib.rs"

@@ -1124,6 +1124,17 @@ mod tests {
         assert!(clusters > 0);
     }
 
+    /// Get the IDs of the clusters among the items of a tile.
+    fn get_cluster_ids<P>(items: &[TileItem<'_, P>]) -> Vec<ClusterId> {
+        items
+            .iter()
+            .filter_map(|item| match item.item() {
+                Item::Cluster(cluster) => Some(cluster.id()),
+                Item::Point { .. } => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn test_points_of_a_filtered_cluster() {
         let supercluster = load(&[
@@ -1131,10 +1142,15 @@ mod tests {
             (10.001, 50.0, false),
             (10.002, 50.0, true),
         ]);
-        let Item::Cluster(cluster) = supercluster.tile(0, 0, 0).items[0].item() else {
-            panic!("expected a cluster");
-        };
-        let leaves: Vec<&TestPoint> = supercluster.leaves(cluster.id()).unwrap().iter().collect();
+        let cluster_ids = get_cluster_ids(&supercluster.tile(0, 0, 0).items[..1]);
+
+        assert_eq!(cluster_ids.len(), 1);
+
+        let leaves: Vec<&TestPoint> = supercluster
+            .leaves(cluster_ids[0])
+            .unwrap()
+            .iter()
+            .collect();
         let coordinates_of = |points: Vec<&TestPoint>| -> Vec<Option<[f64; 2]>> {
             points.iter().map(|point| point.coordinates).collect()
         };
@@ -1197,11 +1213,13 @@ mod tests {
             .unwrap()
             .tile(0, 0, 0)
             .items;
-        let Item::Cluster(cluster) = unfiltered[0].item() else {
-            panic!("expected a cluster");
-        };
+        let cluster_ids = get_cluster_ids(&unfiltered[..1]);
 
-        assert_eq!(unfiltered[0].center(), Some(cluster.center()));
+        assert_eq!(cluster_ids.len(), 1);
+        assert_eq!(
+            unfiltered[0].center(),
+            Some(supercluster.cluster(cluster_ids[0]).unwrap().center())
+        );
     }
 
     /// Call `check` with the items of the tile at zoom level 0 for every kind of filter that keeps
@@ -1526,10 +1544,12 @@ mod tests {
         let supercluster =
             Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))
                 .unwrap();
-        let Item::Cluster(cluster) = supercluster.tile(0, 0, 0).items[0].item() else {
-            panic!("expected a cluster");
-        };
-        let failing = supercluster.leaves(cluster.id()).unwrap()[100];
+        let cluster_ids = get_cluster_ids(&supercluster.tile(0, 0, 0).items[..1]);
+
+        assert_eq!(cluster_ids.len(), 1);
+
+        let id = cluster_ids[0];
+        let failing = supercluster.leaves(id).unwrap()[100];
         let filter = |point: &[f64; 2]| *point != failing;
 
         let items = supercluster
@@ -1545,7 +1565,7 @@ mod tests {
             supercluster
                 .with_filter(supercluster.filter(filter))
                 .unwrap()
-                .cluster_expansion_zoom(cluster.id())
+                .cluster_expansion_zoom(id)
                 .ok()
         );
     }

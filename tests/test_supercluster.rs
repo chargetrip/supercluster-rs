@@ -56,7 +56,7 @@ fn get_point_count(item: &Item<'_, Feature>) -> usize {
 /// by a place in it, because the fixtures number their clusters another way, and the clusters of
 /// a zoom level come in no set order.
 fn get_cluster_id(supercluster: &Supercluster<Feature>, zoom: u8, name: &str) -> ClusterId {
-    supercluster
+    let id = supercluster
         .clusters(WORLD, zoom)
         .into_iter()
         .find_map(|item| match item {
@@ -70,8 +70,14 @@ fn get_cluster_id(supercluster: &Supercluster<Feature>, zoom: u8, name: &str) ->
                 Some(cluster.id())
             }
             _ => None,
-        })
-        .unwrap_or_else(|| panic!("expected a cluster with {name} at zoom level {zoom}"))
+        });
+
+    assert!(
+        id.is_some(),
+        "expected a cluster with {name} at zoom level {zoom}"
+    );
+
+    id.unwrap()
 }
 
 /// The clusters the tests check: their zoom level and a place in them. The fixtures have the IDs

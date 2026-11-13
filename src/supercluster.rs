@@ -762,8 +762,9 @@ impl<P> Supercluster<P> {
     }
 
     /// Get a view whose queries cluster up to `cluster_max_zoom` instead of the `max_zoom` of the
-    /// options. It can lower the `max_zoom` but not raise it. Above that zoom level, the view
-    /// returns the individual points instead of clusters.
+    /// options. It can lower the `max_zoom` but not raise it, and a value below the `min_zoom` is
+    /// raised to it, because there are no clusters below that zoom level. Above that zoom level,
+    /// the view returns the individual points instead of clusters.
     ///
     /// # Examples
     ///
@@ -784,7 +785,7 @@ impl<P> Supercluster<P> {
     pub fn with_cluster_max_zoom(&self, cluster_max_zoom: u8) -> SuperclusterView<'_, P> {
         SuperclusterView {
             supercluster: self,
-            cluster_max_zoom: cluster_max_zoom.min(self.options.max_zoom),
+            cluster_max_zoom: cluster_max_zoom.clamp(self.options.min_zoom, self.options.max_zoom),
         }
     }
 
@@ -1254,6 +1255,10 @@ impl<P> Supercluster<P> {
         // The points that are clustered, in the order they were loaded
         let mut entries = Vec::with_capacity(self.points.len());
 
+        // The points that have coordinates, which are not finite numbers
+        #[cfg(feature = "tracing")]
+        let mut not_finite = 0;
+
         for (index, point) in self.points.iter().enumerate() {
             let Some(coordinates) = get_coordinates(point) else {
                 continue;
@@ -1268,11 +1273,23 @@ impl<P> Supercluster<P> {
                     handle: index as u32,
                     point_count: 1,
                 });
+            } else {
+                #[cfg(feature = "tracing")]
+                {
+                    not_finite += 1;
+                }
             }
         }
 
+        // Coordinates that are not finite numbers are most likely a mistake in the data. A point
+        // without coordinates is left out on purpose, so only the summary of the load counts it.
         #[cfg(feature = "tracing")]
-        Self::warn_left_out_points(self.points.len(), entries.len());
+        if not_finite > 0 {
+            tracing::warn!(
+                not_finite,
+                "Points with coordinates that are not finite numbers are left out"
+            );
+        }
 
         // Cluster points on max zoom, then cluster the results on previous zoom, etc.;
         // Results in a cluster hierarchy across zoom levels. The tree of the points is kept for
@@ -1333,6 +1350,7 @@ impl<P> Supercluster<P> {
         #[cfg(feature = "tracing")]
         tracing::debug!(
             points = self.points.len(),
+            left_out = self.points.len() - self.positions.len(),
             clusters = self.clusters.len(),
             min_zoom,
             max_zoom,
@@ -1546,19 +1564,6 @@ impl<P> Supercluster<P> {
 
         self.indexes = indexes;
         self.positions = Arc::new(Positions::new(leaf_positions(point_tree)));
-    }
-
-    /// Warn when points are left out of the clustering because their coordinates are missing or
-    /// not finite numbers.
-    #[cfg(feature = "tracing")]
-    fn warn_left_out_points(total: usize, clustered: usize) {
-        if clustered < total {
-            tracing::warn!(
-                total,
-                left_out = total - clustered,
-                "Points without finite coordinates are left out"
-            );
-        }
     }
 }
 
@@ -1878,10 +1883,17 @@ mod tests {
 
     /// Get the ID of the cluster that holds all the points at zoom level 0.
     fn get_top_cluster_id(supercluster: &Supercluster<TestPoint>) -> ClusterId {
-        match &supercluster.tile(0, 0, 0).items[0].item() {
-            Item::Cluster(cluster) => cluster.id(),
-            Item::Point { .. } => panic!("expected a cluster"),
-        }
+        let ids: Vec<ClusterId> = supercluster.tile(0, 0, 0).items[..1]
+            .iter()
+            .filter_map(|item| match item.item() {
+                Item::Cluster(cluster) => Some(cluster.id()),
+                Item::Point { .. } => None,
+            })
+            .collect();
+
+        assert_eq!(ids.len(), 1, "expected a cluster");
+
+        ids[0]
     }
 
     /// Load two close points and a farther one that does not pass the filter.
@@ -2061,11 +2073,17 @@ mod tests {
 
         assert_eq!(items.len(), 500);
 
-        for item in items {
-            let Item::Point { index, point } = item else {
-                panic!("expected a point");
-            };
+        let found: Vec<_> = items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Point { index, point } => Some((*index, *point)),
+                Item::Cluster(_) => None,
+            })
+            .collect();
 
+        assert_eq!(found.len(), 500);
+
+        for (index, point) in found {
             assert_eq!(*point, points[index]);
         }
     }
@@ -2842,15 +2860,61 @@ mod tests {
     }
 
     #[test]
+    fn test_cluster_max_zoom_below_the_min_zoom_is_raised_to_it() {
+        let options = SuperclusterOptions::builder()
+            .min_zoom(3)
+            .max_zoom(8)
+            .build()
+            .unwrap();
+        let points = [(10.0, 50.0), (12.0, 50.0), (-100.0, -30.0), (40.0, 10.0)]
+            .map(|(lng, lat)| TestPoint::new(lng, lat, true));
+        let supercluster =
+            Supercluster::load(options, points.to_vec(), |point| point.coordinates).unwrap();
+        let bbox = [-180.0, -90.0, 180.0, 90.0];
+        let below = supercluster.with_cluster_max_zoom(1);
+        let at = supercluster.with_cluster_max_zoom(3);
+
+        // The view keeps clustering on the zoom levels up to the minimum one, and shows the points
+        // above it, not clusters that vanish one zoom level later
+        for zoom in 0..=10 {
+            assert_eq!(below.clusters(bbox, zoom), at.clusters(bbox, zoom));
+        }
+
+        let ids: Vec<_> = below
+            .clusters(bbox, 3)
+            .iter()
+            .filter_map(|item| match item {
+                Item::Cluster(cluster) => Some(cluster.id()),
+                Item::Point { .. } => None,
+            })
+            .collect();
+
+        assert_eq!(ids.len(), 1);
+
+        for id in ids {
+            assert_eq!(
+                below.cluster_expansion_zoom(id),
+                at.cluster_expansion_zoom(id)
+            );
+        }
+    }
+
+    #[test]
     fn test_clusters_has_the_center_of_the_cluster() {
         let supercluster = load(16, &[(10.0, 50.0, true), (12.0, 50.0, true)]);
         let items = supercluster.clusters([-180.0, -90.0, 180.0, 90.0], 0);
 
-        let [Item::Cluster(cluster)] = &items[..] else {
-            panic!("expected a single cluster");
-        };
+        let centers: Vec<_> = items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Cluster(cluster) => Some(cluster.center()),
+                Item::Point { .. } => None,
+            })
+            .collect();
 
-        let [lng, lat] = cluster.center();
+        assert_eq!((items.len(), centers.len()), (1, 1));
+
+        let [lng, lat] = centers[0];
 
         assert!((lng - 11.0).abs() < 1e-9);
         assert!((lat - 50.0).abs() < 1e-9);
