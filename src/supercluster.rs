@@ -1952,6 +1952,32 @@ mod tests {
     }
 
     #[test]
+    fn test_load_with_a_large_node_size() {
+        let points = create_spread_points(200);
+        let expected = load_spread_points(200);
+        let world = [-180.0, -90.0, 180.0, 90.0];
+
+        // A node size past the number of points makes every KD-tree a single leaf, which must not
+        // allocate by the node size, and finds the same clusters
+        for node_size in [1_000_000_000, usize::MAX] {
+            let options = SuperclusterOptions::builder()
+                .node_size(node_size)
+                .build()
+                .unwrap();
+            let supercluster =
+                Supercluster::load(options, points.clone(), |point| Some(*point)).unwrap();
+
+            for zoom in 0..=17 {
+                assert_eq!(
+                    supercluster.clusters(world, zoom).len(),
+                    expected.clusters(world, zoom).len(),
+                    "zoom {zoom}, node size {node_size}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_cluster_id_conversions() {
         let id = ClusterId::new(42);
 

@@ -140,7 +140,10 @@ impl KDBush {
     /// valid. `node_size` is the one the tree was built with.
     pub fn sort_leaves_by_key(&mut self, node_size: usize, keys: &mut [u8]) {
         if !self.ids.is_empty() {
-            let mut leaf = Vec::with_capacity(node_size + 1);
+            // A leaf holds at most `node_size + 1` points and never more than the tree, so a large
+            // `node_size` does not allocate past the points
+            let capacity = node_size.saturating_add(1).min(self.ids.len());
+            let mut leaf = Vec::with_capacity(capacity);
 
             self.sort_leaves(node_size, keys, &mut leaf, 0, self.ids.len() - 1);
         }
