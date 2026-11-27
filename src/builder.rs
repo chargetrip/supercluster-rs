@@ -1,254 +1,219 @@
 //! # Builder module
 //!
-//! This module contains the builder pattern for the supercluster configuration settings.
+//! This module contains the supercluster options and the builder that checks them.
 
-use std::{collections::HashMap, hash::BuildHasherDefault};
-
-use geojson::{feature::Id, Feature, Geometry, Value};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use twox_hash::XxHash64;
 
-use crate::CoordinateSystem;
+use crate::{CoordinateSystem, Error, MAX_ZOOM_LIMIT};
 
 /// Supercluster configuration options.
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub struct SuperclusterOptions {
+/// The options are valid by construction: only `Options::builder()`, `Default` and,
+/// with the `serde` feature, deserialization create them, and the first and last check the values.
+/// Their fields are private, so read them with the methods of the same names, and they cannot
+/// change once they are checked.
+#[derive(Clone, Debug, PartialEq)]
+// Written as the builder they are read as, so a format that reads values in the order they were
+// written, without their names, reads back the same types
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize),
+    serde(try_from = "OptionsBuilder", into = "OptionsBuilder")
+)]
+#[non_exhaustive]
+pub struct Options {
     /// Minimal zoom level to generate clusters on.
     /// The default value is 0.
-    pub min_zoom: u8,
+    pub(crate) min_zoom: u8,
 
     /// Maximal zoom level to cluster the points on.
     /// The default value is 16.
-    pub max_zoom: u8,
+    pub(crate) max_zoom: u8,
 
     /// Minimum points to form a cluster.
     /// The default value is 2.
-    pub min_points: u8,
+    pub(crate) min_points: u32,
 
     /// Cluster radius, in pixels.
     /// The default value is 40.0.
-    pub radius: f64,
+    pub(crate) radius: f64,
 
     /// Tile extent (radius is calculated relative to it).
-    /// The default value is 512.0.
-    pub extent: f64,
+    /// The default value is 512.
+    pub(crate) extent: u32,
 
     /// Size of the KD-tree leaf node, affects performance.
     /// The default value is 64.
-    pub node_size: usize,
+    pub(crate) node_size: usize,
 
     /// Type of coordinate system for clustering.
-    /// The default value is `CoordinateSystem::LatLng`.
-    pub coordinate_system: CoordinateSystem,
+    /// The default value is `CoordinateSystem::LngLat`.
+    pub(crate) coordinate_system: CoordinateSystem,
 }
 
-/// Feature configuration options builder.
-#[derive(Clone, Debug, Default, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub struct FeatureBuilder {
-    /// Points to cluster.
-    pub points: HashMap<String, Vec<f64>, BuildHasherDefault<XxHash64>>,
+impl Options {
+    /// Start building options. A value that is not set keeps its default.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use supercluster::Options;
+    ///
+    /// let options = Options::builder()
+    ///     .radius(60.0)
+    ///     .max_zoom(14)
+    ///     .build()?;
+    ///
+    /// assert_eq!(options.radius(), 60.0);
+    /// // The extent keeps its default
+    /// assert_eq!(options.extent(), 512);
+    /// # Ok::<(), supercluster::Error>(())
+    /// ```
+    #[must_use]
+    pub fn builder() -> OptionsBuilder {
+        OptionsBuilder::default()
+    }
+
+    /// Get the lowest zoom level to cluster on.
+    #[must_use]
+    pub fn min_zoom(&self) -> u8 {
+        self.min_zoom
+    }
+
+    /// Get the highest zoom level to cluster on.
+    #[must_use]
+    pub fn max_zoom(&self) -> u8 {
+        self.max_zoom
+    }
+
+    /// Get the fewest points that form a cluster.
+    #[must_use]
+    pub fn min_points(&self) -> u32 {
+        self.min_points
+    }
+
+    /// Get the cluster radius, in pixels.
+    #[must_use]
+    pub fn radius(&self) -> f64 {
+        self.radius
+    }
+
+    /// Get the size of a tile, in pixels, which the radius is relative to.
+    #[must_use]
+    pub fn extent(&self) -> u32 {
+        self.extent
+    }
+
+    /// Get the number of points in a leaf of the KD-tree.
+    #[must_use]
+    pub fn node_size(&self) -> usize {
+        self.node_size
+    }
+
+    /// Get the coordinate system of the points.
+    #[must_use]
+    pub fn coordinate_system(&self) -> &CoordinateSystem {
+        &self.coordinate_system
+    }
 }
 
-impl FeatureBuilder {
-    /// Create a new feature builder to set the points.
-    ///
-    /// # Returns
-    ///
-    /// New feature builder.
-    pub fn new() -> Self {
-        FeatureBuilder::default()
-    }
-
-    /// Add a point to the feature builder.
-    /// The point is a vector of two f64 values representing the longitude and latitude.
-    ///
-    /// # Arguments
-    ///
-    /// - `point`: Point to add to the feature builder.
-    ///
-    /// # Returns
-    ///
-    /// The feature builder.
-    pub fn add_point(mut self, point: Vec<f64>) -> Self {
-        self.points.insert(self.points.len().to_string(), point);
-        self
-    }
-
-    /// Add points to the feature builder.
-    /// The points are a vector of vectors of two f64 values representing the longitude and latitude.
-    ///
-    /// # Arguments
-    ///
-    /// - `points`: Points to add to the feature builder.
-    ///
-    /// # Returns
-    ///
-    /// The feature builder.
-    pub fn add_points(mut self, points: Vec<Vec<f64>>) -> Self {
-        for point in points {
-            self.points.insert(self.points.len().to_string(), point);
+impl Default for Options {
+    /// Create the default options.
+    fn default() -> Self {
+        Options {
+            min_zoom: 0,
+            max_zoom: 16,
+            min_points: 2,
+            radius: 40.0,
+            extent: 512,
+            node_size: 64,
+            coordinate_system: CoordinateSystem::LngLat,
         }
-        self
-    }
-
-    /// Build a list of features.
-    ///
-    /// # Returns
-    ///
-    /// List of features.
-    pub fn build(self) -> Vec<Feature> {
-        self.points
-            .into_iter()
-            .map(|(id, point)| Feature {
-                id: Some(Id::String(id)),
-                geometry: Some(Geometry::new(Value::Point(point))),
-                bbox: None,
-                properties: None,
-                foreign_members: None,
-            })
-            .collect()
     }
 }
 
-/// Supercluster configuration options builder.
+/// Builder of the supercluster options, which checks the values when it builds them. Serde reads
+/// the options through it, and rejects a field it does not know, so a misspelled option gives an
+/// error instead of its default.
 #[derive(Clone, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub struct SuperclusterBuilder {
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
+pub struct OptionsBuilder {
     /// Minimal zoom level to generate clusters on.
-    /// The default value is 0.
-    pub min_zoom: Option<u8>,
+    min_zoom: Option<u8>,
 
     /// Maximal zoom level to cluster the points on.
-    /// The default value is 16.
-    pub max_zoom: Option<u8>,
+    max_zoom: Option<u8>,
 
     /// Minimum points to form a cluster.
-    /// The default value is 2.
-    pub min_points: Option<u8>,
+    min_points: Option<u32>,
 
     /// Cluster radius, in pixels.
-    /// The default value is 40.0.
-    pub radius: Option<f64>,
+    radius: Option<f64>,
 
     /// Tile extent (radius is calculated relative to it).
-    /// The default value is 512.0.
-    pub extent: Option<f64>,
+    extent: Option<u32>,
 
-    /// Size of the KD-tree leaf node, affects performance.
-    /// The default value is 64.
-    pub node_size: Option<usize>,
+    /// Size of the KD-tree leaf node.
+    node_size: Option<usize>,
 
     /// Type of coordinate system for clustering.
-    /// The default value is `CoordinateSystem::LatLng`.
-    pub coordinate_system: Option<CoordinateSystem>,
+    coordinate_system: Option<CoordinateSystem>,
 }
 
-impl SuperclusterBuilder {
-    /// Create a new supercluster options builder to set the options.
-    ///
-    /// # Returns
-    ///
-    /// New supercluster options builder.
-    pub fn new() -> Self {
-        SuperclusterBuilder::default()
-    }
-
-    /// Set the minimal zoom level to generate clusters on.
-    ///
-    /// # Arguments
-    ///
-    /// - `min_zoom`: Minimal zoom level to generate clusters on.
-    ///
-    /// # Returns
-    ///
-    /// The supercluster options builder.
+impl OptionsBuilder {
+    /// Set the lowest zoom level to cluster on. The default is 0, and `build` rejects one above the
+    /// maximum zoom level.
+    #[must_use]
     pub fn min_zoom(mut self, min_zoom: u8) -> Self {
         self.min_zoom = Some(min_zoom);
         self
     }
 
-    /// Set the maximal zoom level to cluster the points on.
-    ///
-    /// # Arguments
-    ///
-    /// - `max_zoom`: Maximal zoom level to cluster the points on.
-    ///
-    /// # Returns
-    ///
-    /// The supercluster options builder.
+    /// Set the highest zoom level to cluster on. Above it, a tile shows the points. The default is
+    /// 16, and `build` rejects one above `MAX_ZOOM_LIMIT`, which is 30.
+    #[must_use]
     pub fn max_zoom(mut self, max_zoom: u8) -> Self {
         self.max_zoom = Some(max_zoom);
         self
     }
 
-    /// Set the minimum points to form a cluster.
-    ///
-    /// # Arguments
-    ///
-    /// - `min_points`: Minimum points to form a cluster.
-    ///
-    /// # Returns
-    ///
-    /// The supercluster options builder.
-    pub fn min_points(mut self, min_points: u8) -> Self {
+    /// Set the fewest points that form a cluster. The default is 2.
+    #[must_use]
+    pub fn min_points(mut self, min_points: u32) -> Self {
         self.min_points = Some(min_points);
         self
     }
 
-    /// Set the cluster radius in pixels.
-    ///
-    /// # Arguments
-    ///
-    /// - `radius`: Cluster radius in pixels.
-    ///
-    /// # Returns
-    ///
-    /// The supercluster options builder.
+    /// Set the cluster radius, in pixels of a tile of `extent` pixels. The default is 40.0, and
+    /// `build` rejects a radius that is not a finite number above 0, or that makes the extent plus
+    /// the radius above `i32::MAX`.
+    #[must_use]
     pub fn radius(mut self, radius: f64) -> Self {
         self.radius = Some(radius);
         self
     }
 
-    /// Set the tile extent (radius is calculated relative to it).
-    ///
-    /// # Arguments
-    ///
-    /// - `extent`: Tile extent (radius is calculated relative to it).
-    ///
-    /// # Returns
-    ///
-    /// The supercluster options builder.
-    pub fn extent(mut self, extent: f64) -> Self {
+    /// Set the size of a tile, in pixels, which the radius is relative to. The default is 512, and
+    /// `build` rejects 0 and an extent above `i32::MAX`.
+    #[must_use]
+    pub fn extent(mut self, extent: u32) -> Self {
         self.extent = Some(extent);
         self
     }
 
-    /// Set the size of the KD-tree leaf node, affects performance.
-    ///
-    /// # Arguments
-    ///
-    /// - `node_size`: Size of the KD-tree leaf node, affects performance.
-    ///
-    /// # Returns
-    ///
-    /// The supercluster options builder.
+    /// Set the number of points in a leaf of the KD-tree, which affects speed. The default is 64,
+    /// and `build` rejects 0.
+    #[must_use]
     pub fn node_size(mut self, node_size: usize) -> Self {
         self.node_size = Some(node_size);
         self
     }
 
-    /// Set the type of coordinate system for clustering.
-    ///
-    /// # Arguments
-    ///
-    /// - `coordinate_system`: Type of coordinate system for clustering.
-    ///
-    /// # Returns
-    ///
-    /// The supercluster options builder.
+    /// Set the coordinate system of the points: `LngLat` for longitudes and latitudes, which is the
+    /// default, or `Cartesian` for other 2D data. `build` rejects a `DataRange` that cannot scale
+    /// the data.
+    #[must_use]
     pub fn coordinate_system(mut self, coordinate_system: CoordinateSystem) -> Self {
         self.coordinate_system = Some(coordinate_system);
         self
@@ -256,67 +221,304 @@ impl SuperclusterBuilder {
 
     /// Build the supercluster options.
     ///
-    /// # Returns
+    /// # Errors
     ///
-    /// The supercluster options.
-    pub fn build(self) -> SuperclusterOptions {
-        SuperclusterOptions {
-            min_zoom: self.min_zoom.unwrap_or(0),
-            max_zoom: self.max_zoom.unwrap_or(16),
-            min_points: self.min_points.unwrap_or(2),
-            radius: self.radius.unwrap_or(40.0),
-            extent: self.extent.unwrap_or(512.0),
-            node_size: self.node_size.unwrap_or(64),
-            coordinate_system: self.coordinate_system.unwrap_or(CoordinateSystem::LatLng),
+    /// - `InvalidMaxZoom` if the maximum zoom level is above `MAX_ZOOM_LIMIT`.
+    /// - `InvalidMinZoom` if the minimum zoom level is above the maximum zoom level.
+    /// - `InvalidRadius` if the radius is not a finite number above 0, or if the extent plus the
+    ///   radius is above `i32::MAX`, which the positions in a tile could then not hold.
+    /// - `InvalidExtent` if the extent is 0 or above `i32::MAX`.
+    /// - `InvalidNodeSize` if the node size is 0.
+    /// - `InvalidDataRange` if the `DataRange` of the `Cartesian` coordinate system cannot scale the
+    ///   data.
+    pub fn build(self) -> Result<Options, Error> {
+        let defaults = Options::default();
+        let options = Options {
+            min_zoom: self.min_zoom.unwrap_or(defaults.min_zoom),
+            max_zoom: self.max_zoom.unwrap_or(defaults.max_zoom),
+            min_points: self.min_points.unwrap_or(defaults.min_points),
+            radius: self.radius.unwrap_or(defaults.radius),
+            extent: self.extent.unwrap_or(defaults.extent),
+            node_size: self.node_size.unwrap_or(defaults.node_size),
+            coordinate_system: self.coordinate_system.unwrap_or(defaults.coordinate_system),
+        };
+
+        if options.max_zoom > MAX_ZOOM_LIMIT {
+            return Err(Error::InvalidMaxZoom);
+        }
+
+        if options.min_zoom > options.max_zoom {
+            return Err(Error::InvalidMinZoom);
+        }
+
+        if !is_positive(options.radius) {
+            return Err(Error::InvalidRadius);
+        }
+
+        if options.extent == 0 || options.extent > i32::MAX as u32 {
+            return Err(Error::InvalidExtent);
+        }
+
+        // An item of a tile is at most the radius outside it, and its position is an `i32`, so the
+        // extent plus the radius must fit one
+        if f64::from(options.extent) + options.radius > f64::from(i32::MAX) {
+            return Err(Error::InvalidRadius);
+        }
+
+        if options.node_size == 0 {
+            return Err(Error::InvalidNodeSize);
+        }
+
+        if let CoordinateSystem::Cartesian { range } = &options.coordinate_system {
+            if !range.is_valid() {
+                return Err(Error::InvalidDataRange);
+            }
+        }
+
+        Ok(options)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<OptionsBuilder> for Options {
+    type Error = Error;
+
+    fn try_from(builder: OptionsBuilder) -> Result<Self, Self::Error> {
+        builder.build()
+    }
+}
+
+// The builder with every value of the options set, which the options are written as
+#[cfg(feature = "serde")]
+impl From<Options> for OptionsBuilder {
+    fn from(options: Options) -> Self {
+        OptionsBuilder {
+            min_zoom: Some(options.min_zoom),
+            max_zoom: Some(options.max_zoom),
+            min_points: Some(options.min_points),
+            radius: Some(options.radius),
+            extent: Some(options.extent),
+            node_size: Some(options.node_size),
+            coordinate_system: Some(options.coordinate_system),
         }
     }
+}
+
+/// Setting a field of the options does not compile outside the crate, because it would skip the
+/// checks of the builder. This item only exists for the doc tests, so the documentation does not
+/// show code that fails.
+///
+/// ```compile_fail,E0616
+/// let mut options = supercluster::Options::default();
+///
+/// options.node_size = 0;
+/// ```
+#[cfg(doctest)]
+struct OptionsCannotChange;
+
+/// Check whether a value is a finite number above 0, which `NaN` is not.
+fn is_positive(value: f64) -> bool {
+    value.is_finite() && value > 0.0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_feature_builder_default() {
-        let features = FeatureBuilder::default()
-            .add_point(vec![0.0, 0.0])
-            .add_points(vec![vec![0.0, 1.0]])
-            .build();
+    use crate::DataRange;
 
-        assert_eq!(features.len(), 2);
+    #[test]
+    fn test_options_are_equal_with_the_same_values() {
+        let options = Options::builder().radius(60.0).build().unwrap();
+
+        assert_eq!(options, options.clone());
+        assert_eq!(Options::default(), Options::default());
+        assert_ne!(options, Options::default());
     }
 
     #[test]
-    fn test_supercluster_builder_default() {
-        let options = SuperclusterBuilder::default().build();
+    fn test_default() {
+        let options = Options::default();
 
         assert_eq!(options.min_zoom, 0);
         assert_eq!(options.max_zoom, 16);
         assert_eq!(options.min_points, 2);
         assert_eq!(options.radius, 40.0);
-        assert_eq!(options.extent, 512.0);
+        assert_eq!(options.extent, 512);
         assert_eq!(options.node_size, 64);
-        assert_eq!(options.coordinate_system, CoordinateSystem::LatLng);
+        assert_eq!(options.coordinate_system, CoordinateSystem::LngLat);
     }
 
     #[test]
-    fn test_supercluster_builder() {
-        let options = SuperclusterBuilder::new()
+    fn test_build_without_values() {
+        let options = Options::builder().build().unwrap();
+        let defaults = Options::default();
+
+        assert_eq!(options.max_zoom, defaults.max_zoom);
+        assert_eq!(options.radius, defaults.radius);
+    }
+
+    #[test]
+    fn test_build() {
+        let options = Options::builder()
             .min_zoom(1)
             .max_zoom(10)
             .min_points(5)
             .radius(50.0)
-            .extent(1024.0)
+            .extent(1024)
             .node_size(128)
-            .coordinate_system(CoordinateSystem::LatLng)
-            .build();
+            .coordinate_system(CoordinateSystem::LngLat)
+            .build()
+            .unwrap();
 
         assert_eq!(options.min_zoom, 1);
         assert_eq!(options.max_zoom, 10);
         assert_eq!(options.min_points, 5);
         assert_eq!(options.radius, 50.0);
-        assert_eq!(options.extent, 1024.0);
+        assert_eq!(options.extent, 1024);
         assert_eq!(options.node_size, 128);
-        assert_eq!(options.coordinate_system, CoordinateSystem::LatLng);
+        assert_eq!(options.coordinate_system, CoordinateSystem::LngLat);
+    }
+
+    #[test]
+    fn test_build_with_invalid_max_zoom() {
+        assert_eq!(
+            Options::builder().max_zoom(u8::MAX).build().err(),
+            Some(Error::InvalidMaxZoom)
+        );
+    }
+
+    #[test]
+    fn test_build_with_invalid_min_zoom() {
+        assert_eq!(
+            Options::builder().min_zoom(10).max_zoom(5).build().err(),
+            Some(Error::InvalidMinZoom)
+        );
+    }
+
+    #[test]
+    fn test_build_with_invalid_radius() {
+        for radius in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                Options::builder().radius(radius).build().err(),
+                Some(Error::InvalidRadius)
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_with_invalid_extent() {
+        for extent in [0, i32::MAX as u32 + 1, u32::MAX] {
+            assert_eq!(
+                Options::builder().extent(extent).build().err(),
+                Some(Error::InvalidExtent)
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_with_positions_past_an_i32() {
+        let build = |extent: u32, radius: f64| {
+            Options::builder()
+                .extent(extent)
+                .radius(radius)
+                .build()
+                .err()
+        };
+
+        // The positions of a tile reach the extent plus the radius
+        assert_eq!(build(i32::MAX as u32, 1.0), Some(Error::InvalidRadius));
+        assert_eq!(build(512, 3e9), Some(Error::InvalidRadius));
+        assert_eq!(build(i32::MAX as u32 - 40, 40.0), None);
+    }
+
+    #[test]
+    fn test_build_with_invalid_node_size() {
+        assert_eq!(
+            Options::builder().node_size(0).build().err(),
+            Some(Error::InvalidNodeSize)
+        );
+    }
+
+    #[test]
+    fn test_build_with_invalid_data_range() {
+        let range = DataRange::new(5.0, 5.0, 5.0, 5.0);
+
+        assert_eq!(
+            Options::builder()
+                .coordinate_system(CoordinateSystem::Cartesian { range })
+                .build()
+                .err(),
+            Some(Error::InvalidDataRange)
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_options_from_json_with_invalid_node_size() {
+        let options = serde_json::from_str::<Options>(r#"{ "node_size": 0 }"#);
+
+        assert!(options
+            .unwrap_err()
+            .to_string()
+            .contains("The node size cannot be 0."));
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_options_from_json_with_an_unknown_field() {
+        let options = serde_json::from_str::<Options>(r#"{ "raduis": 80.0 }"#);
+
+        assert!(options
+            .unwrap_err()
+            .to_string()
+            .contains("unknown field `raduis`"));
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_options_from_json_with_an_unknown_field_in_the_coordinate_system() {
+        let in_range = serde_json::from_str::<Options>(
+            r#"{ "coordinate_system": { "Cartesian": { "range": {
+                "min_x": 0.0, "min_y": 0.0, "max_x": 1.0, "max_y": 1.0, "max_z": 5.0
+            } } } }"#,
+        );
+        let in_variant = serde_json::from_str::<Options>(
+            r#"{ "coordinate_system": { "Cartesian": {
+                "range": { "min_x": 0.0, "min_y": 0.0, "max_x": 1.0, "max_y": 1.0 },
+                "ranges": 1
+            } } }"#,
+        );
+
+        assert!(in_range
+            .unwrap_err()
+            .to_string()
+            .contains("unknown field `max_z`"));
+        assert!(in_variant
+            .unwrap_err()
+            .to_string()
+            .contains("unknown field `ranges`"));
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_options_from_json() {
+        let options: Options = serde_json::from_str(
+            r#"{
+                "radius": 40.0,
+                "extent": 512,
+                "min_points": 1,
+                "node_size": 64,
+                "min_zoom": 2,
+                "max_zoom": 16,
+                "coordinate_system": "LngLat"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(options.min_zoom, 2);
+        assert_eq!(options.max_zoom, 16);
+        assert_eq!(options.min_points, 1);
+        assert_eq!(options.coordinate_system, CoordinateSystem::LngLat);
     }
 }

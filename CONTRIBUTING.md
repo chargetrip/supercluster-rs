@@ -64,24 +64,50 @@ cargo build
 
 ### Testing the project
 
-To run the tests with all features, use:
+To run the tests with all features, including the README examples as doc tests, use:
 
 ```sh
 cargo test --all-features
 ```
 
+To run the tests without any feature, use:
+
+```sh
+cargo test
+```
+
 To run the tests with a specific feature, use:
 
 ```sh
-cargo test --features cluster_metadata
+cargo test --features geojson
+```
+
+The crate must also build with every combination of features, which CI checks with:
+
+```sh
+for features in geojson serde tracing "geojson serde tracing"; do
+  cargo check --locked --all-targets --no-default-features --features "$features"
+done
+```
+
+To run a single unit test or integration test while you work, filter by name instead of running the
+whole suite:
+
+```sh
+# A unit test, in src/**/mod tests
+cargo test --lib test_tile_without_loaded_points
+
+# An integration test, in tests/<file>.rs
+cargo test --test test_supercluster test_cluster_expansion_zoom
 ```
 
 ### Code Quality Checks
 
-Run [clippy](https://github.com/rust-lang/rust-clippy) to lint the code:
+Run [clippy](https://github.com/rust-lang/rust-clippy) to lint the code. `--all-targets` skips the benchmarks that `cargo bench` runs only by name, so the second command lints every benchmark:
 
 ```sh
 cargo clippy --locked --all-targets --all-features --no-deps -- -D warnings
+cargo clippy --locked --bench '*' --all-features --no-deps -- -D warnings
 ```
 
 Run [rustfmt](https://github.com/rust-lang/rustfmt) to format the code:
@@ -90,13 +116,42 @@ Run [rustfmt](https://github.com/rust-lang/rustfmt) to format the code:
 cargo fmt
 ```
 
+Check formatting without changing any files, as CI does:
+
+```sh
+cargo fmt -- --check
+```
+
 ### Documentation
 
-Generate documentation in HTML format:
+Generate the documentation in HTML format, including the items behind features:
 
 ```bash
-cargo doc --open
+cargo doc --all-features --open
 ```
+
+CI also fails the build on any rustdoc warning, such as a missing doc comment:
+
+```sh
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features
+```
+
+### Coverage
+
+CI measures test coverage with [`cargo-tarpaulin`](https://github.com/xd009642/tarpaulin). To run it
+locally, install it once:
+
+```sh
+cargo install --locked cargo-tarpaulin
+```
+
+Then run the same check CI runs. It leaves the benchmarks out, because tests cannot run them:
+
+```sh
+cargo tarpaulin --tests --bins --all-targets --all-features --locked --exclude-files "benches/*"
+```
+
+Where the default engine does not run, for example on ARM Linux, add `--engine llvm`.
 
 ### Benchmarks
 
@@ -106,16 +161,36 @@ The project uses [`criterion`](https://bheisler.github.io/criterion.rs/book/inde
 To run a benchmark against the changes you have made, for example, you can run;
 
 ```sh
-cd benches
-
-# Run all benchmarks
-cargo bench
+# Run all benchmarks, which need the `geojson` feature
+cargo bench --features geojson
 
 # Run all tests in the `benches/supercluster_bench.rs` file
-cargo bench --bench supercluster_bench
+cargo bench --features geojson --bench supercluster_bench
+
+# Run only the benchmarks with a million points, which are slow
+cargo bench --features geojson --bench supercluster_bench -- "one million points"
+
+# Compare with version 3.0.8, which `cargo bench` runs only when `--bench` names it, because it is slow
+cargo bench --features geojson --bench v3_comparison_bench
 
 # After running benches, you can check the statistics under `target/criterion`
+
+# Print the table of "What a request costs" in the README, on every zoom level, to the terminal.
+# It does not use criterion, so it writes nothing under `target/criterion`
+cargo bench --bench request_cost_bench
 ```
+
+They measure:
+
+- **Getting a tile:** retrieving a tile from a supercluster.
+- **Getting clusters:** retrieving clusters for a given bounding box and zoom level.
+- **Loading points:** loading points into a supercluster.
+- **Filtering tiles:** filtering a tile with a `Filter`, with a `CachedFilter` that `cache_filter` made, and with a combined filter of cached filters.
+- **One million points:** loading a million points, and getting and filtering tiles from them.
+- **Comparison with version 3:** loading and the queries of version 3.0.8, on the same points. It runs only when `--bench` names it.
+- **What a request costs:** the table of [What a request costs](https://github.com/chargetrip/supercluster-rs#what-a-request-costs) in the README, on every zoom level. It runs only when `--bench` names it.
+
+See the [`benches` directory](https://github.com/chargetrip/supercluster-rs/tree/main/benches) for the details of each scenario.
 
 ## Examples
 

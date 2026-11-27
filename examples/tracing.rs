@@ -1,0 +1,38 @@
+//! Run it with `cargo run --example tracing --features geojson,tracing` to see what a load reports.
+//! An application that only uses the `log` crate sees the same as log records.
+
+use geojson::{Feature, Geometry};
+use supercluster::{CoordinateSystem, Options, Supercluster};
+
+fn main() -> Result<(), supercluster::Error> {
+    // Print every event of the supercluster, down to the trace level
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .init();
+
+    // Create a list of features
+    let mut features: Vec<Feature> = [[-77.032, 38.913], [-77.033, 38.913], [-77.034, 38.913]]
+        .into_iter()
+        .map(|point| Feature::from(Geometry::new_point(point)))
+        .collect();
+
+    // A feature without a point has no coordinates, so it is left out and the summary of the load counts it
+    features.push(Feature::default());
+
+    // Set the configuration settings
+    let options = Options::builder()
+        .radius(40.0)
+        .extent(512)
+        .min_points(2)
+        .max_zoom(16)
+        .coordinate_system(CoordinateSystem::LngLat)
+        .build()?;
+
+    // Load the features into a new supercluster
+    let supercluster = Supercluster::load_features(options, features)?;
+
+    // Querying does not log anything
+    let _ = supercluster.tile(0, 0, 0);
+
+    Ok(())
+}
