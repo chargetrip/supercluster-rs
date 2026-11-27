@@ -6,7 +6,7 @@
 use std::sync::Mutex;
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
-use supercluster::{Supercluster, SuperclusterOptions};
+use supercluster::{Options, Supercluster};
 
 /// Keeps the log records in memory.
 struct MemoryLogger {
@@ -42,7 +42,7 @@ fn test_load_is_logged_without_a_tracing_subscriber() {
     // A point that is `None` has no coordinates, and one that is NaN has coordinates that are not
     // finite numbers
     Supercluster::load(
-        SuperclusterOptions::default(),
+        Options::default(),
         vec![
             Some([10.0, 50.0]),
             Some([10.0001, 50.0]),

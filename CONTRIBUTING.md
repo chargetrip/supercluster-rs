@@ -174,7 +174,23 @@ cargo bench --features geojson --bench supercluster_bench -- "one million points
 cargo bench --features geojson --bench v3_comparison_bench
 
 # After running benches, you can check the statistics under `target/criterion`
+
+# Print the table of "What a request costs" in the README, on every zoom level, to the terminal.
+# It does not use criterion, so it writes nothing under `target/criterion`
+cargo bench --bench request_cost_bench
 ```
+
+They measure:
+
+- **Getting a tile:** retrieving a tile from a supercluster.
+- **Getting clusters:** retrieving clusters for a given bounding box and zoom level.
+- **Loading points:** loading points into a supercluster.
+- **Filtering tiles:** filtering a tile with a `Filter`, with a `CachedFilter` that `cache_filter` made, and with a combined filter of cached filters.
+- **One million points:** loading a million points, and getting and filtering tiles from them.
+- **Comparison with version 3:** loading and the queries of version 3.0.8, on the same points. It runs only when `--bench` names it.
+- **What a request costs:** the table of [What a request costs](https://github.com/chargetrip/supercluster-rs#what-a-request-costs) in the README, on every zoom level. It runs only when `--bench` names it.
+
+See the [`benches` directory](https://github.com/chargetrip/supercluster-rs/tree/main/benches) for the details of each scenario.
 
 ## Examples
 

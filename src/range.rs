@@ -34,14 +34,14 @@ impl DataRange {
     /// # Examples
     ///
     /// ```
-    /// use supercluster::{CoordinateSystem, DataRange, SuperclusterOptions};
+    /// use supercluster::{CoordinateSystem, DataRange, Options};
     ///
     /// // A microscope image of 2048 by 1024 pixels
     /// let range = DataRange::new(0.0, 0.0, 2048.0, 1024.0);
-    /// let options = SuperclusterOptions::builder()
+    /// let options = Options::builder()
     ///     .coordinate_system(CoordinateSystem::Cartesian { range })
     ///     .build()?;
-    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// # Ok::<(), supercluster::Error>(())
     /// ```
     #[must_use]
     pub fn new(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Self {

@@ -7,9 +7,7 @@ use std::sync::{
     Arc, Mutex, PoisonError, RwLock,
 };
 
-use supercluster::{
-    CachedFilter, CombinedFilter, Item, Supercluster, SuperclusterError, SuperclusterOptions,
-};
+use supercluster::{CachedFilter, CombinedFilter, Item, Options, Supercluster};
 
 /// A charging station.
 struct Station {
@@ -62,7 +60,7 @@ fn handle_tile(
     state: &State,
     (z, x, y): (u8, u32, u32),
     only_fast: bool,
-) -> Result<Vec<([f64; 2], u32)>, SuperclusterError> {
+) -> Result<Vec<([f64; 2], u32)>, supercluster::Error> {
     let index = current(state);
 
     // A combined filter per request, which the query evaluates on the stations of the tile only.
@@ -110,7 +108,7 @@ fn refresh_availability(state: &State) {
     *state.index.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(refreshed);
 }
 
-fn main() -> Result<(), SuperclusterError> {
+fn main() -> Result<(), supercluster::Error> {
     let station = |name, lng, lat, power_kw, available| Station {
         name,
         lng,
@@ -119,7 +117,7 @@ fn main() -> Result<(), SuperclusterError> {
         available: AtomicBool::new(available),
     };
     let supercluster = Arc::new(Supercluster::load(
-        SuperclusterOptions::default(),
+        Options::default(),
         vec![
             station("Dam", 4.8936, 52.3731, 150, true),
             station("Leidseplein", 4.8828, 52.3643, 11, true),

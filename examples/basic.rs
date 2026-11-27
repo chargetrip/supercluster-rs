@@ -1,5 +1,5 @@
 use geojson::{Feature, Geometry, JsonObject, JsonValue};
-use supercluster::{CoordinateSystem, Supercluster, SuperclusterError, SuperclusterOptions};
+use supercluster::{CoordinateSystem, Options, Supercluster};
 
 /// Create a point feature with a name.
 fn create_point(lng: f64, lat: f64, name: &str) -> Feature {
@@ -14,7 +14,7 @@ fn create_point(lng: f64, lat: f64, name: &str) -> Feature {
     }
 }
 
-fn main() -> Result<(), SuperclusterError> {
+fn main() -> Result<(), supercluster::Error> {
     // Create a few points as GeoJSON features
     let features = vec![
         create_point(102.0, 0.5, "Point 1"),
@@ -23,7 +23,7 @@ fn main() -> Result<(), SuperclusterError> {
     ];
 
     // Set the configuration settings
-    let options = SuperclusterOptions::builder()
+    let options = Options::builder()
         .radius(40.0)
         .extent(512)
         .min_points(2)

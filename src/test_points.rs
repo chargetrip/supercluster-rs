@@ -2,7 +2,7 @@
 //!
 //! Contains the points that the tests of several modules share.
 
-use crate::{Supercluster, SuperclusterOptions};
+use crate::{Options, Supercluster};
 
 /// Create points spread over the world with a fixed formula, so every run uses the same points.
 pub(crate) fn create_spread_points(count: usize) -> Vec<[f64; 2]> {
@@ -18,11 +18,9 @@ pub(crate) fn create_spread_points(count: usize) -> Vec<[f64; 2]> {
 
 /// Load the points spread over the world with the default options.
 pub(crate) fn load_spread_points(count: usize) -> Supercluster<[f64; 2]> {
-    Supercluster::load(
-        SuperclusterOptions::default(),
-        create_spread_points(count),
-        |point| Some(*point),
-    )
+    Supercluster::load(Options::default(), create_spread_points(count), |point| {
+        Some(*point)
+    })
     .unwrap()
 }
 

@@ -1,7 +1,6 @@
-//! Time one request for a busy tile at every zoom level from 0 to 30, for "CCS or CHAdeMO, at least
-//! 50 kW, available", four ways: a `Filter`, cached filters combined and cached per request, cached
-//! filters combined lazily per request, and a cached combined filter. It prints the table that
-//! "What a request costs" in the README sums up. Run it with:
+//! Time one filtered tile, `with_filter(filter).tile(z, x, y)` then reading every item, at every
+//! zoom level from 0 to 30, for each filter of "What a request costs" in the README. The last
+//! column, `cache()` per request, is not in the README. Run it with:
 //!
 //! ```sh
 //! cargo bench --bench request_cost_bench
@@ -13,7 +12,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use supercluster::{Item, Supercluster, SuperclusterOptions};
+use supercluster::{Item, Options, Supercluster};
 
 // Only `read_items` of the shared helpers serves this benchmark, which makes its own points
 #[allow(dead_code)]
@@ -153,9 +152,9 @@ fn duration(micros: f64) -> String {
     }
 }
 
-/// Write a duration and how many times faster it is than the closure, or slower below 1.
-fn compared(micros: f64, closure: f64) -> String {
-    let factor = closure / micros;
+/// Write a duration and how many times faster it is than the `Filter`, or slower below 1.
+fn compared(micros: f64, filter_micros: f64) -> String {
+    let factor = filter_micros / micros;
     let factor = if factor >= 10.0 {
         thousands(factor.round() as u64)
     } else {
@@ -191,7 +190,7 @@ fn main() {
     let (stations, busiest) = create_stations(count);
 
     println!("{} points", thousands(count as u64));
-    let supercluster = Supercluster::load(SuperclusterOptions::default(), stations, |station| {
+    let supercluster = Supercluster::load(Options::default(), stations, |station| {
         Some([station.lng, station.lat])
     })
     .unwrap();
@@ -205,9 +204,13 @@ fn main() {
     let chademo = supercluster.cache_filter(|station| station.connectors & CHADEMO != 0);
     let fast = supercluster.cache_filter(|station| station.power_kw >= 50);
     let available = supercluster.cache_filter(|station| station.available);
-    let cached = ccs.or(&chademo).and(&fast).and(&available).cache();
 
-    println!("| Zoom | Points under the tile | Filter | Cached per query | Combined filter | Cached filter |");
+    // Cached before the requests
+    let cached_in_advance = ccs.or(&chademo).and(&fast).and(&available).cache();
+
+    println!(
+        "| Zoom | Points under the tile | `Filter` | `CombinedFilter` | `CombinedFilter` with `cache()` in advance | `CombinedFilter` with `cache()` per request |"
+    );
     println!("| ---: | ---: | ---: | ---: | ---: | ---: |");
 
     for z in 0..=max_zoom.min(30) {
@@ -222,7 +225,7 @@ fn main() {
             })
             .sum();
 
-        let closure = time(|| {
+        let filter_micros = time(|| {
             read_items(
                 &supercluster
                     .with_filter(supercluster.filter(wanted))
@@ -232,19 +235,7 @@ fn main() {
                 true,
             )
         });
-        let computed = time(|| {
-            let cached_now = ccs.or(&chademo).and(&fast).and(&available).cache();
-
-            read_items(
-                &supercluster
-                    .with_filter(&cached_now)
-                    .unwrap()
-                    .tile(z, x, y)
-                    .items,
-                true,
-            )
-        });
-        let lazy = time(|| {
+        let combined_micros = time(|| {
             let combined = ccs.or(&chademo).and(&fast).and(&available);
 
             read_items(
@@ -256,10 +247,22 @@ fn main() {
                 true,
             )
         });
-        let reused = time(|| {
+        let cached_in_advance_micros = time(|| {
             read_items(
                 &supercluster
-                    .with_filter(&cached)
+                    .with_filter(&cached_in_advance)
+                    .unwrap()
+                    .tile(z, x, y)
+                    .items,
+                true,
+            )
+        });
+        let cached_per_request_micros = time(|| {
+            let cached_per_request = ccs.or(&chademo).and(&fast).and(&available).cache();
+
+            read_items(
+                &supercluster
+                    .with_filter(&cached_per_request)
                     .unwrap()
                     .tile(z, x, y)
                     .items,
@@ -270,10 +273,10 @@ fn main() {
         println!(
             "| {z} | {} | {} | {} | {} | {} |",
             thousands(under),
-            duration(closure),
-            compared(computed, closure),
-            compared(lazy, closure),
-            compared(reused, closure),
+            duration(filter_micros),
+            compared(combined_micros, filter_micros),
+            compared(cached_in_advance_micros, filter_micros),
+            compared(cached_per_request_micros, filter_micros),
         );
     }
 }

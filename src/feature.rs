@@ -17,10 +17,7 @@ use geojson::{
 };
 use serde::{ser::SerializeMap, Serialize, Serializer};
 
-use crate::{
-    supercluster::Cluster, Item, Supercluster, SuperclusterError, SuperclusterOptions, Tile,
-    TileItem,
-};
+use crate::{supercluster::Cluster, Error, Item, Options, Supercluster, Tile, TileItem};
 
 impl<P: Borrow<Feature>> Supercluster<P> {
     /// Load GeoJSON features into a new supercluster, like `load`. A feature can be shared, such as
@@ -34,30 +31,27 @@ impl<P: Borrow<Feature>> Supercluster<P> {
     ///
     /// # Errors
     ///
-    /// Returns `SuperclusterError::TooManyPoints` if there are more than `MAX_POINTS` features.
+    /// Returns `Error::TooManyPoints` if there are more than `MAX_POINTS` features.
     ///
     /// # Examples
     ///
     /// ```
     /// use geojson::{Feature, Geometry};
-    /// use supercluster::{Supercluster, SuperclusterOptions};
+    /// use supercluster::{Supercluster, Options};
     ///
     /// let features: Vec<Feature> = [[-77.032, 38.913], [-77.033, 38.913]]
     ///     .into_iter()
     ///     .map(|point| Feature::from(Geometry::new_point(point)))
     ///     .collect();
     ///
-    /// let supercluster = Supercluster::load_features(SuperclusterOptions::default(), features)?;
+    /// let supercluster = Supercluster::load_features(Options::default(), features)?;
     ///
     /// let tile = supercluster.tile(0, 0, 0).to_feature_collection();
     ///
     /// assert_eq!(tile.features.len(), 1);
-    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// # Ok::<(), supercluster::Error>(())
     /// ```
-    pub fn load_features(
-        options: SuperclusterOptions,
-        features: Vec<P>,
-    ) -> Result<Self, SuperclusterError> {
+    pub fn load_features(options: Options, features: Vec<P>) -> Result<Self, Error> {
         Self::load(options, features, |feature| {
             get_coordinates(feature.borrow())
         })
@@ -120,7 +114,8 @@ impl Cluster<'_> {
 }
 
 impl<P: Borrow<Feature>> Item<'_, P> {
-    /// Convert the item into a GeoJSON feature.
+    /// Convert the item into a GeoJSON feature: a cluster at its center, with the properties
+    /// `cluster`, `cluster_id` and `point_count`, or the point as it was loaded.
     #[must_use]
     pub fn to_feature(&self) -> Feature {
         match self {
@@ -154,11 +149,11 @@ impl<P: Borrow<Feature>> TileItem<'_, P> {
 impl<'a, P: Borrow<Feature>> Tile<'a, P> {
     /// Convert the tile into a GeoJSON feature collection, with the position of each item in the
     /// tile as its geometry. In a filtered tile, a cluster is at the center of the points that
-    /// pass, and its `point_count` counts the points that pass. Use it to change the features
-    /// before you send them.
+    /// pass, and its `point_count` counts the points that pass. The features it returns are owned,
+    /// so they can be changed.
     ///
-    /// A `geojson` geometry holds floats, so the positions serialize as `150.0`. To send a tile
-    /// with whole numbers, such as `150`, serialize `as_feature_collection` instead.
+    /// A `geojson` geometry holds floats, so the positions serialize as `150.0`. To serialize them
+    /// as whole numbers, such as `150`, serialize `as_feature_collection` instead.
     #[must_use]
     pub fn to_feature_collection(&self) -> FeatureCollection {
         FeatureCollection {
@@ -171,17 +166,17 @@ impl<'a, P: Borrow<Feature>> Tile<'a, P> {
     /// Get a view of the tile as a GeoJSON feature collection, which serializes to the same GeoJSON
     /// as `to_feature_collection` but borrows the properties of the features instead of copying
     /// them. It writes the positions in the tile as whole numbers, such as `150`, where a
-    /// `geojson` geometry holds floats and writes `150.0`. Use it to send a tile as GeoJSON, for
-    /// example with `serde_json::to_writer`.
+    /// `geojson` geometry holds floats and writes `150.0`. Serialize it to write a tile as
+    /// GeoJSON, for example with `serde_json::to_writer`.
     ///
     /// # Examples
     ///
     /// ```
     /// use geojson::{Feature, FeatureCollection, Geometry};
-    /// use supercluster::{Supercluster, SuperclusterOptions};
+    /// use supercluster::{Supercluster, Options};
     ///
     /// let features = vec![Feature::from(Geometry::new_point([-77.032, 38.913]))];
-    /// let supercluster = Supercluster::load_features(SuperclusterOptions::default(), features)?;
+    /// let supercluster = Supercluster::load_features(Options::default(), features)?;
     /// let tile = supercluster.tile(0, 0, 0);
     ///
     /// let json = serde_json::to_string(&tile.as_feature_collection())?;
@@ -366,7 +361,7 @@ mod tests {
     /// Create a supercluster with two close features, which form a cluster on the first zoom levels.
     fn load_features() -> Supercluster<Feature> {
         Supercluster::load_features(
-            SuperclusterOptions::default(),
+            Options::default(),
             vec![
                 create_feature("a", 10.0, 50.0),
                 create_feature("b", 10.0001, 50.0),
@@ -378,8 +373,7 @@ mod tests {
     /// Load the features and get the indexes of the ones that are not clustered at the highest zoom
     /// level, which are the features that were not left out.
     fn load_and_get_indexes(features: Vec<Feature>) -> Vec<usize> {
-        let supercluster =
-            Supercluster::load_features(SuperclusterOptions::default(), features).unwrap();
+        let supercluster = Supercluster::load_features(Options::default(), features).unwrap();
 
         let mut indexes: Vec<usize> = supercluster
             .clusters([-180.0, -90.0, 180.0, 90.0], 17)
@@ -412,10 +406,9 @@ mod tests {
             create_feature("b", 10.0001, 50.0),
             create_feature("c", 12.0, 50.0),
         ];
-        let owned =
-            Supercluster::load_features(SuperclusterOptions::default(), features.clone()).unwrap();
+        let owned = Supercluster::load_features(Options::default(), features.clone()).unwrap();
         let shared = Supercluster::load_features(
-            SuperclusterOptions::default(),
+            Options::default(),
             features.into_iter().map(Arc::new).collect(),
         )
         .unwrap();
@@ -506,8 +499,7 @@ mod tests {
         let features = (0..1500)
             .map(|i| create_feature("a", 10.0 + f64::from(i) * 1e-7, 50.0))
             .collect();
-        let supercluster =
-            Supercluster::load_features(SuperclusterOptions::default(), features).unwrap();
+        let supercluster = Supercluster::load_features(Options::default(), features).unwrap();
         let items = supercluster.clusters([-180.0, -90.0, 180.0, 90.0], 0);
         let clusters: Vec<_> = items
             .iter()
@@ -641,8 +633,7 @@ mod tests {
             ..create_feature("b", 100.0, 30.0)
         });
 
-        let supercluster =
-            Supercluster::load_features(SuperclusterOptions::default(), features).unwrap();
+        let supercluster = Supercluster::load_features(Options::default(), features).unwrap();
 
         // A cluster and points
         let tile = supercluster.tile(0, 0, 0);
@@ -691,8 +682,7 @@ mod tests {
             ..create_feature("b", 100.0, 30.0)
         });
 
-        let supercluster =
-            Supercluster::load_features(SuperclusterOptions::default(), features).unwrap();
+        let supercluster = Supercluster::load_features(Options::default(), features).unwrap();
 
         // The western half of the cluster passes, so the cluster moves, and so do the points
         let west =

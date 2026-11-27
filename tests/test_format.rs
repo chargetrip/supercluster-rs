@@ -3,12 +3,12 @@
 use std::fs;
 
 use serde_json::Value;
-use supercluster::{Supercluster, SuperclusterOptions};
+use supercluster::{Options, Supercluster};
 
 /// Create the supercluster the fixture holds: a few points, three of them close enough to cluster,
 /// on a few zoom levels, so the fixture stays small.
 fn create_supercluster() -> Supercluster<[f64; 2]> {
-    let options = SuperclusterOptions::builder().max_zoom(3).build().unwrap();
+    let options = Options::builder().max_zoom(3).build().unwrap();
     let points = vec![
         [10.0, 50.0],
         [10.001, 50.0],

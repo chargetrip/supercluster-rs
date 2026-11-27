@@ -1,4 +1,4 @@
-use supercluster::{Item, Supercluster, SuperclusterError, SuperclusterOptions};
+use supercluster::{Item, Options, Supercluster};
 
 /// A charging station, which is clustered as it is.
 struct Station {
@@ -7,11 +7,11 @@ struct Station {
     lat: f64,
 }
 
-fn main() -> Result<(), SuperclusterError> {
+fn main() -> Result<(), supercluster::Error> {
     // The stations are kept as they are, nothing is converted or copied. The closure tells where
     // a station is.
     let supercluster = Supercluster::load(
-        SuperclusterOptions::default(),
+        Options::default(),
         vec![
             Station {
                 name: "Dam",

@@ -1,4 +1,4 @@
-use supercluster::{Item, Supercluster, SuperclusterError, SuperclusterOptions};
+use supercluster::{Item, Options, Supercluster};
 
 /// A charging station that can be in use.
 struct Station {
@@ -8,9 +8,9 @@ struct Station {
     available: bool,
 }
 
-fn main() -> Result<(), SuperclusterError> {
+fn main() -> Result<(), supercluster::Error> {
     let supercluster = Supercluster::load(
-        SuperclusterOptions::default(),
+        Options::default(),
         vec![
             Station {
                 name: "Dam",

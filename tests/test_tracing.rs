@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use supercluster::{ClusterId, Supercluster, SuperclusterOptions};
+use supercluster::{ClusterId, Options, Supercluster};
 use tracing::Level;
 use tracing_subscriber::fmt::MakeWriter;
 
@@ -70,7 +70,7 @@ fn test_load_reports_points_without_coordinates() {
     with_subscriber(&buffer, || {
         // A point that is `None` has no coordinates
         Supercluster::load(
-            SuperclusterOptions::default(),
+            Options::default(),
             vec![Some([10.0, 50.0]), Some([10.0001, 50.0]), None],
             |point| *point,
         )
@@ -92,7 +92,7 @@ fn test_load_reports_points_with_coordinates_that_are_not_finite() {
 
     with_subscriber(&buffer, || {
         Supercluster::load(
-            SuperclusterOptions::default(),
+            Options::default(),
             vec![[10.0, 50.0], [f64::NAN, 50.0], [10.0, f64::INFINITY]],
             |point| Some(*point),
         )
@@ -116,7 +116,7 @@ fn test_load_does_not_warn_when_every_point_has_coordinates() {
 
     with_subscriber(&buffer, || {
         Supercluster::load(
-            SuperclusterOptions::default(),
+            Options::default(),
             vec![[10.0, 50.0], [10.0001, 50.0]],
             |point| Some(*point),
         )
@@ -132,7 +132,7 @@ fn test_load_logs_a_summary() {
 
     with_subscriber(&buffer, || {
         Supercluster::load(
-            SuperclusterOptions::default(),
+            Options::default(),
             vec![[10.0, 50.0], [10.0001, 50.0]],
             |point| Some(*point),
         )
@@ -156,7 +156,7 @@ fn test_load_traces_every_zoom_level() {
 
     with_subscriber(&buffer, || {
         Supercluster::load(
-            SuperclusterOptions::default(),
+            Options::default(),
             vec![[10.0, 50.0], [10.0001, 50.0]],
             |point| Some(*point),
         )
@@ -181,7 +181,7 @@ fn test_load_traces_every_zoom_level() {
 fn get_output_of_query(query: impl FnOnce(&Supercluster<[f64; 2]>)) -> String {
     let buffer = Buffer::default();
     let supercluster = Supercluster::load(
-        SuperclusterOptions::default(),
+        Options::default(),
         vec![[10.0, 50.0], [10.0001, 50.0]],
         |point| Some(*point),
     )

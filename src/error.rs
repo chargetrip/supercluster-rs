@@ -2,15 +2,13 @@
 //!
 //! Contains the error type for the supercluster crate.
 
-use thiserror::Error;
-
 use crate::{MAX_POINTS, MAX_ZOOM_LIMIT};
 
 /// Supercluster error.
 /// Represents the different errors that can occur in the supercluster crate.
-#[derive(Clone, Debug, Error, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum SuperclusterError {
+pub enum Error {
     /// Cluster not found with the specified ID.
     #[error("Cluster not found with the specified ID.")]
     ClusterNotFound,
@@ -62,7 +60,7 @@ mod tests {
     #[test]
     fn test_invalid_max_zoom_message_has_the_limit() {
         assert_eq!(
-            SuperclusterError::InvalidMaxZoom.to_string(),
+            Error::InvalidMaxZoom.to_string(),
             format!("The maximum zoom level cannot be above {MAX_ZOOM_LIMIT}.")
         );
     }
@@ -70,7 +68,7 @@ mod tests {
     #[test]
     fn test_invalid_min_zoom_message() {
         assert_eq!(
-            SuperclusterError::InvalidMinZoom.to_string(),
+            Error::InvalidMinZoom.to_string(),
             "The minimum zoom level cannot be above the maximum zoom level."
         );
     }
@@ -78,7 +76,7 @@ mod tests {
     #[test]
     fn test_invalid_radius_message_has_the_limit() {
         assert_eq!(
-            SuperclusterError::InvalidRadius.to_string(),
+            Error::InvalidRadius.to_string(),
             format!(
                 "The radius must be a finite number above 0, and the extent plus the radius cannot be above {}.",
                 i32::MAX
@@ -89,7 +87,7 @@ mod tests {
     #[test]
     fn test_invalid_extent_message_has_the_limit() {
         assert_eq!(
-            SuperclusterError::InvalidExtent.to_string(),
+            Error::InvalidExtent.to_string(),
             format!("The extent must be from 1 to {}.", i32::MAX)
         );
     }
@@ -97,7 +95,7 @@ mod tests {
     #[test]
     fn test_invalid_data_range_message() {
         assert_eq!(
-            SuperclusterError::InvalidDataRange.to_string(),
+            Error::InvalidDataRange.to_string(),
             "The data range must have finite bounds, no maximum below its minimum, more than one value and a width that an f64 holds."
         );
     }
@@ -105,7 +103,7 @@ mod tests {
     #[test]
     fn test_invalid_node_size_message() {
         assert_eq!(
-            SuperclusterError::InvalidNodeSize.to_string(),
+            Error::InvalidNodeSize.to_string(),
             "The node size cannot be 0."
         );
     }
@@ -113,7 +111,7 @@ mod tests {
     #[test]
     fn test_too_many_points_message_has_the_limit() {
         assert_eq!(
-            SuperclusterError::TooManyPoints.to_string(),
+            Error::TooManyPoints.to_string(),
             format!("The number of points cannot be above {MAX_POINTS}.")
         );
     }
@@ -121,7 +119,7 @@ mod tests {
     #[test]
     fn test_foreign_cached_filter_message() {
         assert_eq!(
-            SuperclusterError::ForeignCachedFilter.to_string(),
+            Error::ForeignCachedFilter.to_string(),
             "The cached filter comes from another supercluster."
         );
     }

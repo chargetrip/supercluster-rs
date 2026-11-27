@@ -8,13 +8,11 @@ use common::{
 use std::fs;
 
 use geojson::{feature::Id, Feature, FeatureCollection, Geometry, JsonObject, JsonValue};
-use supercluster::{
-    ClusterId, CoordinateSystem, Item, Supercluster, SuperclusterError, SuperclusterOptions,
-};
+use supercluster::{ClusterId, CoordinateSystem, Error, Item, Options, Supercluster};
 
 /// Create the options most tests use: a radius of 40, an extent of 512 and a maximum zoom of 16.
-fn create_options() -> SuperclusterOptions {
-    SuperclusterOptions::builder()
+fn create_options() -> Options {
+    Options::builder()
         .radius(40.0)
         .extent(512)
         .min_points(2)
@@ -25,8 +23,8 @@ fn create_options() -> SuperclusterOptions {
 }
 
 /// Create the options of the tests with a low maximum zoom.
-fn create_options_with_low_max_zoom() -> SuperclusterOptions {
-    SuperclusterOptions::builder()
+fn create_options_with_low_max_zoom() -> Options {
+    Options::builder()
         .radius(60.0)
         .extent(256)
         .min_points(2)
@@ -40,7 +38,7 @@ fn create_options_with_low_max_zoom() -> SuperclusterOptions {
 const WORLD: [f64; 4] = [-180.0, -90.0, 180.0, 90.0];
 
 /// Load the places with the options.
-fn load_supercluster(options: SuperclusterOptions) -> Supercluster<Feature> {
+fn load_supercluster(options: Options) -> Supercluster<Feature> {
     Supercluster::load_features(options, load_places()).unwrap()
 }
 
@@ -223,7 +221,7 @@ fn test_tile_with_cluster_max_zoom() {
 fn test_generate_clusters_with_min_points() {
     let places_tile = load_tile_places_with_min_5();
 
-    let options = SuperclusterOptions::builder()
+    let options = Options::builder()
         .radius(40.0)
         .extent(512)
         .min_points(5)
@@ -261,7 +259,7 @@ fn test_children_of_unknown_cluster() {
 
     assert!(matches!(
         supercluster.children(ClusterId::new(100000)),
-        Err(SuperclusterError::ClusterNotFound)
+        Err(Error::ClusterNotFound)
     ));
 }
 
@@ -393,7 +391,7 @@ fn test_leaves_of_unknown_cluster() {
 
     assert_eq!(
         supercluster.leaves(ClusterId::new(100000)).err(),
-        Some(SuperclusterError::ClusterNotFound)
+        Some(Error::ClusterNotFound)
     );
 }
 
@@ -510,7 +508,7 @@ fn test_cartesian_coordinates() {
     let data = load_cartesian();
     let range = get_data_range(&data).unwrap();
 
-    let options = SuperclusterOptions::builder()
+    let options = Options::builder()
         .radius(20.0)
         .extent(512)
         .min_points(2)

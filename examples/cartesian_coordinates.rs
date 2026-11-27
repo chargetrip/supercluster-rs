@@ -1,9 +1,7 @@
 use geojson::{Feature, Geometry};
-use supercluster::{
-    CoordinateSystem, DataRange, Supercluster, SuperclusterError, SuperclusterOptions,
-};
+use supercluster::{CoordinateSystem, DataRange, Options, Supercluster};
 
-fn main() -> Result<(), SuperclusterError> {
+fn main() -> Result<(), supercluster::Error> {
     // Create a few points as GeoJSON features
     let features: Vec<Feature> = [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]
         .into_iter()
@@ -11,7 +9,7 @@ fn main() -> Result<(), SuperclusterError> {
         .collect();
 
     // Set the configuration settings for Cartesian coordinates
-    let options = SuperclusterOptions::builder()
+    let options = Options::builder()
         .radius(40.0)
         .extent(512)
         .min_points(2)

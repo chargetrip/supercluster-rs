@@ -1,8 +1,8 @@
-use supercluster::{CoordinateSystem, Item, SuperclusterOptions, TileItem};
+use supercluster::{CoordinateSystem, Item, Options, TileItem};
 
 /// Create the options the benchmarks use.
-pub fn create_options() -> SuperclusterOptions {
-    SuperclusterOptions::builder()
+pub fn create_options() -> Options {
+    Options::builder()
         .radius(40.0)
         .extent(512)
         .min_points(2)

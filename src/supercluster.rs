@@ -32,8 +32,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    kdbush::KDBush, sums::Positions, tile::every_point_tile, DataRange, SuperclusterError,
-    SuperclusterOptions, Tile,
+    kdbush::KDBush, sums::Positions, tile::every_point_tile, DataRange, Error, Options, Tile,
 };
 
 /// The highest maximum zoom level a supercluster supports. Building options with a higher
@@ -260,9 +259,10 @@ impl CoordinateSystem {
 
 /// The identifier of a cluster.
 ///
-/// A client can send the number back, for example after reading it from the GeoJSON property
-/// `cluster_id`, and `ClusterId::new` or `From` turns it into an identifier again. A number that
-/// is not the identifier of a cluster of the supercluster gives a `ClusterNotFound` error.
+/// `get` gives its number, which is also the GeoJSON property `cluster_id`, and `ClusterId::new`
+/// or `From` turns a number into an identifier again. A number that is not the identifier of a
+/// cluster of the supercluster gives a `ClusterNotFound` error. A cluster ID can change when the
+/// points, their order or the options change, so an old one can name another cluster.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(transparent))]
 pub struct ClusterId(u32);
@@ -373,14 +373,19 @@ impl<P> Copy for Item<'_, P> {}
 /// it away from threads that serve requests.
 ///
 /// With the `serde` feature, a supercluster can be written and read back. It is written with the
-/// version of its format first, and reading rejects another version, as long as the fields keep the
-/// order they were written in. Reading also checks that the data holds together, so queries cannot
-/// panic or loop on data that a supercluster did not write, but it does not check that the clusters
-/// are the ones `load` would form.
+/// version of its format first, and reading rejects another version. Type names are not part of the
+/// format, so formats that write them are not supported.
+///
+/// Reading checks that the data is consistent, so queries cannot panic or loop, even on edited data.
+/// It does not cluster the points again, so edited data can hold clusters that do not match the
+/// points.
+///
+/// A serialized supercluster holds its points by value, so to deserialize one and find your own
+/// data, make the points ids.
 #[derive(Clone, Debug)]
 pub struct Supercluster<P> {
     /// Configuration settings.
-    options: SuperclusterOptions,
+    options: Options,
 
     /// The points, in leaf order: the points of every cluster are next to each other, and so are
     /// the points of the clusters in it. The points that no cluster holds follow, then the points
@@ -436,9 +441,10 @@ mod format {
     use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 
     use super::{Clusters, Handle, Supercluster};
-    use crate::{kdbush::KDBush, sums::Positions, SuperclusterOptions};
+    use crate::{kdbush::KDBush, sums::Positions, Options};
 
-    /// The version of the format. Raise it with every change to what a supercluster writes.
+    /// The version of the format. Raise it with every change to what a supercluster writes, except
+    /// type names.
     const VERSION: u32 = 1;
 
     /// The version of the format, which writes `VERSION` and reads only `VERSION`.
@@ -472,7 +478,7 @@ mod format {
         version: Version,
 
         /// The options of the supercluster.
-        options: &'a SuperclusterOptions,
+        options: &'a Options,
 
         /// The points, in leaf order.
         points: &'a [P],
@@ -499,7 +505,7 @@ mod format {
         _version: Version,
 
         /// The options of the supercluster, which reading checks like `build` does.
-        options: SuperclusterOptions,
+        options: Options,
 
         /// The points, in leaf order.
         points: Vec<P>,
@@ -697,12 +703,12 @@ impl<P> Supercluster<P> {
     ///
     /// # Errors
     ///
-    /// Returns `SuperclusterError::TooManyPoints` if there are more than `MAX_POINTS` points.
+    /// Returns `Error::TooManyPoints` if there are more than `MAX_POINTS` points.
     ///
     /// # Examples
     ///
     /// ```
-    /// use supercluster::{Supercluster, SuperclusterOptions};
+    /// use supercluster::{Supercluster, Options};
     ///
     /// struct Station {
     ///     lng: f64,
@@ -710,23 +716,19 @@ impl<P> Supercluster<P> {
     /// }
     ///
     /// let stations = vec![Station { lng: 4.9, lat: 52.37 }, Station { lng: 4.91, lat: 52.37 }];
-    /// let supercluster = Supercluster::load(SuperclusterOptions::default(), stations, |station| {
+    /// let supercluster = Supercluster::load(Options::default(), stations, |station| {
     ///     Some([station.lng, station.lat])
     /// })?;
     ///
     /// assert_eq!(supercluster.points().len(), 2);
-    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// # Ok::<(), supercluster::Error>(())
     /// ```
-    pub fn load<F>(
-        options: SuperclusterOptions,
-        points: Vec<P>,
-        get_coordinates: F,
-    ) -> Result<Self, SuperclusterError>
+    pub fn load<F>(options: Options, points: Vec<P>, get_coordinates: F) -> Result<Self, Error>
     where
         F: FnMut(&P) -> Option<[f64; 2]>,
     {
         if points.len() > MAX_POINTS {
-            return Err(SuperclusterError::TooManyPoints);
+            return Err(Error::TooManyPoints);
         }
 
         let mut supercluster = Supercluster {
@@ -749,7 +751,7 @@ impl<P> Supercluster<P> {
 
     /// Get the configuration settings.
     #[must_use]
-    pub fn options(&self) -> &SuperclusterOptions {
+    pub fn options(&self) -> &Options {
         &self.options
     }
 
@@ -769,21 +771,21 @@ impl<P> Supercluster<P> {
     /// # Examples
     ///
     /// ```
-    /// use supercluster::{Item, Supercluster, SuperclusterOptions};
+    /// use supercluster::{Item, Supercluster, Options};
     ///
     /// let points = vec![[10.0, 50.0], [12.0, 50.0]];
     /// let supercluster =
-    ///     Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))?;
+    ///     Supercluster::load(Options::default(), points, |point| Some(*point))?;
     ///
     /// // The two points form a cluster on zoom level 1, unless the view stops clustering at 0
     /// let items = supercluster.with_cluster_max_zoom(0).clusters([-180.0, -90.0, 180.0, 90.0], 1);
     ///
     /// assert!(items.iter().all(|item| matches!(item, Item::Point { .. })));
-    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// # Ok::<(), supercluster::Error>(())
     /// ```
     #[must_use]
-    pub fn with_cluster_max_zoom(&self, cluster_max_zoom: u8) -> SuperclusterView<'_, P> {
-        SuperclusterView {
+    pub fn with_cluster_max_zoom(&self, cluster_max_zoom: u8) -> View<'_, P> {
+        View {
             supercluster: self,
             cluster_max_zoom: cluster_max_zoom.clamp(self.options.min_zoom, self.options.max_zoom),
         }
@@ -791,7 +793,7 @@ impl<P> Supercluster<P> {
 
     /// Get a view that clusters up to the `max_zoom` of the options, which the queries of the
     /// supercluster itself use.
-    pub(crate) fn view(&self) -> SuperclusterView<'_, P> {
+    pub(crate) fn view(&self) -> View<'_, P> {
         self.with_cluster_max_zoom(self.options.max_zoom)
     }
 
@@ -812,11 +814,11 @@ impl<P> Supercluster<P> {
     ///
     /// # Errors
     ///
-    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
+    /// Returns `Error::ClusterNotFound` if there is no such cluster.
     pub fn children(
         &self,
         cluster_id: ClusterId,
-    ) -> Result<impl ExactSizeIterator<Item = Item<'_, P>> + '_, SuperclusterError> {
+    ) -> Result<impl ExactSizeIterator<Item = Item<'_, P>> + '_, Error> {
         let cluster = self.cluster_index(cluster_id)?;
 
         Ok(self
@@ -826,31 +828,30 @@ impl<P> Supercluster<P> {
             .map(|&handle| self.item(handle, self.position(handle))))
     }
 
-    /// Retrieve a cluster by its ID, for example one that a client sent back, with its number of
-    /// points and its center.
+    /// Retrieve a cluster by its ID, with its number of points and its center.
     ///
     /// # Errors
     ///
-    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
+    /// Returns `Error::ClusterNotFound` if there is no such cluster.
     ///
     /// # Examples
     ///
     /// ```
-    /// use supercluster::{ClusterId, Item, Supercluster, SuperclusterOptions};
+    /// use supercluster::{ClusterId, Item, Supercluster, Options};
     ///
     /// let points = vec![[10.0, 50.0], [10.001, 50.0], [10.002, 50.0]];
     /// let supercluster =
-    ///     Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))?;
+    ///     Supercluster::load(Options::default(), points, |point| Some(*point))?;
     ///
     /// if let Item::Cluster(cluster) = supercluster.tile(0, 0, 0).items[0].item() {
-    ///     // The number a client sends back finds the same cluster
+    ///     // The number of the ID finds the same cluster
     ///     let number = cluster.id().get();
     ///
     ///     assert_eq!(supercluster.cluster(ClusterId::new(number))?.total_count(), 3);
     /// }
-    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// # Ok::<(), supercluster::Error>(())
     /// ```
-    pub fn cluster(&self, cluster_id: ClusterId) -> Result<Cluster<'_>, SuperclusterError> {
+    pub fn cluster(&self, cluster_id: ClusterId) -> Result<Cluster<'_>, Error> {
         let cluster = self.cluster_index(cluster_id)?;
 
         Ok(self.cluster_at(cluster, self.clusters.positions[cluster]))
@@ -861,16 +862,16 @@ impl<P> Supercluster<P> {
     ///
     /// # Errors
     ///
-    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
+    /// Returns `Error::ClusterNotFound` if there is no such cluster.
     ///
     /// # Examples
     ///
     /// ```
-    /// use supercluster::{Item, Supercluster, SuperclusterOptions};
+    /// use supercluster::{Item, Supercluster, Options};
     ///
     /// let points = vec![[10.0, 50.0], [10.001, 50.0], [10.002, 50.0]];
     /// let supercluster =
-    ///     Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))?;
+    ///     Supercluster::load(Options::default(), points, |point| Some(*point))?;
     ///
     /// if let Item::Cluster(cluster) = supercluster.tile(0, 0, 0).items[0].item() {
     ///     // The second page of two points holds the last point
@@ -878,9 +879,9 @@ impl<P> Supercluster<P> {
     ///
     ///     assert_eq!(page.len(), 1);
     /// }
-    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// # Ok::<(), supercluster::Error>(())
     /// ```
-    pub fn leaves(&self, cluster_id: ClusterId) -> Result<&[P], SuperclusterError> {
+    pub fn leaves(&self, cluster_id: ClusterId) -> Result<&[P], Error> {
         self.cluster_index(cluster_id)?;
 
         Ok(&self.points[self.leaf_range(cluster_id.0)])
@@ -898,11 +899,11 @@ impl<P> Supercluster<P> {
     /// # Examples
     ///
     /// ```
-    /// use supercluster::{Item, Supercluster, SuperclusterOptions};
+    /// use supercluster::{Item, Supercluster, Options};
     ///
     /// let points = vec![[10.0, 50.0], [12.0, 50.0], [-100.0, -30.0]];
     /// let supercluster =
-    ///     Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))?;
+    ///     Supercluster::load(Options::default(), points, |point| Some(*point))?;
     ///
     /// for tile_item in &supercluster.tile(0, 0, 0).items {
     ///     match tile_item.item() {
@@ -910,7 +911,7 @@ impl<P> Supercluster<P> {
     ///         Item::Point { index, .. } => println!("point {index}"),
     ///     }
     /// }
-    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// # Ok::<(), supercluster::Error>(())
     /// ```
     #[must_use]
     pub fn tile(&self, z: u8, x: u32, y: u32) -> Tile<'_, P> {
@@ -918,21 +919,21 @@ impl<P> Supercluster<P> {
     }
 
     /// Determine the zoom level at which a cluster expands, where it splits into more than one
-    /// cluster or point. A map zooms in to it when the user clicks the cluster.
+    /// cluster or point.
     ///
     /// # Errors
     ///
-    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
-    pub fn cluster_expansion_zoom(&self, cluster_id: ClusterId) -> Result<u8, SuperclusterError> {
+    /// Returns `Error::ClusterNotFound` if there is no such cluster.
+    pub fn cluster_expansion_zoom(&self, cluster_id: ClusterId) -> Result<u8, Error> {
         self.view().cluster_expansion_zoom(cluster_id)
     }
 
     /// Get the number of a cluster in the table of clusters from its ID, or an error if no cluster
     /// has the ID.
-    fn cluster_index(&self, cluster_id: ClusterId) -> Result<usize, SuperclusterError> {
+    fn cluster_index(&self, cluster_id: ClusterId) -> Result<usize, Error> {
         match self.handle(cluster_id.0) {
             Handle::Cluster(cluster) if cluster < self.clusters.len() => Ok(cluster),
-            _ => Err(SuperclusterError::ClusterNotFound),
+            _ => Err(Error::ClusterNotFound),
         }
     }
 
@@ -1071,7 +1072,7 @@ impl<P> Supercluster<P> {
         cluster_id: ClusterId,
         cluster_max_zoom: u8,
         mut has_match: F,
-    ) -> Result<u8, SuperclusterError>
+    ) -> Result<u8, Error>
     where
         F: FnMut(Range<usize>) -> bool,
     {
@@ -1617,7 +1618,7 @@ fn permute<P>(points: &mut [P], indexes: &[u32]) {
 /// A view of a supercluster whose queries cluster up to a lower zoom level than the `max_zoom` of
 /// its options. Above that zoom level, the queries return the individual points instead of
 /// clusters. Create one with `Supercluster::with_cluster_max_zoom`.
-pub struct SuperclusterView<'a, P> {
+pub struct View<'a, P> {
     /// The supercluster to query.
     pub(crate) supercluster: &'a Supercluster<P>,
 
@@ -1627,25 +1628,25 @@ pub struct SuperclusterView<'a, P> {
 
 // Written by hand, because a derive would also require the point type to be `Clone` and `Copy`,
 // and a view only holds a reference to the supercluster.
-impl<P> Clone for SuperclusterView<'_, P> {
+impl<P> Clone for View<'_, P> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<P> Copy for SuperclusterView<'_, P> {}
+impl<P> Copy for View<'_, P> {}
 
 // Written by hand, because a derive would print the whole supercluster.
-impl<P> Debug for SuperclusterView<'_, P> {
+impl<P> Debug for View<'_, P> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("SuperclusterView")
+            .debug_struct("View")
             .field("cluster_max_zoom", &self.cluster_max_zoom)
             .finish_non_exhaustive()
     }
 }
 
-impl<'a, P> SuperclusterView<'a, P> {
+impl<'a, P> View<'a, P> {
     /// Retrieve clustered items within the specified bounding box and zoom level, like
     /// `Supercluster::clusters`.
     #[must_use]
@@ -1723,8 +1724,8 @@ impl<'a, P> SuperclusterView<'a, P> {
     ///
     /// # Errors
     ///
-    /// Returns `SuperclusterError::ClusterNotFound` if there is no such cluster.
-    pub fn cluster_expansion_zoom(&self, cluster_id: ClusterId) -> Result<u8, SuperclusterError> {
+    /// Returns `Error::ClusterNotFound` if there is no such cluster.
+    pub fn cluster_expansion_zoom(&self, cluster_id: ClusterId) -> Result<u8, Error> {
         let cluster = self.supercluster.cluster_index(cluster_id)?;
 
         Ok(self
@@ -1796,12 +1797,12 @@ const UNKNOWN_SPREAD: u8 = u8::MAX;
 const SPREAD_PADDING: f64 = 1.0 / (1u64 << 40) as f64;
 
 /// Get the normalized radius that clusters form within on a zoom level.
-fn cluster_radius(options: &SuperclusterOptions, zoom: u8) -> f64 {
+fn cluster_radius(options: &Options, zoom: u8) -> f64 {
     options.radius / (f64::from(options.extent) * tiles_per_axis(zoom))
 }
 
 /// Get the length of one step of the spread of a cluster that formed on a zoom level.
-fn spread_step(options: &SuperclusterOptions, zoom: u8) -> f64 {
+fn spread_step(options: &Options, zoom: u8) -> f64 {
     cluster_radius(options, zoom) / SPREAD_STEPS_PER_RADIUS
 }
 
@@ -1843,10 +1844,7 @@ mod tests {
     /// Create a supercluster with the points loaded and the default options.
     /// A point is a longitude, a latitude and whether a filter keeps it.
     fn load(max_zoom: u8, points: &[(f64, f64, bool)]) -> Supercluster<TestPoint> {
-        let options = SuperclusterOptions::builder()
-            .max_zoom(max_zoom)
-            .build()
-            .unwrap();
+        let options = Options::builder().max_zoom(max_zoom).build().unwrap();
         let points: Vec<TestPoint> = points
             .iter()
             .map(|&(lng, lat, keep)| TestPoint::new(lng, lat, keep))
@@ -1857,10 +1855,7 @@ mod tests {
 
     /// Load test points with the default options.
     fn load_points(points: Vec<TestPoint>) -> Supercluster<TestPoint> {
-        Supercluster::load(SuperclusterOptions::default(), points, |point| {
-            point.coordinates
-        })
-        .unwrap()
+        Supercluster::load(Options::default(), points, |point| point.coordinates).unwrap()
     }
 
     /// Get the tile that holds the point at 10, 50 (longitude, latitude).
@@ -1916,7 +1911,7 @@ mod tests {
     /// Load two close points that do not implement `Clone`.
     fn load_unclonable_points() -> Supercluster<Unclonable> {
         Supercluster::load(
-            SuperclusterOptions::default(),
+            Options::default(),
             vec![Unclonable([10.0, 50.0]), Unclonable([12.0, 50.0])],
             |point| Some(point.0),
         )
@@ -1941,7 +1936,7 @@ mod tests {
     fn test_load_calls_get_coordinates_once_per_point_in_order() {
         let mut seen = vec![];
 
-        Supercluster::load(SuperclusterOptions::default(), vec![1, 2, 3], |point| {
+        Supercluster::load(Options::default(), vec![1, 2, 3], |point| {
             seen.push(*point);
 
             Some([0.0, 0.0])
@@ -1960,10 +1955,7 @@ mod tests {
         // A node size past the number of points makes every KD-tree a single leaf, which must not
         // allocate by the node size, and finds the same clusters
         for node_size in [1_000_000_000, usize::MAX] {
-            let options = SuperclusterOptions::builder()
-                .node_size(node_size)
-                .build()
-                .unwrap();
+            let options = Options::builder().node_size(node_size).build().unwrap();
             let supercluster =
                 Supercluster::load(options, points.clone(), |point| Some(*point)).unwrap();
 
@@ -2024,8 +2016,8 @@ mod tests {
         let points = vec![(); MAX_POINTS + 1];
 
         assert_eq!(
-            Supercluster::load(SuperclusterOptions::default(), points, |_| None).err(),
-            Some(SuperclusterError::TooManyPoints)
+            Supercluster::load(Options::default(), points, |_| None).err(),
+            Some(Error::TooManyPoints)
         );
     }
 
@@ -2090,10 +2082,7 @@ mod tests {
     fn test_clusters_gives_points_their_loaded_index() {
         let points = create_spread_points(500);
         let supercluster =
-            Supercluster::load(SuperclusterOptions::default(), points.clone(), |point| {
-                Some(*point)
-            })
-            .unwrap();
+            Supercluster::load(Options::default(), points.clone(), |point| Some(*point)).unwrap();
 
         let items = supercluster.clusters([-180.0, -90.0, 180.0, 90.0], 17);
 
@@ -2125,7 +2114,7 @@ mod tests {
     #[test]
     fn test_clusters_counts_every_point_on_every_zoom_level() {
         let supercluster = load_spread_points(500);
-        let options = SuperclusterOptions::builder().min_zoom(3).build().unwrap();
+        let options = Options::builder().min_zoom(3).build().unwrap();
         let from_zoom_3 =
             Supercluster::load(options, create_spread_points(500), |point| Some(*point)).unwrap();
 
@@ -2470,7 +2459,7 @@ mod tests {
             .is_empty());
         assert!(matches!(
             supercluster.children(ClusterId::new(5)),
-            Err(SuperclusterError::ClusterNotFound)
+            Err(Error::ClusterNotFound)
         ));
     }
 
@@ -2556,7 +2545,7 @@ mod tests {
     #[test]
     fn test_tile_with_cartesian_coordinates_does_not_wrap() {
         let range = DataRange::new(0.0, 0.0, 100.0, 100.0);
-        let options = SuperclusterOptions::builder()
+        let options = Options::builder()
             .coordinate_system(CoordinateSystem::Cartesian { range })
             .build()
             .unwrap();
@@ -2599,7 +2588,7 @@ mod tests {
         // With a range from 0 to 1, a coordinate is its normalized position, so a position in the
         // tile of the whole world is the coordinate times the extent of 512, and these are exact
         let range = DataRange::new(0.0, 0.0, 1.0, 1.0);
-        let options = SuperclusterOptions::builder()
+        let options = Options::builder()
             .coordinate_system(CoordinateSystem::Cartesian { range })
             .build()
             .unwrap();
@@ -2662,12 +2651,12 @@ mod tests {
         // Smaller than the number of points, so it is a point and not a cluster.
         assert_eq!(
             supercluster.cluster(ClusterId::new(1)),
-            Err(SuperclusterError::ClusterNotFound)
+            Err(Error::ClusterNotFound)
         );
         // Above the IDs of the clusters.
         assert_eq!(
             supercluster.cluster(ClusterId::new(100000)),
-            Err(SuperclusterError::ClusterNotFound)
+            Err(Error::ClusterNotFound)
         );
     }
 
@@ -2678,12 +2667,12 @@ mod tests {
         // Smaller than the number of points, so it is a point and not a cluster.
         assert!(matches!(
             supercluster.children(ClusterId::new(1)),
-            Err(SuperclusterError::ClusterNotFound)
+            Err(Error::ClusterNotFound)
         ));
         // Above the IDs of the clusters.
         assert!(matches!(
             supercluster.children(ClusterId::new(100000)),
-            Err(SuperclusterError::ClusterNotFound)
+            Err(Error::ClusterNotFound)
         ));
     }
 
@@ -2744,7 +2733,7 @@ mod tests {
 
         assert_eq!(
             supercluster.leaves(ClusterId::new(100000)).err(),
-            Some(SuperclusterError::ClusterNotFound)
+            Some(Error::ClusterNotFound)
         );
     }
 
@@ -2762,7 +2751,7 @@ mod tests {
 
         assert_eq!(
             supercluster.cluster_expansion_zoom(ClusterId::new(100000)),
-            Err(SuperclusterError::ClusterNotFound)
+            Err(Error::ClusterNotFound)
         );
     }
 
@@ -2851,7 +2840,7 @@ mod tests {
 
     #[test]
     fn test_clusters_below_min_zoom() {
-        let options = SuperclusterOptions::builder().min_zoom(3).build().unwrap();
+        let options = Options::builder().min_zoom(3).build().unwrap();
         let supercluster = Supercluster::load(
             options,
             vec![
@@ -2887,11 +2876,7 @@ mod tests {
 
     #[test]
     fn test_cluster_max_zoom_below_the_min_zoom_is_raised_to_it() {
-        let options = SuperclusterOptions::builder()
-            .min_zoom(3)
-            .max_zoom(8)
-            .build()
-            .unwrap();
+        let options = Options::builder().min_zoom(3).max_zoom(8).build().unwrap();
         let points = [(10.0, 50.0), (12.0, 50.0), (-100.0, -30.0), (40.0, 10.0)]
             .map(|(lng, lat)| TestPoint::new(lng, lat, true));
         let supercluster =
@@ -2948,10 +2933,7 @@ mod tests {
 
     #[test]
     fn test_load_with_min_points_above_255() {
-        let options = SuperclusterOptions::builder()
-            .min_points(300)
-            .build()
-            .unwrap();
+        let options = Options::builder().min_points(300).build().unwrap();
         let load = |count| {
             Supercluster::load(options.clone(), vec![[10.0, 50.0]; count], |point| {
                 Some(*point)
@@ -2979,8 +2961,7 @@ mod tests {
     fn test_count_and_debug_of_tile_items() {
         let points = vec![[10.0, 50.0], [10.001, 50.0], [-100.0, -30.0]];
         let supercluster =
-            Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))
-                .unwrap();
+            Supercluster::load(Options::default(), points, |point| Some(*point)).unwrap();
         let mut items = supercluster.tile(0, 0, 0).items;
 
         items.sort_by_key(|item| item.count());
@@ -3004,8 +2985,7 @@ mod tests {
         // Two points that split long after zoom level 0
         let points = vec![[10.0, 50.0], [10.5, 50.0]];
         let supercluster =
-            Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))
-                .unwrap();
+            Supercluster::load(Options::default(), points, |point| Some(*point)).unwrap();
         let full = supercluster.tile(0, 0, 0);
         let capped = supercluster.with_cluster_max_zoom(0).tile(0, 0, 0);
         let [full_item, capped_item] = [&full.items[0], &capped.items[0]];
@@ -3025,8 +3005,7 @@ mod tests {
         // Two points that split long before zoom level 15
         let points = vec![[10.0, 50.0], [10.5, 50.0]];
         let supercluster =
-            Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))
-                .unwrap();
+            Supercluster::load(Options::default(), points, |point| Some(*point)).unwrap();
         let lower = supercluster.with_cluster_max_zoom(15).tile(0, 0, 0);
         let higher = supercluster.with_cluster_max_zoom(16).tile(0, 0, 0);
 
@@ -3039,8 +3018,7 @@ mod tests {
     fn test_tile_points_of_views_with_another_highest_zoom_level_are_equal() {
         let points = vec![[10.0, 50.0], [10.0001, 50.0]];
         let supercluster =
-            Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))
-                .unwrap();
+            Supercluster::load(Options::default(), points, |point| Some(*point)).unwrap();
         let z2 = tiles_per_axis(17);
         let x = (convert_longitude_to_spherical_mercator(10.0) * z2).floor() as u32;
         let y = (convert_latitude_to_spherical_mercator(50.0) * z2).floor() as u32;

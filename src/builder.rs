@@ -5,10 +5,10 @@
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::{CoordinateSystem, SuperclusterError, MAX_ZOOM_LIMIT};
+use crate::{CoordinateSystem, Error, MAX_ZOOM_LIMIT};
 
 /// Supercluster configuration options.
-/// The options are valid by construction: only `SuperclusterOptions::builder()`, `Default` and,
+/// The options are valid by construction: only `Options::builder()`, `Default` and,
 /// with the `serde` feature, deserialization create them, and the first and last check the values.
 /// Their fields are private, so read them with the methods of the same names, and they cannot
 /// change once they are checked.
@@ -18,13 +18,10 @@ use crate::{CoordinateSystem, SuperclusterError, MAX_ZOOM_LIMIT};
 #[cfg_attr(
     feature = "serde",
     derive(Deserialize, Serialize),
-    serde(
-        try_from = "SuperclusterOptionsBuilder",
-        into = "SuperclusterOptionsBuilder"
-    )
+    serde(try_from = "OptionsBuilder", into = "OptionsBuilder")
 )]
 #[non_exhaustive]
-pub struct SuperclusterOptions {
+pub struct Options {
     /// Minimal zoom level to generate clusters on.
     /// The default value is 0.
     pub(crate) min_zoom: u8,
@@ -54,15 +51,15 @@ pub struct SuperclusterOptions {
     pub(crate) coordinate_system: CoordinateSystem,
 }
 
-impl SuperclusterOptions {
+impl Options {
     /// Start building options. A value that is not set keeps its default.
     ///
     /// # Examples
     ///
     /// ```
-    /// use supercluster::SuperclusterOptions;
+    /// use supercluster::Options;
     ///
-    /// let options = SuperclusterOptions::builder()
+    /// let options = Options::builder()
     ///     .radius(60.0)
     ///     .max_zoom(14)
     ///     .build()?;
@@ -70,11 +67,11 @@ impl SuperclusterOptions {
     /// assert_eq!(options.radius(), 60.0);
     /// // The extent keeps its default
     /// assert_eq!(options.extent(), 512);
-    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// # Ok::<(), supercluster::Error>(())
     /// ```
     #[must_use]
-    pub fn builder() -> SuperclusterOptionsBuilder {
-        SuperclusterOptionsBuilder::default()
+    pub fn builder() -> OptionsBuilder {
+        OptionsBuilder::default()
     }
 
     /// Get the lowest zoom level to cluster on.
@@ -120,10 +117,10 @@ impl SuperclusterOptions {
     }
 }
 
-impl Default for SuperclusterOptions {
+impl Default for Options {
     /// Create the default options.
     fn default() -> Self {
-        SuperclusterOptions {
+        Options {
             min_zoom: 0,
             max_zoom: 16,
             min_points: 2,
@@ -141,7 +138,7 @@ impl Default for SuperclusterOptions {
 #[derive(Clone, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
-pub struct SuperclusterOptionsBuilder {
+pub struct OptionsBuilder {
     /// Minimal zoom level to generate clusters on.
     min_zoom: Option<u8>,
 
@@ -164,50 +161,58 @@ pub struct SuperclusterOptionsBuilder {
     coordinate_system: Option<CoordinateSystem>,
 }
 
-impl SuperclusterOptionsBuilder {
-    /// Set the minimal zoom level to generate clusters on.
+impl OptionsBuilder {
+    /// Set the lowest zoom level to cluster on. The default is 0, and `build` rejects one above the
+    /// maximum zoom level.
     #[must_use]
     pub fn min_zoom(mut self, min_zoom: u8) -> Self {
         self.min_zoom = Some(min_zoom);
         self
     }
 
-    /// Set the maximal zoom level to cluster the points on.
+    /// Set the highest zoom level to cluster on. Above it, a tile shows the points. The default is
+    /// 16, and `build` rejects one above `MAX_ZOOM_LIMIT`, which is 30.
     #[must_use]
     pub fn max_zoom(mut self, max_zoom: u8) -> Self {
         self.max_zoom = Some(max_zoom);
         self
     }
 
-    /// Set the minimum points to form a cluster.
+    /// Set the fewest points that form a cluster. The default is 2.
     #[must_use]
     pub fn min_points(mut self, min_points: u32) -> Self {
         self.min_points = Some(min_points);
         self
     }
 
-    /// Set the cluster radius in pixels.
+    /// Set the cluster radius, in pixels of a tile of `extent` pixels. The default is 40.0, and
+    /// `build` rejects a radius that is not a finite number above 0, or that makes the extent plus
+    /// the radius above `i32::MAX`.
     #[must_use]
     pub fn radius(mut self, radius: f64) -> Self {
         self.radius = Some(radius);
         self
     }
 
-    /// Set the tile extent (radius is calculated relative to it).
+    /// Set the size of a tile, in pixels, which the radius is relative to. The default is 512, and
+    /// `build` rejects 0 and an extent above `i32::MAX`.
     #[must_use]
     pub fn extent(mut self, extent: u32) -> Self {
         self.extent = Some(extent);
         self
     }
 
-    /// Set the size of the KD-tree leaf node, affects performance.
+    /// Set the number of points in a leaf of the KD-tree, which affects speed. The default is 64,
+    /// and `build` rejects 0.
     #[must_use]
     pub fn node_size(mut self, node_size: usize) -> Self {
         self.node_size = Some(node_size);
         self
     }
 
-    /// Set the type of coordinate system for clustering.
+    /// Set the coordinate system of the points: `LngLat` for longitudes and latitudes, which is the
+    /// default, or `Cartesian` for other 2D data. `build` rejects a `DataRange` that cannot scale
+    /// the data.
     #[must_use]
     pub fn coordinate_system(mut self, coordinate_system: CoordinateSystem) -> Self {
         self.coordinate_system = Some(coordinate_system);
@@ -226,9 +231,9 @@ impl SuperclusterOptionsBuilder {
     /// - `InvalidNodeSize` if the node size is 0.
     /// - `InvalidDataRange` if the `DataRange` of the `Cartesian` coordinate system cannot scale the
     ///   data.
-    pub fn build(self) -> Result<SuperclusterOptions, SuperclusterError> {
-        let defaults = SuperclusterOptions::default();
-        let options = SuperclusterOptions {
+    pub fn build(self) -> Result<Options, Error> {
+        let defaults = Options::default();
+        let options = Options {
             min_zoom: self.min_zoom.unwrap_or(defaults.min_zoom),
             max_zoom: self.max_zoom.unwrap_or(defaults.max_zoom),
             min_points: self.min_points.unwrap_or(defaults.min_points),
@@ -239,34 +244,34 @@ impl SuperclusterOptionsBuilder {
         };
 
         if options.max_zoom > MAX_ZOOM_LIMIT {
-            return Err(SuperclusterError::InvalidMaxZoom);
+            return Err(Error::InvalidMaxZoom);
         }
 
         if options.min_zoom > options.max_zoom {
-            return Err(SuperclusterError::InvalidMinZoom);
+            return Err(Error::InvalidMinZoom);
         }
 
         if !is_positive(options.radius) {
-            return Err(SuperclusterError::InvalidRadius);
+            return Err(Error::InvalidRadius);
         }
 
         if options.extent == 0 || options.extent > i32::MAX as u32 {
-            return Err(SuperclusterError::InvalidExtent);
+            return Err(Error::InvalidExtent);
         }
 
         // An item of a tile is at most the radius outside it, and its position is an `i32`, so the
         // extent plus the radius must fit one
         if f64::from(options.extent) + options.radius > f64::from(i32::MAX) {
-            return Err(SuperclusterError::InvalidRadius);
+            return Err(Error::InvalidRadius);
         }
 
         if options.node_size == 0 {
-            return Err(SuperclusterError::InvalidNodeSize);
+            return Err(Error::InvalidNodeSize);
         }
 
         if let CoordinateSystem::Cartesian { range } = &options.coordinate_system {
             if !range.is_valid() {
-                return Err(SuperclusterError::InvalidDataRange);
+                return Err(Error::InvalidDataRange);
             }
         }
 
@@ -275,19 +280,19 @@ impl SuperclusterOptionsBuilder {
 }
 
 #[cfg(feature = "serde")]
-impl TryFrom<SuperclusterOptionsBuilder> for SuperclusterOptions {
-    type Error = SuperclusterError;
+impl TryFrom<OptionsBuilder> for Options {
+    type Error = Error;
 
-    fn try_from(builder: SuperclusterOptionsBuilder) -> Result<Self, Self::Error> {
+    fn try_from(builder: OptionsBuilder) -> Result<Self, Self::Error> {
         builder.build()
     }
 }
 
 // The builder with every value of the options set, which the options are written as
 #[cfg(feature = "serde")]
-impl From<SuperclusterOptions> for SuperclusterOptionsBuilder {
-    fn from(options: SuperclusterOptions) -> Self {
-        SuperclusterOptionsBuilder {
+impl From<Options> for OptionsBuilder {
+    fn from(options: Options) -> Self {
+        OptionsBuilder {
             min_zoom: Some(options.min_zoom),
             max_zoom: Some(options.max_zoom),
             min_points: Some(options.min_points),
@@ -304,7 +309,7 @@ impl From<SuperclusterOptions> for SuperclusterOptionsBuilder {
 /// show code that fails.
 ///
 /// ```compile_fail,E0616
-/// let mut options = supercluster::SuperclusterOptions::default();
+/// let mut options = supercluster::Options::default();
 ///
 /// options.node_size = 0;
 /// ```
@@ -324,19 +329,16 @@ mod tests {
 
     #[test]
     fn test_options_are_equal_with_the_same_values() {
-        let options = SuperclusterOptions::builder().radius(60.0).build().unwrap();
+        let options = Options::builder().radius(60.0).build().unwrap();
 
         assert_eq!(options, options.clone());
-        assert_eq!(
-            SuperclusterOptions::default(),
-            SuperclusterOptions::default()
-        );
-        assert_ne!(options, SuperclusterOptions::default());
+        assert_eq!(Options::default(), Options::default());
+        assert_ne!(options, Options::default());
     }
 
     #[test]
     fn test_default() {
-        let options = SuperclusterOptions::default();
+        let options = Options::default();
 
         assert_eq!(options.min_zoom, 0);
         assert_eq!(options.max_zoom, 16);
@@ -349,8 +351,8 @@ mod tests {
 
     #[test]
     fn test_build_without_values() {
-        let options = SuperclusterOptions::builder().build().unwrap();
-        let defaults = SuperclusterOptions::default();
+        let options = Options::builder().build().unwrap();
+        let defaults = Options::default();
 
         assert_eq!(options.max_zoom, defaults.max_zoom);
         assert_eq!(options.radius, defaults.radius);
@@ -358,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_build() {
-        let options = SuperclusterOptions::builder()
+        let options = Options::builder()
             .min_zoom(1)
             .max_zoom(10)
             .min_points(5)
@@ -381,23 +383,16 @@ mod tests {
     #[test]
     fn test_build_with_invalid_max_zoom() {
         assert_eq!(
-            SuperclusterOptions::builder()
-                .max_zoom(u8::MAX)
-                .build()
-                .err(),
-            Some(SuperclusterError::InvalidMaxZoom)
+            Options::builder().max_zoom(u8::MAX).build().err(),
+            Some(Error::InvalidMaxZoom)
         );
     }
 
     #[test]
     fn test_build_with_invalid_min_zoom() {
         assert_eq!(
-            SuperclusterOptions::builder()
-                .min_zoom(10)
-                .max_zoom(5)
-                .build()
-                .err(),
-            Some(SuperclusterError::InvalidMinZoom)
+            Options::builder().min_zoom(10).max_zoom(5).build().err(),
+            Some(Error::InvalidMinZoom)
         );
     }
 
@@ -405,8 +400,8 @@ mod tests {
     fn test_build_with_invalid_radius() {
         for radius in [0.0, -1.0, f64::NAN, f64::INFINITY] {
             assert_eq!(
-                SuperclusterOptions::builder().radius(radius).build().err(),
-                Some(SuperclusterError::InvalidRadius)
+                Options::builder().radius(radius).build().err(),
+                Some(Error::InvalidRadius)
             );
         }
     }
@@ -415,8 +410,8 @@ mod tests {
     fn test_build_with_invalid_extent() {
         for extent in [0, i32::MAX as u32 + 1, u32::MAX] {
             assert_eq!(
-                SuperclusterOptions::builder().extent(extent).build().err(),
-                Some(SuperclusterError::InvalidExtent)
+                Options::builder().extent(extent).build().err(),
+                Some(Error::InvalidExtent)
             );
         }
     }
@@ -424,7 +419,7 @@ mod tests {
     #[test]
     fn test_build_with_positions_past_an_i32() {
         let build = |extent: u32, radius: f64| {
-            SuperclusterOptions::builder()
+            Options::builder()
                 .extent(extent)
                 .radius(radius)
                 .build()
@@ -432,19 +427,16 @@ mod tests {
         };
 
         // The positions of a tile reach the extent plus the radius
-        assert_eq!(
-            build(i32::MAX as u32, 1.0),
-            Some(SuperclusterError::InvalidRadius)
-        );
-        assert_eq!(build(512, 3e9), Some(SuperclusterError::InvalidRadius));
+        assert_eq!(build(i32::MAX as u32, 1.0), Some(Error::InvalidRadius));
+        assert_eq!(build(512, 3e9), Some(Error::InvalidRadius));
         assert_eq!(build(i32::MAX as u32 - 40, 40.0), None);
     }
 
     #[test]
     fn test_build_with_invalid_node_size() {
         assert_eq!(
-            SuperclusterOptions::builder().node_size(0).build().err(),
-            Some(SuperclusterError::InvalidNodeSize)
+            Options::builder().node_size(0).build().err(),
+            Some(Error::InvalidNodeSize)
         );
     }
 
@@ -453,18 +445,18 @@ mod tests {
         let range = DataRange::new(5.0, 5.0, 5.0, 5.0);
 
         assert_eq!(
-            SuperclusterOptions::builder()
+            Options::builder()
                 .coordinate_system(CoordinateSystem::Cartesian { range })
                 .build()
                 .err(),
-            Some(SuperclusterError::InvalidDataRange)
+            Some(Error::InvalidDataRange)
         );
     }
 
     #[test]
     #[cfg(feature = "serde")]
     fn test_options_from_json_with_invalid_node_size() {
-        let options = serde_json::from_str::<SuperclusterOptions>(r#"{ "node_size": 0 }"#);
+        let options = serde_json::from_str::<Options>(r#"{ "node_size": 0 }"#);
 
         assert!(options
             .unwrap_err()
@@ -475,7 +467,7 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_options_from_json_with_an_unknown_field() {
-        let options = serde_json::from_str::<SuperclusterOptions>(r#"{ "raduis": 80.0 }"#);
+        let options = serde_json::from_str::<Options>(r#"{ "raduis": 80.0 }"#);
 
         assert!(options
             .unwrap_err()
@@ -486,12 +478,12 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_options_from_json_with_an_unknown_field_in_the_coordinate_system() {
-        let in_range = serde_json::from_str::<SuperclusterOptions>(
+        let in_range = serde_json::from_str::<Options>(
             r#"{ "coordinate_system": { "Cartesian": { "range": {
                 "min_x": 0.0, "min_y": 0.0, "max_x": 1.0, "max_y": 1.0, "max_z": 5.0
             } } } }"#,
         );
-        let in_variant = serde_json::from_str::<SuperclusterOptions>(
+        let in_variant = serde_json::from_str::<Options>(
             r#"{ "coordinate_system": { "Cartesian": {
                 "range": { "min_x": 0.0, "min_y": 0.0, "max_x": 1.0, "max_y": 1.0 },
                 "ranges": 1
@@ -511,7 +503,7 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_options_from_json() {
-        let options: SuperclusterOptions = serde_json::from_str(
+        let options: Options = serde_json::from_str(
             r#"{
                 "radius": 40.0,
                 "extent": 512,

@@ -28,7 +28,7 @@ use std::{
 ///
 /// A cached filter works with the supercluster that made it and with its clones, which hold the
 /// same points in the same order. `with_filter` on any other supercluster returns
-/// `SuperclusterError::ForeignCachedFilter`, even if it was loaded from the same points. See
+/// `Error::ForeignCachedFilter`, even if it was loaded from the same points. See
 /// `Supercluster::cache_filter` for an example.
 #[derive(Clone)]
 pub struct CachedFilter {
@@ -115,16 +115,16 @@ impl CachedFilter {
     /// Combining runs nothing: the combined filter borrows the cached filters, and a query
     /// evaluates it on the points of its tile only, so its cost grows with the points of the tile,
     /// not with all the points. Both cached filters must come from the supercluster that
-    /// `with_filter` is called on, or it returns `SuperclusterError::ForeignCachedFilter`.
+    /// `with_filter` is called on, or it returns `Error::ForeignCachedFilter`.
     ///
     /// # Examples
     ///
     /// ```
-    /// use supercluster::{Supercluster, SuperclusterOptions};
+    /// use supercluster::{Supercluster, Options};
     ///
     /// // A station is a longitude, a latitude, its power in kW and whether it is available
     /// let stations = vec![(10.0, 50.0, 150, true), (10.001, 50.0, 150, false), (10.002, 50.0, 11, true)];
-    /// let supercluster = Supercluster::load(SuperclusterOptions::default(), stations, |station| {
+    /// let supercluster = Supercluster::load(Options::default(), stations, |station| {
     ///     Some([station.0, station.1])
     /// })?;
     ///
@@ -136,7 +136,7 @@ impl CachedFilter {
     /// let items = supercluster.with_filter(fast.and(&available))?.tile(0, 0, 0).items;
     ///
     /// assert_eq!(items[0].count(), 1);
-    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// # Ok::<(), supercluster::Error>(())
     /// ```
     pub fn and<'s>(&'s self, other: impl Into<CombinedFilter<'s>>) -> CombinedFilter<'s> {
         CombinedFilter::from(self).and(other)
@@ -158,16 +158,16 @@ impl CachedFilter {
     /// # Examples
     ///
     /// ```
-    /// use supercluster::{Supercluster, SuperclusterOptions};
+    /// use supercluster::{Supercluster, Options};
     ///
     /// // A point is a longitude, a latitude and whether it is available
     /// let points = vec![(10.0, 50.0, true), (10.001, 50.0, false), (10.002, 50.0, true)];
-    /// let supercluster = Supercluster::load(SuperclusterOptions::default(), points, |point| {
+    /// let supercluster = Supercluster::load(Options::default(), points, |point| {
     ///     Some([point.0, point.1])
     /// })?;
     ///
     /// assert_eq!(supercluster.cache_filter(|point| point.2).count(), 2);
-    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// # Ok::<(), supercluster::Error>(())
     /// ```
     #[must_use]
     pub fn count(&self) -> u32 {
@@ -284,16 +284,16 @@ impl<'s> CombinedFilter<'s> {
     /// it. It reads the positions of the points that pass, so a query finds the center of the
     /// points of a cluster that pass without reading them again. When the cached filters come from
     /// different superclusters, or their supercluster was dropped, `with_filter` rejects the result
-    /// with `SuperclusterError::ForeignCachedFilter`.
+    /// with `Error::ForeignCachedFilter`.
     ///
     /// # Examples
     ///
     /// ```
-    /// use supercluster::{CachedFilter, Supercluster, SuperclusterOptions};
+    /// use supercluster::{CachedFilter, Supercluster, Options};
     ///
     /// // A station is a longitude, a latitude, its power in kW and whether it is available
     /// let stations = vec![(10.0, 50.0, 150, true), (10.001, 50.0, 150, false), (10.002, 50.0, 11, true)];
-    /// let supercluster = Supercluster::load(SuperclusterOptions::default(), stations, |station| {
+    /// let supercluster = Supercluster::load(Options::default(), stations, |station| {
     ///     Some([station.0, station.1])
     /// })?;
     /// let fast = supercluster.cache_filter(|station| station.2 >= 50);
@@ -303,7 +303,7 @@ impl<'s> CombinedFilter<'s> {
     /// let cached: CachedFilter = fast.and(&available).cache();
     ///
     /// assert_eq!(supercluster.with_filter(&cached)?.tile(0, 0, 0).items[0].count(), 1);
-    /// # Ok::<(), supercluster::SuperclusterError>(())
+    /// # Ok::<(), supercluster::Error>(())
     /// ```
     #[must_use]
     pub fn cache(&self) -> CachedFilter {
@@ -878,9 +878,7 @@ mod tests {
 
     use std::sync::Arc;
 
-    use crate::{
-        test_points::load_spread_points, Item, Supercluster, SuperclusterError, SuperclusterOptions,
-    };
+    use crate::{test_points::load_spread_points, Error, Item, Options, Supercluster};
 
     /// Keeps about one point in three, here and there.
     fn every_third(point: &[f64; 2]) -> bool {
@@ -975,8 +973,7 @@ mod tests {
         // 130 points, so the bits spread over three words
         let points: Vec<[f64; 2]> = (0..130).map(|i| [f64::from(i), 0.0]).collect();
         let supercluster =
-            Supercluster::load(SuperclusterOptions::default(), points, |point| Some(*point))
-                .unwrap();
+            Supercluster::load(Options::default(), points, |point| Some(*point)).unwrap();
         let cached_filter = supercluster.cache_filter(|point| point[0] % 3.0 == 0.0);
 
         // The output counts the points that pass instead of printing every bit
@@ -1144,7 +1141,7 @@ mod tests {
         for cached_filter in [&cached_filter, &cached_combined] {
             assert!(matches!(
                 reloaded.with_filter(cached_filter),
-                Err(SuperclusterError::ForeignCachedFilter)
+                Err(Error::ForeignCachedFilter)
             ));
         }
     }
@@ -1220,11 +1217,11 @@ mod tests {
         for supercluster in [&small, &large] {
             assert!(matches!(
                 supercluster.with_filter(&cached_combined),
-                Err(SuperclusterError::ForeignCachedFilter)
+                Err(Error::ForeignCachedFilter)
             ));
             assert!(matches!(
                 supercluster.with_filter(small_cached_filter.and(&large_cached_filter)),
-                Err(SuperclusterError::ForeignCachedFilter)
+                Err(Error::ForeignCachedFilter)
             ));
         }
     }

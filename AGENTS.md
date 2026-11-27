@@ -43,8 +43,11 @@ a test file with `#![cfg(feature = "...")]`. An example or benchmark that needs 
 - Derive a trait only when the bounds the derive adds are acceptable. Otherwise write the impl by
   hand: an item holds a reference to a point, so it must not require the point to be `Clone`.
 - Keep the API consistent. A variant of a type or a query is named after the original and has the
-  same fields, methods and trait impls under the same names, unless it cannot. Docs and examples
-  name a value after its type.
+  same fields, methods and trait impls under the same names, unless it cannot.
+- Give a public type a short noun, and a variant of it an adjective before that noun, as in
+  `Filter`, `CachedFilter` and `CombinedFilter`, or `View` and `FilteredView`. Leave the crate
+  name out of type names, as in `Options`, `OptionsBuilder` and `Error`. Only `Supercluster` has
+  it. In examples, write `supercluster::Error` instead of importing `Error`.
 - Prefer a closure over a trait for what a user supplies, as `load`, `filter` and `cache_filter` do.
 - Make a per-request setting a method that returns a view, like `with_cluster_max_zoom` and
   `with_filter`. The view then has the same queries, so no query needs a `_with` or `_filtered`
@@ -113,13 +116,12 @@ are the reference.
 
 ## Error handling
 
-- `SuperclusterError` is the only public error. It is `#[non_exhaustive]`, derives `Error` with
-  `thiserror` and has a variant only for a failure a caller can see. Build a message from the
-  constant it describes (`MAX_ZOOM_LIMIT`).
-- Validate input where it enters and return an error: the options in
-  `SuperclusterOptionsBuilder::build`, which serde also runs, the points in `load`, a supercluster
-  that serde reads, and the filters a query gets. Never panic
-  on options or data a caller passes. Points with missing or non-finite coordinates are left out.
+- `Error` is the only public error. It is `#[non_exhaustive]`, derives `thiserror::Error` and has
+  a variant only for a failure a caller can see. Build a message from the constant it describes
+  (`MAX_ZOOM_LIMIT`).
+- Validate input where it enters and return an error: the options in `OptionsBuilder::build`,
+  which serde also runs, the points in `load`, a supercluster that serde reads, and the filters a
+  query gets. Never panic on options or data a caller passes. Points with missing or non-finite coordinates are left out.
   With the `tracing` feature, the summary of a load counts them, and one `warn` event reports the
   points whose coordinates are not finite numbers.
 - Propagate errors with `?`. Don't log an error and return `None` or a default instead. A function
@@ -136,7 +138,7 @@ are the reference.
   backticks. Use no `# Arguments` or `# Returns` sections.
 - Give a public function that returns a `Result` an `# Errors` section that names each error, and one
   that can panic a `# Panics` section. Give the main entry points an `# Examples` section, which runs
-  as a doc test, uses `?` and ends with `# Ok::<(), supercluster::SuperclusterError>(())`.
+  as a doc test, uses `?` and ends with `# Ok::<(), supercluster::Error>(())`.
 - Follow the Rust API guidelines for names: no `get_` prefix on a public query or getter.
 - Give a wrapper type like `ClusterId` a private field, a constructor `new` and an accessor `get`.
   A `From` impl may supplement them but not replace them. Implement `From` and never `Into`, which
@@ -150,7 +152,7 @@ are the reference.
 - Give a type with an obvious default a `Default`.
 - Implement a trait by hand when a derive would add an unneeded bound on a type parameter such as
   `P`, as `Item` and `Tile` do, or when a derived `Debug` would print far more than a person wants
-  to read, as `SuperclusterView` and `CachedFilter` do.
+  to read, as `View` and `CachedFilter` do.
 - Implement `Display` only for a type with a text form of its own, such as an error. Print a
   wrapper like `ClusterId` through `get()`.
 - Write comments like one engineer to another. Explain why, not what changed. Mention a previous
